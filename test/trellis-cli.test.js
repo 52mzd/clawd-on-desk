@@ -244,6 +244,27 @@ describe("readGlobalVersion", () => {
     assert.strictEqual(result.installed, true);
     assert.strictEqual(result.version, null);
   });
+
+  it("reads the installed version, not the one in the update banner", async () => {
+    // Real output once a newer release exists, captured from
+    // @mindfoldhq/trellis 0.7.0-beta.4:
+    //
+    //   ⚠️  Trellis update available: 0.7.0-beta.3 → 0.7.0-beta.4
+    //      Run: trellis update
+    //
+    //   0.7.0-beta.4
+    const stdout = [
+      "⚠️  Trellis update available: 0.7.0-beta.3 → 0.7.0-beta.4",
+      "   Run: trellis update",
+      "",
+      "0.7.0-beta.4",
+      "",
+    ].join("\n");
+    const stub = makeExecFileStub({ trellis: { stdout } });
+    const result = await cliWith(stub).readGlobalVersion();
+    assert.strictEqual(result.version, "0.7.0-beta.4");
+    assert.notStrictEqual(result.version, "0.7.0-beta.3", "must not report the pre-upgrade version");
+  });
 });
 
 describe("fetchRemoteChannels", () => {
@@ -297,6 +318,28 @@ describe("upgradeGlobal", () => {
     assert.strictEqual(result.from, "0.6.17");
     assert.strictEqual(result.to, "0.7.0-beta.4");
     assert.deepStrictEqual(stub.calls[1].args, ["upgrade"]);
+  });
+
+  it("passes a known dist-tag as the second argv token", async () => {
+    const stub = makeExecFileStub({ trellis: { stdout: "0.6.17\n" } });
+    await cliWith(stub).upgradeGlobal("beta");
+    assert.deepStrictEqual(stub.calls[1].args, ["upgrade", "beta"]);
+  });
+
+  it("treats null the same as omitted, keeping the auto channel", async () => {
+    const stub = makeExecFileStub({ trellis: { stdout: "0.6.17\n" } });
+    await cliWith(stub).upgradeGlobal(null);
+    assert.deepStrictEqual(stub.calls[1].args, ["upgrade"]);
+  });
+
+  it("fails closed on an unknown channel without spawning anything", async () => {
+    for (const channel of ["--evil", "latest; rm -rf /", "next", 7]) {
+      const stub = makeExecFileStub({ trellis: { stdout: "0.6.17\n" } });
+      const result = await cliWith(stub).upgradeGlobal(channel);
+      assert.strictEqual(result.ok, false, String(channel));
+      assert.strictEqual(result.error, "unknown-channel", String(channel));
+      assert.strictEqual(stub.calls.length, 0, `${channel} must not reach execFile`);
+    }
   });
 });
 

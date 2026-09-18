@@ -74,12 +74,20 @@ function findButton(root, label) {
   return found;
 }
 
-function findSelect(root) {
+function findSelect(root, predicate) {
   let found = null;
   walk(root, (element) => {
-    if (!found && element.tagName === "SELECT") found = element;
+    if (found || element.tagName !== "SELECT") return;
+    if (predicate && !predicate(element)) return;
+    found = element;
   });
   return found;
+}
+
+// The global CLI picker and the platform picker are both `<select>`s; only the
+// global one carries this class marker.
+function isGlobalChannelSelect(element) {
+  return String(element.className || "").includes("trellis-global-channel");
 }
 
 function findPlatformCheckbox(root, label) {
@@ -116,6 +124,7 @@ function makeStrings() {
     "trellisRemoteTitle", "trellisRemoteUnavailable", "trellisRetry", "trellisGlobalTitle",
     "trellisGlobalCurrent", "trellisGlobalNotInstalled", "trellisGlobalInstallGuide",
     "trellisGlobalUpgrade", "trellisGlobalUpgraded", "trellisUnknownPlatform",
+    "trellisGlobalUpgradeTarget",
     "trellisRootUnreadable", "trellisNoProjectsUnreadable", "trellisChannelAuto",
     "trellisUpgradeAllCount",
   ];
@@ -323,7 +332,7 @@ describe("settings-tab-trellis", () => {
     await flushPromises();
 
     findButton(renderPanel(session.core, session), "trellisAddPlatform").dispatch("click");
-    const select = findSelect(renderPanel(session.core, session));
+    const select = findSelect(renderPanel(session.core, session), (element) => !isGlobalChannelSelect(element));
 
     assert.ok(select, "the add-platform panel exposes a select");
     assert.deepStrictEqual(optionValues(select), ["", "gemini"]);
@@ -438,7 +447,7 @@ describe("settings-tab-trellis degradation and scoping", () => {
     await flushPromises();
     assert.deepStrictEqual(Object.keys(requests[0]), [], "auto sends no channel at all");
 
-    const select = findSelect(renderPanel(session.core, session));
+    const select = findSelect(renderPanel(session.core, session), (element) => !isGlobalChannelSelect(element));
     assert.ok(select, "the toolbar exposes a channel picker");
     assert.deepStrictEqual(optionValues(select), ["", "latest", "beta", "rc"]);
 
@@ -507,5 +516,66 @@ describe("settings-tab-trellis degradation and scoping", () => {
     findButton(renderPanel(session.core, session), "trellisUpgradeAll").dispatch("click");
     await flushPromises();
     assert.strictEqual(findButton(renderPanel(session.core, session), "trellisCancel").disabled, true);
+  });
+});
+
+describe("settings-tab-trellis global CLI", () => {
+  it("leads the page with the global block, right under the subtitle", async () => {
+    const session = loadTab();
+    await scanWith(session, makeScanResult());
+
+    const panel = renderPanel(session.core, session);
+    assert.strictEqual(panel.children[0].tagName, "H1");
+    assert.strictEqual(panel.children[1].className, "subtitle");
+    assert.ok(
+      texts(panel.children[2]).includes("trellisGlobalTitle"),
+      "the global CLI block comes before the scan roots"
+    );
+  });
+
+  it("offers auto plus every known channel, each labelled with its version", async () => {
+    const session = loadTab();
+    await scanWith(session, makeScanResult({
+      remote: { channels: { latest: "0.6.17", beta: "0.7.0-beta.4", rc: "0.6.0-rc.0" }, error: null },
+    }));
+
+    const select = findSelect(renderPanel(session.core, session), isGlobalChannelSelect);
+    assert.ok(select, "the global section exposes a channel picker");
+    assert.deepStrictEqual(optionValues(select), ["", "latest", "beta", "rc"]);
+    assert.deepStrictEqual(select.children.map((child) => child.textContent), [
+      "trellisChannelAuto",
+      "latest (0.6.17)",
+      "beta (0.7.0-beta.4)",
+      "rc (0.6.0-rc.0)",
+    ]);
+  });
+
+  it("sends the chosen tag to the global upgrade and nothing for auto", async () => {
+    const session = loadTab();
+    const payloads = [];
+    session.api.trellisUpgradeGlobal = (payload) => {
+      payloads.push(payload);
+      return Promise.resolve({ status: "ok", from: "0.6.17", to: "0.7.0-beta.4" });
+    };
+    await scanWith(session, makeScanResult({
+      remote: { channels: { latest: "0.6.17", beta: "0.7.0-beta.4" }, error: null },
+    }));
+
+    const select = findSelect(renderPanel(session.core, session), isGlobalChannelSelect);
+    select.value = "beta";
+    select.dispatch("change");
+    findButton(renderPanel(session.core, session), "trellisGlobalUpgrade").dispatch("click");
+    await flushPromises();
+    assert.strictEqual(payloads.length, 1);
+    assert.strictEqual(payloads[0].channel, "beta");
+  });
+
+  it("falls back to auto alone when the remote versions are unknown", async () => {
+    const session = loadTab();
+    await scanWith(session, makeScanResult({ remote: { channels: null, error: "offline" } }));
+
+    const select = findSelect(renderPanel(session.core, session), isGlobalChannelSelect);
+    assert.ok(select, "the picker still renders");
+    assert.deepStrictEqual(optionValues(select), [""], "only auto survives a failed remote lookup");
   });
 });

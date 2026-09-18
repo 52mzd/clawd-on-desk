@@ -51,7 +51,7 @@ the envelope `{ status: "ok" | "cancel" | "error", ... }`.
 | `settings:trellis-upgrade-all` | `{ paths }` | `{ status, batchId }` |
 | `settings:trellis-cancel-batch` | — | `{ status }` |
 | `settings:trellis-add-platform` | `{ path, platforms:[id] }` | `{ status, added }` |
-| `settings:trellis-upgrade-global` | — | `{ status, from, to }` |
+| `settings:trellis-upgrade-global` | `{ channel? }` | `{ status, from, to }` |
 
 Progress flows the other way over `settings:trellis-progress`:
 `{ batchId, path, phase: "queued"|"running"|"ok"|"failed"|"cancelled", from, to, message }`
@@ -98,14 +98,32 @@ click writes" a property of the code rather than a convention.
   later `trellis update` silently stops syncing them.
 - The two argv prefixes and the `["-y"]` suffix are separate constants on purpose.
 
-### 3. Preview never writes
+### 3. The global CLI upgrades to a chosen channel, and the panel reports the installed version
+
+`settings:trellis-upgrade-global` takes an optional `channel`. Empty means **automatic**:
+`trellis upgrade` with no argument, which lets the CLI infer the channel from the
+prerelease marker on its own installed version. A non-empty channel must be one of
+`latest` / `beta` / `rc`, whitelisted in `trellis-ipc.js` **and** `trellis-cli.js`, and
+becomes `trellis upgrade <channel>`. An unknown value fails closed without spawning.
+
+The channel picker shows each tag next to the version the remote currently publishes for
+it, so "upgrade to beta" is a decision the user can make from the panel rather than a
+guess.
+
+Reporting the *installed* version needs care: once a newer release exists,
+`trellis --version` prints an update banner before the version itself. Parsing the first
+version-shaped token would therefore report the version the user is being told to leave
+behind. `parseVersionOutput` in `trellis-cli.js` instead takes the last line that is
+nothing but a version, and `test/trellis-cli.test.js` pins that banner shape.
+
+### 4. Preview never writes
 
 `trellis update --dry-run` is **not** read-only: when a project's `.version` differs from
 the CLI version it rewrites `.trellis/.version`. Measured with `0.6.0` and `0.5.0`, both
 became `0.7.0-beta.3`. Preview is therefore pure computation over the last scan snapshot,
 and nothing exposes `--dry-run`.
 
-### 4. Nothing schedules Trellis work
+### 5. Nothing schedules Trellis work
 
 No timer, no watcher, no startup task, no auto-refresh. `trellis-ipc.js` and
 `trellis-runtime.js` contain no scheduling primitives, and the renderer refreshes only when
@@ -140,7 +158,7 @@ change fails a test instead of silently misreporting platforms.
 | `test/trellis-version.test.js` | channel inference, comparison boundaries, unknown → `null` |
 | `test/trellis-platforms.test.js` | all 21 mappings, ignored prefixes, unknown retention, `staleIdsOf` |
 | `test/trellis-scanner.test.js` | direct-child scan, symlink skip, spacings, `staleIds`, unreadable roots |
-| `test/trellis-cli.test.js` | argv shape, `--force` / `-y` presence, whitelist fail-closed, win32 `shell` |
+| `test/trellis-cli.test.js` | argv shape, `--force` / `-y` presence, whitelist fail-closed, win32 `shell`, update-banner version parsing |
 | `test/trellis-runtime.test.js` | single remote fetch, TTL cache, concurrency ≤ 3, failure isolation, cancel |
 | `test/trellis-ipc.test.js` | envelope, trust gate (missing and throwing), catalogs, `staleFixes` |
 | `test/settings-tab-trellis.test.js` | tab rendering, filtering drives batch scope, unreadable roots |

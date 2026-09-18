@@ -42,6 +42,11 @@
   // from the scan snapshot's `channelCatalog`, so this file holds no second
   // copy of the channel list.
   let channelFilter = "";
+  // Different concern from `channelFilter`: that one picks the dist-tag the
+  // *project list* is compared against, this one picks the dist-tag the *global
+  // CLI* is upgraded to. "" means auto, where the CLI derives the channel from
+  // its own installed version.
+  let globalChannel = "";
   let channelCatalog = [];
   let progressByPath = new Map();
   let batchRunning = false;
@@ -848,6 +853,36 @@
   }
 
   // ── section 6: global CLI ─────────────────────────────────────────
+  // Options come from the scan snapshot's remote dist-tags so every entry can
+  // show the version it would install. A failed remote lookup leaves only
+  // "Auto": offering a tag whose version we cannot read would be guessing.
+  function buildGlobalChannelSelect() {
+    const channels = (scanResult && scanResult.remote && scanResult.remote.channels) || null;
+    const select = document.createElement("select");
+    select.className = "trellis-platform-select trellis-global-channel";
+    const auto = document.createElement("option");
+    auto.value = "";
+    auto.textContent = t("trellisChannelAuto");
+    select.appendChild(auto);
+    const tags = channels ? Object.keys(channels) : [];
+    for (const tag of tags) {
+      const option = document.createElement("option");
+      option.value = tag;
+      option.textContent = channels[tag] ? `${tag} (${channels[tag]})` : tag;
+      select.appendChild(option);
+    }
+    // Fall back to "Auto" for display when the remembered tag is not in the
+    // current snapshot; the choice itself is kept for the next successful scan.
+    select.value = tags.includes(globalChannel) ? globalChannel : "";
+    select.addEventListener("change", () => {
+      globalChannel = select.value;
+      // Unlike the list filter this must not re-scan: the channel only picks
+      // the argv tail of the next global upgrade.
+      requestRender();
+    });
+    return select;
+  }
+
   function buildGlobalSection() {
     const rows = [];
     const global = scanResult && scanResult.global;
@@ -871,6 +906,11 @@
     version.className = "trellis-version";
     version.textContent = tf("trellisGlobalCurrent", { version: global.version || "—" });
     control.appendChild(version);
+    const target = document.createElement("span");
+    target.className = "trellis-version";
+    target.textContent = `${t("trellisGlobalUpgradeTarget")}:`;
+    control.appendChild(target);
+    control.appendChild(buildGlobalChannelSelect());
     control.appendChild(helpers.buildButton({
       label: t("trellisGlobalUpgrade"),
       tone: "accent",
@@ -883,7 +923,7 @@
   function onUpgradeGlobal() {
     const settingsApi = api();
     if (!settingsApi || typeof settingsApi.trellisUpgradeGlobal !== "function") return;
-    settingsApi.trellisUpgradeGlobal().then((result) => {
+    settingsApi.trellisUpgradeGlobal({ channel: globalChannel }).then((result) => {
       if (!result || result.status !== "ok") {
         ops.showToast((result && result.message) || t("trellisScanFailed"), { error: true });
         return;
@@ -906,6 +946,9 @@
     subtitle.textContent = t("trellisSubtitle");
     parent.appendChild(subtitle);
 
+    // The global CLI block leads: it describes the local tool every project
+    // below depends on, so it sits directly under the title.
+    parent.appendChild(buildGlobalSection());
     parent.appendChild(buildRootsSection());
     parent.appendChild(buildToolbarSection());
 
@@ -914,7 +957,6 @@
 
     parent.appendChild(buildFilterSection());
     parent.appendChild(buildProjectsSection());
-    parent.appendChild(buildGlobalSection());
 
     ensureProgressSubscription();
   }

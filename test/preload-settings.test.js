@@ -107,6 +107,7 @@ test("settings preload exposes the Trellis panel surface and a scoped progress s
   await settingsAPI.trellisCancelBatch();
   await settingsAPI.trellisAddPlatform("/projects/a", ["gemini"]);
   await settingsAPI.trellisUpgradeGlobal();
+  await settingsAPI.trellisUpgradeGlobal({ channel: "beta" });
 
   assert.deepStrictEqual(JSON.parse(JSON.stringify(invokes)), [
     ["settings:trellis-scan", {}],
@@ -118,7 +119,8 @@ test("settings preload exposes the Trellis panel surface and a scoped progress s
     ["settings:trellis-upgrade-all", { paths: ["/projects/a"] }],
     ["settings:trellis-cancel-batch"],
     ["settings:trellis-add-platform", { path: "/projects/a", platforms: ["gemini"] }],
-    ["settings:trellis-upgrade-global"],
+    ["settings:trellis-upgrade-global", {}],
+    ["settings:trellis-upgrade-global", { channel: "beta" }],
   ]);
 
   const forward = ipcHandlers.get("settings:trellis-progress");

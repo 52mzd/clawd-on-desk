@@ -39,7 +39,10 @@
 //   trellisCancelBatch()                Promise<{ status, cancelled }>
 //   trellisAddPlatform(path, platforms) Promise<{ status, added, output }> —
 //                                       platforms is a known-id whitelist
-//   trellisUpgradeGlobal()              Promise<{ status, from, to, output }>
+//   trellisUpgradeGlobal({ channel? })
+//                                       Promise<{ status, from, to, output }> —
+//                                       channel is an optional latest/beta/rc
+//                                       dist-tag; empty means auto
 //   onTrellisProgress(cb)               cb({ batchId, path, phase, from, to,
 //                                       message? }) — returns unsubscribe
 //
@@ -281,7 +284,8 @@ contextBridge.exposeInMainWorld("settingsAPI", {
   trellisCancelBatch: () => ipcRenderer.invoke("settings:trellis-cancel-batch"),
   trellisAddPlatform: (projectPath, platforms) =>
     ipcRenderer.invoke("settings:trellis-add-platform", { path: projectPath, platforms }),
-  trellisUpgradeGlobal: () => ipcRenderer.invoke("settings:trellis-upgrade-global"),
+  trellisUpgradeGlobal: (options) =>
+    ipcRenderer.invoke("settings:trellis-upgrade-global", { channel: options && options.channel }),
   onTrellisProgress: (cb) => {
     if (typeof cb !== "function") return () => {};
     trellisProgressListeners.add(cb);

@@ -359,10 +359,13 @@ function createTrellisRuntime(options = {}) {
     return { status: "ok", from: result.from, to: result.to, message: "", output: result.output || "" };
   }
 
-  async function upgradeGlobal() {
+  // `channel` is optional: omitted (or empty) keeps the CLI's auto behaviour,
+  // where it derives the channel from its own installed version.
+  async function upgradeGlobal(options = {}) {
+    const channel = options && options.channel;
     let result;
     try {
-      result = await cli.upgradeGlobal();
+      result = await cli.upgradeGlobal(channel === "" ? undefined : channel);
     } catch (err) {
       return { status: "error", message: (err && err.message) || "error" };
     }

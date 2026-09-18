@@ -59,6 +59,7 @@ function makeFakeCli(options = {}) {
   };
   const started = [];
   const aborted = [];
+  const globalChannels = [];
   let inflight = 0;
   let peak = 0;
 
@@ -66,6 +67,7 @@ function makeFakeCli(options = {}) {
     calls,
     started,
     aborted,
+    globalChannels,
     get peak() { return peak; },
     get inflight() { return inflight; },
     async fetchRemoteChannels() {
@@ -114,8 +116,9 @@ function makeFakeCli(options = {}) {
         }, options.delayMs || 1);
       });
     },
-    async upgradeGlobal() {
+    async upgradeGlobal(channel) {
       calls.upgradeGlobal += 1;
+      globalChannels.push(channel);
       return { ok: true, from: "0.6.17", to: "0.7.0-beta.4", output: "ok", error: null };
     },
     async addPlatforms(projectPath, platformIds) {
@@ -556,6 +559,15 @@ describe("single-item actions", () => {
     assert.strictEqual(result.status, "ok");
     assert.strictEqual(result.from, "0.6.17");
     assert.strictEqual(result.to, "0.7.0-beta.4");
+  });
+
+  it("passes an explicit channel down and leaves auto untouched", async () => {
+    const cli = makeFakeCli();
+    const { runtime } = makeRuntime(cli);
+    await runtime.upgradeGlobal({ channel: "beta" });
+    await runtime.upgradeGlobal({ channel: "" });
+    await runtime.upgradeGlobal();
+    assert.deepStrictEqual(cli.globalChannels, ["beta", undefined, undefined]);
   });
 });
 

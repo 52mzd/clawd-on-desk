@@ -442,6 +442,32 @@ describe("trellis IPC preview and global upgrade", () => {
     assert.deepStrictEqual(h.cli.calls, callsAfterScan, "preview spawns nothing");
   });
 
+  it("forwards a chosen channel and rejects an unknown one before the cli", async () => {
+    const seen = [];
+    const cli = makeFakeCli({
+      async upgradeGlobal(channel) {
+        seen.push(channel);
+        return { ok: true, reason: null, from: "0.6.17", to: "0.6.18", output: "upgraded", error: null };
+      },
+    });
+    const h = createHarness({ cli });
+
+    const beta = await h.ipcMain.invoke("settings:trellis-upgrade-global", { channel: "beta" });
+    assert.strictEqual(beta.status, "ok");
+    assert.deepStrictEqual(seen, ["beta"]);
+
+    const auto = await h.ipcMain.invoke("settings:trellis-upgrade-global", {});
+    assert.strictEqual(auto.status, "ok");
+    assert.deepStrictEqual(seen, ["beta", undefined], "an empty channel keeps the cli's own default");
+
+    for (const channel of ["next", "--force", "latest; rm -rf /"]) {
+      const result = await h.ipcMain.invoke("settings:trellis-upgrade-global", { channel });
+      assert.strictEqual(result.status, "error", channel);
+      assert.strictEqual(result.message, "unknown-channel", channel);
+    }
+    assert.deepStrictEqual(seen, ["beta", undefined], "an unknown channel never reaches the cli");
+  });
+
   it("upgrade-global wraps the cli result in the ok envelope", async () => {
     const h = createHarness();
     const result = await h.ipcMain.invoke("settings:trellis-upgrade-global");

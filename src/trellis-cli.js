@@ -46,6 +46,18 @@ const REMOTE_TIMEOUT_MS = 30000;
 const GLOBAL_UPGRADE_TIMEOUT_MS = 300000;
 
 const VERSION_OUTPUT_RE = /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/;
+// When a newer release exists, `trellis --version` prints an update banner
+// before the version:
+//
+//   ⚠️  Trellis update available: 0.7.0-beta.3 → 0.7.0-beta.4
+//      Run: trellis update
+//
+//   0.7.0-beta.4
+//
+// Taking the first version-shaped token would report the version the user is
+// being told to leave behind, so the installed version is read from a line that
+// is nothing but a version.
+const VERSION_LINE_RE = /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 function errorMessage(err, stderrText = "") {
   const stderr = typeof stderrText === "string" ? stderrText.trim() : "";
@@ -77,7 +89,15 @@ function combineOutput(result) {
 }
 
 function parseVersionOutput(text) {
-  const match = String(text || "").match(VERSION_OUTPUT_RE);
+  const lines = String(text || "").split(/\r?\n/);
+  // Last match wins: the banner precedes the real version, and a banner line is
+  // never a bare version, so this stays correct if the order ever changes.
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const trimmed = lines[i].trim();
+    if (VERSION_LINE_RE.test(trimmed)) return trimmed.replace(/^v/, "");
+  }
+  // Fallback for shapes we have not seen, e.g. a single line "trellis v0.7.0".
+  const match = lines.join("\n").match(VERSION_OUTPUT_RE);
   return match ? match[0] : null;
 }
 
@@ -193,9 +213,27 @@ function createTrellisCli(options = {}) {
     };
   }
 
-  async function upgradeGlobal() {
+  // `channel` is an npm dist-tag the CLI understands (`trellis upgrade <tag>`).
+  // Empty means auto: the CLI infers the channel from the prerelease marker of
+  // the version it has installed (beta → beta, rc → rc, otherwise latest), so
+  // Clawd must not compute a default here — it would pick a different channel
+  // than the CLI would. Anything outside REMOTE_CHANNELS fails closed before a
+  // process is spawned, exactly like an unknown platform id above.
+  async function upgradeGlobal(channel) {
+    const wanted = channel === undefined || channel === null ? "" : channel;
+    if (wanted !== "" && !REMOTE_CHANNELS.includes(wanted)) {
+      return {
+        ok: false,
+        reason: "unknown-channel",
+        from: null,
+        to: null,
+        output: "",
+        error: "unknown-channel",
+      };
+    }
+    const args = wanted === "" ? GLOBAL_UPGRADE_ARGS : [...GLOBAL_UPGRADE_ARGS, wanted];
     const before = await readGlobalVersion();
-    const result = await run(TRELLIS_BIN, GLOBAL_UPGRADE_ARGS, { timeoutMs: globalUpgradeTimeoutMs });
+    const result = await run(TRELLIS_BIN, args, { timeoutMs: globalUpgradeTimeoutMs });
     const after = await readGlobalVersion();
     return {
       ok: result.ok,

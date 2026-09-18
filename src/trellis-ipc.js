@@ -240,7 +240,17 @@ function registerTrellisIpc(options = {}) {
     return runtime.addPlatforms(projectPath, platformIds);
   });
 
-  handle("settings:trellis-upgrade-global", () => runtime.upgradeGlobal());
+  // `channel` is a dist-tag whitelist, exactly like `platforms` above: the
+  // renderer may pick one of the known tags or leave it empty (= auto), but it
+  // can never widen the argv with a token of its own.
+  handle("settings:trellis-upgrade-global", (_event, payload) => {
+    const raw = payload && payload.channel;
+    if (raw === undefined || raw === null || raw === "") return runtime.upgradeGlobal({ channel: undefined });
+    if (!REMOTE_CHANNELS.includes(raw)) {
+      return { status: "error", message: "unknown-channel" };
+    }
+    return runtime.upgradeGlobal({ channel: raw });
+  });
 
   return {
     runtime,
