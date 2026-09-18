@@ -5,3 +5,4 @@
 {"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本任务跨主进程/渲染层/IPC/prefs/i18n 四层，按跨层 checklist 核对数据流与契约一致性"}
 {"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "强制复用既有实现：normalizePathList、mergedExecutionEnv、settings-ipc 的 handle()+disposers 模式、既有 i18n 对齐约束"}
 {"file": ".trellis/spec/frontend/index.md", "reason": "frontend spec 层索引；当前多为占位模板，用于确认本仓库前端约定的现状"}
+{"file": ".trellis/spec/guides/trellis-panel-contract.md", "reason": "本任务的实现契约：argv 冻结常量、IPC 信任门禁 fail-closed、输出解析身份（横幅左侧是项目版本）、验证与错误矩阵、必需测试断言点"}

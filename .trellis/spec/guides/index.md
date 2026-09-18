@@ -23,6 +23,7 @@ These guides help you **ask the right questions before coding**.
 |-------|---------|-------------|
 | [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md) | Identify patterns and reduce duplication | When you notice repeated patterns |
 | [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md) | Think through data flow across layers | Features spanning multiple layers |
+| [Trellis Panel Contract](./trellis-panel-contract.md) | External-process contract: frozen argv, IPC trust gate, output-parsing identity | When spawning a CLI or parsing its output |
 
 ---
 
@@ -64,6 +65,18 @@ These guides help you **ask the right questions before coding**.
 3. **Variable misreading**: Not tracing a variable to its actual definition (e.g., Map keyed by path vs name)
 
 **Verification rule**: Every CRITICAL/WARNING finding must be verified against the actual code before prioritizing. Budget ~35% false-positive rate for AI reviews.
+
+---
+
+### When Spawning An External CLI
+
+- [ ] You're building argv for a command that writes to disk
+- [ ] You're adding an IPC channel reachable from a renderer
+- [ ] You're letting renderer-supplied values influence argv
+- [ ] You're parsing a tool's stdout/stderr for a value
+- [ ] A tool's output could contain numbers about more than one subject
+
+→ Read [Trellis Panel Contract](./trellis-panel-contract.md)
 
 ---
 

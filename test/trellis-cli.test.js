@@ -262,6 +262,25 @@ describe("readGlobalVersion", () => {
     assert.strictEqual(result.version, "0.7.0-beta.4");
     assert.notStrictEqual(result.version, "0.7.0-beta.3", "must not report the project's version");
   });
+
+  it("reads the CLI version from the other banner branch too", async () => {
+    // The mirror case, also captured byte-exact: the project is *newer* than the
+    // CLI, so the banner embeds the project version inside prose rather than on
+    // the left of an arrow. Position-based parsing happens to survive this one,
+    // which is exactly why the assertion is here - it must keep surviving.
+    const stdout = [
+      "",
+      "⚠️  Your CLI (0.7.0-beta.4) is older than project (9.9.9)",
+      "   Run: trellis upgrade",
+      "",
+      "0.7.0-beta.4",
+      "",
+    ].join("\n");
+    const stub = makeExecFileStub({ trellis: { stdout } });
+    const result = await cliWith(stub).readGlobalVersion();
+    assert.strictEqual(result.version, "0.7.0-beta.4");
+    assert.notStrictEqual(result.version, "9.9.9", "must not pick up the prose project version");
+  });
 });
 
 describe("fetchRemoteChannels", () => {
