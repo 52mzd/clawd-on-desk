@@ -89,6 +89,7 @@ describe("prefs.getDefaults", () => {
     // the preference existed. Storing what is HIDDEN (not what is shown) is why
     // a newly connected provider appears on its own instead of silently missing.
     assert.deepStrictEqual(d.quotaRingHiddenProviders, []);
+    assert.deepStrictEqual(d.trellisScanRoots, []);
     assert.strictEqual(d.claudeQuotaCollectionEnabled, false);
     assert.strictEqual(d.kimiQuotaCollectionEnabled, false);
     assert.strictEqual(d.quotaMergeSources, false);
@@ -713,6 +714,21 @@ describe("prefs.validate", () => {
     });
     assert.deepStrictEqual(legacy.customToolDiscoveryPaths, ["C:\\Legacy\\AI.exe"]);
     assert.strictEqual(Object.prototype.hasOwnProperty.call(legacy.agents, "custom"), false);
+  });
+
+  it("normalizes Trellis scan roots and drops null bytes / duplicates", () => {
+    const value = prefs.validate({
+      trellisScanRoots: [" /Users/me/Code ", "/Users/me/Code", "", "\0/Users/me/Other", 7],
+    });
+    assert.deepStrictEqual(value.trellisScanRoots, ["/Users/me/Code", "/Users/me/Other"]);
+
+    // A missing key stays on the default factory — no migration needed.
+    assert.deepStrictEqual(prefs.validate({}).trellisScanRoots, []);
+
+    const capped = prefs.validate({
+      trellisScanRoots: Array.from({ length: 70 }, (_, index) => `/projects/p${index}`),
+    });
+    assert.strictEqual(capped.trellisScanRoots.length, 64);
   });
 
   it("normalizes custom applications and enforces state-only agent gates", () => {

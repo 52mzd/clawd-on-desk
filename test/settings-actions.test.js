@@ -44,6 +44,15 @@ describe("validator helpers", () => {
 describe("updateRegistry pure-data validators", () => {
   const baseSnapshot = prefs.getDefaults();
 
+  it("trellisScanRoots accepts only normalized unique paths", () => {
+    assert.strictEqual(updateRegistry.trellisScanRoots([], {}).status, "ok");
+    assert.strictEqual(updateRegistry.trellisScanRoots(["/a", "/b"], {}).status, "ok");
+    assert.strictEqual(updateRegistry.trellisScanRoots("/a", {}).status, "error");
+    assert.strictEqual(updateRegistry.trellisScanRoots([" /a "], {}).status, "error");
+    assert.strictEqual(updateRegistry.trellisScanRoots(["/a", "/a"], {}).status, "error");
+    assert.strictEqual(updateRegistry.trellisScanRoots([7], {}).status, "error");
+  });
+
   it("lang validates against the enum", () => {
     assert.strictEqual(updateRegistry.lang("en", { snapshot: baseSnapshot }).status, "ok");
     assert.strictEqual(updateRegistry.lang("zh", { snapshot: baseSnapshot }).status, "ok");

@@ -89,6 +89,7 @@ const {
   createSettingsSizePreviewSession,
 } = require("./settings-size-preview-session");
 const { registerSettingsIpc } = require("./settings-ipc");
+const { registerTrellisIpc } = require("./trellis-ipc");
 const createSettingsEffectRouter = require("./settings-effect-router");
 const { createRecapRuntime } = require("./recap-runtime");
 const { createKimiQuotaClient } = require("./kimi-quota-client");
@@ -3444,6 +3445,11 @@ function drainRemoteSshAndFeishuBeforeQuit() {
   } catch (err) {
     console.error("settings IPC shutdown failed:", err && err.message);
   }
+  try {
+    trellisIpcRuntime.dispose();
+  } catch (err) {
+    console.error("trellis IPC shutdown failed:", err && err.message);
+  }
   if (_remoteSshRuntime && typeof _remoteSshRuntime.shutdown === "function") {
     drains.push(
       Promise.resolve(_remoteSshRuntime.shutdown({ timeoutMs: 5000 }))
@@ -4964,6 +4970,22 @@ const settingsIpcRuntime = registerSettingsIpc({
   },
   aboutHeroSvgPath: path.join(__dirname, "..", "assets", "svg", "clawd-about-hero.svg"),
   getLanWsServer: () => _lanWss,
+});
+
+// ── Trellis panel (Settings → Trellis) ──
+//
+// Scan / preview are read-only; upgrade and add-platform spawn `trellis` and
+// are only reachable from a Settings button. Roots persist through
+// settings-controller (`trellisScanRoots`), never by writing prefs here.
+const trellisIpcRuntime = registerTrellisIpc({
+  ipcMain,
+  dialog,
+  settingsController: _settingsController,
+  getSettingsWindow,
+  sendToSettings: (channel, payload) => broadcastSettingsWindow(channel, payload),
+  // Reuse the Settings-window trust test: trellis-ipc refuses every call when
+  // this is missing or throws, so wiring it here is what opens the surface.
+  isTrustedEvent: settingsIpcRuntime.isTrustedEvent,
 });
 
 const sessionHistoryRuntime = createSessionHistoryRuntime({
