@@ -245,15 +245,12 @@ describe("readGlobalVersion", () => {
     assert.strictEqual(result.version, null);
   });
 
-  it("reads the installed version, not the one in the update banner", async () => {
-    // Real output once a newer release exists, captured from
-    // @mindfoldhq/trellis 0.7.0-beta.4:
-    //
-    //   ⚠️  Trellis update available: 0.7.0-beta.3 → 0.7.0-beta.4
-    //      Run: trellis update
-    //
-    //   0.7.0-beta.4
+  it("reads the CLI version, not the project version in the startup banner", async () => {
+    // Byte-exact stdout captured from `trellis --version` with the CLI at
+    // 0.7.0-beta.4, run from a project stamped 0.7.0-beta.3. The banner is a
+    // prefix and its left-hand side is `<cwd>/.trellis/.version`.
     const stdout = [
+      "",
       "⚠️  Trellis update available: 0.7.0-beta.3 → 0.7.0-beta.4",
       "   Run: trellis update",
       "",
@@ -263,7 +260,7 @@ describe("readGlobalVersion", () => {
     const stub = makeExecFileStub({ trellis: { stdout } });
     const result = await cliWith(stub).readGlobalVersion();
     assert.strictEqual(result.version, "0.7.0-beta.4");
-    assert.notStrictEqual(result.version, "0.7.0-beta.3", "must not report the pre-upgrade version");
+    assert.notStrictEqual(result.version, "0.7.0-beta.3", "must not report the project's version");
   });
 });
 

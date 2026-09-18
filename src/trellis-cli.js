@@ -46,17 +46,24 @@ const REMOTE_TIMEOUT_MS = 30000;
 const GLOBAL_UPGRADE_TIMEOUT_MS = 300000;
 
 const VERSION_OUTPUT_RE = /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/;
-// When a newer release exists, `trellis --version` prints an update banner
-// before the version:
+// `trellis --version` writes to stdout, but on stdout the version line is not
+// necessarily first. The CLI prepends a startup banner for every command when
+// its *cwd* contains a `.trellis/` directory:
 //
 //   ⚠️  Trellis update available: 0.7.0-beta.3 → 0.7.0-beta.4
 //      Run: trellis update
 //
 //   0.7.0-beta.4
 //
-// Taking the first version-shaped token would report the version the user is
-// being told to leave behind, so the installed version is read from a line that
-// is nothing but a version.
+// The left side is `<cwd>/.trellis/.version`, the right side the CLI's own
+// version. Measured while the CLI was 0.7.0-beta.4: run from a project stamped
+// 0.7.0-beta.3 it prints exactly the above; run with cwd=/tmp (no project) it
+// prints only "0.7.0-beta.4". So the first version-shaped token in the output is
+// a project version, not the installed CLI version - and that left-hand value
+// moves whenever a project is upgraded, independently of the CLI.
+//
+// These are human-facing strings, so the parse anchors on the one shape that is
+// unambiguous rather than on position: a line that is nothing but a version.
 const VERSION_LINE_RE = /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 function errorMessage(err, stderrText = "") {
@@ -90,8 +97,9 @@ function combineOutput(result) {
 
 function parseVersionOutput(text) {
   const lines = String(text || "").split(/\r?\n/);
-  // Last match wins: the banner precedes the real version, and a banner line is
-  // never a bare version, so this stays correct if the order ever changes.
+  // Last match wins. The banner is a prefix and its lines never consist of a
+  // bare version, so this holds for both banner directions (a project older
+  // than the CLI, or a project newer than it).
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     const trimmed = lines[i].trim();
     if (VERSION_LINE_RE.test(trimmed)) return trimmed.replace(/^v/, "");

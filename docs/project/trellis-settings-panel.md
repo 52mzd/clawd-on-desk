@@ -115,11 +115,27 @@ The channel picker shows each tag next to the version the remote currently publi
 it, so "upgrade to beta" is a decision the user can make from the panel rather than a
 guess.
 
-Reporting the *installed* version needs care: once a newer release exists,
-`trellis --version` prints an update banner before the version itself. Parsing the first
-version-shaped token would therefore report the version the user is being told to leave
-behind. `parseVersionOutput` in `trellis-cli.js` instead takes the last line that is
-nothing but a version, and `test/trellis-cli.test.js` pins that banner shape.
+`trellis --version` writes to stdout, but the version is not necessarily the first
+version-shaped token there. When the process' *cwd* contains a `.trellis/` directory the
+CLI prefixes a startup banner to every command:
+
+```
+⚠️  Trellis update available: 0.7.0-beta.3 → 0.7.0-beta.4
+   Run: trellis update
+
+0.7.0-beta.4
+```
+
+The left-hand side is `<cwd>/.trellis/.version` and the right-hand side is the CLI's own
+version. Measured with the CLI at `0.7.0-beta.4`: from a project stamped `0.7.0-beta.3`
+the output is exactly the above, and with `cwd=/tmp` (no project) it is just
+`0.7.0-beta.4`. So a naive first-match reports a *project* version - one that moves
+whenever a project is upgraded, independently of the CLI.
+
+`parseVersionOutput` in `trellis-cli.js` therefore anchors on the one unambiguous shape,
+a line consisting of nothing but a version, and skips the banner. `test/trellis-cli.test.js`
+pins the byte-exact banner above. Switching to `stderr` would be worse, not better: the
+banner is on stdout, so that would yield an empty string.
 
 ### 4. Preview never writes
 
