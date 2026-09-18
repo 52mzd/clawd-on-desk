@@ -5359,3 +5359,61 @@ html, body {
   opacity: 0.55;
   cursor: default;
 }
+
+/* ── Trellis panel ── */
+.trellis-platform-options {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+.trellis-platform-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.trellis-platform-select {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 6px;
+  max-width: 220px;
+}
+.trellis-version {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.trellis-command {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+.trellis-command code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.06);
+  padding: 2px 6px;
+  border-radius: 5px;
+  color: var(--text-primary);
+  user-select: text;
+}
+@media (prefers-color-scheme: dark) {
+  .trellis-command code { background: rgba(255, 255, 255, 0.09); }
+}
+.trellis-command-cwd {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  user-select: text;
+}
