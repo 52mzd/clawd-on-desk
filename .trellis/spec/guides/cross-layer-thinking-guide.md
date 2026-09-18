@@ -213,10 +213,13 @@ When a CLI auto-detects a mode by probing a remote resource (e.g., checking if `
 - [ ] Metadata reads consume a complete response or use a streaming parser — never parse a fixed-size prefix as full JSON
 - [ ] When reconstructing a composite identifier from parsed parts, verify **all** fields are included and in the **correct position** (e.g., `provider:repo/path#ref` not `provider:repo#ref/path`)
 - [ ] Verify that **action functions** called after a shortcut don't internally use the old catch-all fetch — they must use the probe-quality variant when error distinction matters
+- [ ] When parsing a tool's human-facing output, identify **which subject** each number refers to before trusting it, and anchor the parse on an unambiguous shape rather than on position
 
 **Real-world example**: Custom registry flow had 8 bugs across 3 review rounds: (1) probe only ran in interactive mode, (2) transient errors fell through to wrong mode, (3) giget URI had `#ref` in wrong position, (4) prefetched templates leaked across source switches, (5) `--template` shortcut bypassed probe but `downloadTemplateById` internally used catch-all `fetchTemplateIndex`, turning timeouts into "Template not found".
 
 **Real-world example**: Agent-session update hints fetched npm `latest` metadata with `response.read(4096)` and then parsed it as complete JSON. The `@mindfoldhq/trellis` package metadata exceeded 4 KB, so the JSON was truncated, parse failed silently, and the first session injection showed no update hint. Fix: read the complete response before parsing, and add a regression where `version` is followed by an 8 KB metadata tail.
+
+**Real-world example**: A panel read the installed CLI version by taking the first version-shaped token from `trellis --version`. That token was the **project's** version from the CLI's startup banner (`⚠️ Trellis update available: 0.7.0-beta.3 → 0.7.0-beta.4`), which the CLI prepends whenever its cwd contains a `.trellis/` directory - the right-hand side was the CLI's own version. Upgrading a project silently changed the reported "installed CLI version". Fix: take the line that is nothing but a version, and pin the byte-exact banner in a test. Note the same output also made `--version` cwd-dependent, so "installed version" is only meaningful with a cwd the tool cannot find a project in.
 
 ---
 
@@ -281,10 +284,13 @@ When a CLI auto-detects a mode by probing a remote resource (e.g., checking if `
 - [ ] Metadata reads consume a complete response or use a streaming parser — never parse a fixed-size prefix as full JSON
 - [ ] When reconstructing a composite identifier from parsed parts, verify **all** fields are included and in the **correct position** (e.g., `provider:repo/path#ref` not `provider:repo#ref/path`)
 - [ ] Verify that **action functions** called after a shortcut don't internally use the old catch-all fetch — they must use the probe-quality variant when error distinction matters
+- [ ] When parsing a tool's human-facing output, identify **which subject** each number refers to before trusting it, and anchor the parse on an unambiguous shape rather than on position
 
 **Real-world example**: Custom registry flow had 8 bugs across 3 review rounds: (1) probe only ran in interactive mode, (2) transient errors fell through to wrong mode, (3) giget URI had `#ref` in wrong position, (4) prefetched templates leaked across source switches, (5) `--template` shortcut bypassed probe but `downloadTemplateById` internally used catch-all `fetchTemplateIndex`, turning timeouts into "Template not found".
 
 **Real-world example**: Agent-session update hints fetched npm `latest` metadata with `response.read(4096)` and then parsed it as complete JSON. The `@mindfoldhq/trellis` package metadata exceeded 4 KB, so the JSON was truncated, parse failed silently, and the first session injection showed no update hint. Fix: read the complete response before parsing, and add a regression where `version` is followed by an 8 KB metadata tail.
+
+**Real-world example**: A panel read the installed CLI version by taking the first version-shaped token from `trellis --version`. That token was the **project's** version from the CLI's startup banner (`⚠️ Trellis update available: 0.7.0-beta.3 → 0.7.0-beta.4`), which the CLI prepends whenever its cwd contains a `.trellis/` directory - the right-hand side was the CLI's own version. Upgrading a project silently changed the reported "installed CLI version". Fix: take the line that is nothing but a version, and pin the byte-exact banner in a test. Note the same output also made `--version` cwd-dependent, so "installed version" is only meaningful with a cwd the tool cannot find a project in.
 
 ---
 
