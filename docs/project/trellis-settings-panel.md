@@ -43,7 +43,7 @@ the envelope `{ status: "ok" | "cancel" | "error", ... }`.
 
 | Channel | Payload | Result |
 | --- | --- | --- |
-| `settings:trellis-scan` | `{ channel? }` | `{ status, scans, projects, remote, global, platformCatalog, channelCatalog }` |
+| `settings:trellis-scan` | `{ channel? }` | `{ status, roots, channels, remote, scans, projects, global, platformCatalog, channelCatalog }` |
 | `settings:trellis-pick-root` | — | `{ status:"ok", path }` / `{ status:"cancel" }` |
 | `settings:trellis-set-roots` | `{ roots }` | `{ status }` (written through `settings-controller`) |
 | `settings:trellis-preview` | `{ paths }` | `{ status, plan[] }` — pure computation |
@@ -56,6 +56,11 @@ the envelope `{ status: "ok" | "cancel" | "error", ... }`.
 Progress flows the other way over `settings:trellis-progress`:
 `{ batchId, path, phase: "queued"|"running"|"ok"|"failed"|"cancelled", from, to, message }`
 plus a terminal `{ phase: "done", summary: { total, ok, failed, cancelled } }`.
+
+`channels` duplicates `remote.channels` for the renderer's convenience; `remote.error` is set
+when the remote lookup failed, in which case both are null. `scans` is the per-root view
+(`{ root, readable, projects }`) that lets the panel tell "unreadable directory" apart from
+"no projects here".
 
 Per-project shape:
 
