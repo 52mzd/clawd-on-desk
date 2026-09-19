@@ -116,3 +116,26 @@ Settings 新增 Trellis tab：扫描多目录项目的 Trellis 安装/版本/平
 ### Next Steps
 
 - 无；归档庆祝已真机闭环。创意池 P2 项（配件映射/杂耍动画）在 phase-awareness 归档任务 design.md 中待取
+
+
+## Session 4: Trellis HUD 展开详情行：替代 hover tooltip
+
+**Date**: 2026-09-20
+**Task**: Trellis HUD 展开详情行：替代 hover tooltip
+**Branch**: `main`
+
+### Summary
+
+创意池双件收尾：① idle 任务气泡（702a08fc）修复 loadFile 竞态/agent-idle 语义/getPetWindowBounds 三个真机 bug，agent-idle 判定 + did-finish-load 注入后重放 pi idle 上报即弹，屏像素级验证通过；② HUD Trellis 徽标从 hover tooltip 改为点击展开内联详情行（e62e483e）：高度双轨制（main 固定行高 28px + 渲染层 rAF 实测弹性高度经新 IPC session-hud:set-trellis-detail-height 回传重算 bounds）、.trellis-detail 必须 flex:0 0 auto 防 runaway shrink loop、测量无 rAF 环境同步 fallback；npm test 全量失败集与基线 diff=0；契约固化为 trellis-panel-contract.md §4.1 七段式 code-spec。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `702a08fc` | (see git log) |
+| `6d4ad1d9` | (see git log) |
+| `e62e483e` | (see git log) |
+
+### Status
+
+[OK] **Completed**
