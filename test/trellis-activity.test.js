@@ -153,6 +153,7 @@ function makeHarness({ sessions = new Map(), getLiveSessions = null } = {}) {
   const clock = { now: 1758000000000 };
   const updates = [];
   const celebrations = [];
+  const aggregates = [];
   const activity = createTrellisActivity({
     state: { sessions },
     ...(getLiveSessions ? { getLiveSessions } : {}),
@@ -162,8 +163,9 @@ function makeHarness({ sessions = new Map(), getLiveSessions = null } = {}) {
     clearTimeoutFn: timers.clearTimeoutFn,
     onTrellisUpdate: (ids) => updates.push(ids),
     onCelebration: (taskPath) => celebrations.push(taskPath),
+    onAggregateChange: (aggregate) => aggregates.push(aggregate),
   });
-  return { fakeFs, timers, clock, updates, celebrations, activity, sessions };
+  return { fakeFs, timers, clock, updates, celebrations, aggregates, activity, sessions };
 }
 
 function addTask(fake, taskName, taskJson, { prd = false, root = PROJECT } = {}) {
@@ -870,5 +872,128 @@ describe("trellis-activity lifecycle", () => {
     assert.deepStrictEqual(h.timers.pendingDelays(), [ACTIVE_POLL_MS]);
     await h.timers.runDue();
     assert.strictEqual(h.activity.getTrellisInfo("pi:mine").phase, "execute");
+  });
+});
+
+// ── project aggregates (avatar R3/R3.1) ──
+
+describe("trellis-activity project aggregates", () => {
+  function bindCodex(h, { taskName = "task-a", taskJson = IN_PROGRESS_TASK } = {}) {
+    addTask(h.fakeFs, taskName, taskJson, { prd: true });
+    addPointer(
+      h.fakeFs,
+      "codex_s1.json",
+      pointerPayload({ platform: "codex", currentTask: `.trellis/tasks/${taskName}`, clockNow: h.clock.now })
+    );
+  }
+
+  it("counts executing tasks of bound roots and reports them once on change", async () => {
+    const h = makeHarness({
+      sessions: new Map([["s1", { agentId: "codex", cwd: CWD }]]),
+    });
+    bindCodex(h);
+    addTask(h.fakeFs, "task-b", { title: "B", status: "in_progress", subtasks: [] });
+    addTask(h.fakeFs, "task-c", { title: "C", status: "completed", subtasks: [] });
+
+    h.activity.start();
+    await h.timers.runDue();
+
+    assert.strictEqual(h.activity.getExecutingCount(), 2);
+    assert.strictEqual(h.activity.hasPlanningBinding(), false);
+    assert.deepStrictEqual(h.aggregates, [{ executingCount: 2, planningActive: false }]);
+
+    // Steady rounds with nothing changed must not re-fan-out.
+    await h.timers.runDue();
+    assert.strictEqual(h.aggregates.length, 1);
+  });
+
+  it("dedupes one root across sessions bound to different tasks", async () => {
+    const h = makeHarness({
+      sessions: new Map([
+        ["s1", { agentId: "codex", cwd: CWD }],
+        ["s2", { agentId: "claude-code", cwd: CWD }],
+      ]),
+    });
+    bindCodex(h, { taskName: "task-a" });
+    addTask(h.fakeFs, "task-b", { title: "B", status: "in_progress", subtasks: [] });
+    addPointer(
+      h.fakeFs,
+      "claude_s2.json",
+      pointerPayload({ platform: "claude", currentTask: ".trellis/tasks/task-b", clockNow: h.clock.now })
+    );
+
+    h.activity.start();
+    await h.timers.runDue();
+
+    assert.strictEqual(h.activity.getExecutingCount(), 2);
+    assert.deepStrictEqual(h.aggregates, [{ executingCount: 2, planningActive: false }]);
+  });
+
+  it("flags planning bindings and clears them when the task moves to executing", async () => {
+    const h = makeHarness({
+      sessions: new Map([["s1", { agentId: "codex", cwd: CWD }]]),
+    });
+    bindCodex(h, { taskJson: { title: "A", status: "planning", subtasks: [] } });
+
+    h.activity.start();
+    await h.timers.runDue();
+
+    assert.strictEqual(h.activity.hasPlanningBinding(), true);
+    assert.strictEqual(h.activity.getExecutingCount(), 0);
+    assert.deepStrictEqual(h.aggregates, [{ executingCount: 0, planningActive: true }]);
+
+    // Task moves planning → in_progress. parallelCount rides a 30s TTL cache,
+    // so advance past it before the next round.
+    h.fakeFs.add(
+      path.join(PROJECT, ".trellis", "tasks", "task-a", "task.json"),
+      JSON.stringify({ title: "A", status: "in_progress", subtasks: [] })
+    );
+    h.clock.now += 31 * 1000;
+    await h.timers.runDue();
+
+    assert.strictEqual(h.activity.hasPlanningBinding(), false);
+    assert.strictEqual(h.activity.getExecutingCount(), 1);
+    assert.deepStrictEqual(h.aggregates, [
+      { executingCount: 0, planningActive: true },
+      { executingCount: 1, planningActive: false },
+    ]);
+  });
+
+  it("clears aggregates when the last bound session disappears", async () => {
+    const h = makeHarness({
+      sessions: new Map([["s1", { agentId: "codex", cwd: CWD }]]),
+    });
+    bindCodex(h);
+
+    h.activity.start();
+    await h.timers.runDue();
+    assert.strictEqual(h.activity.getExecutingCount(), 1);
+
+    h.sessions.clear();
+    await h.timers.runDue();
+
+    assert.strictEqual(h.activity.getExecutingCount(), 0);
+    assert.strictEqual(h.activity.hasPlanningBinding(), false);
+    assert.deepStrictEqual(h.aggregates, [
+      { executingCount: 1, planningActive: false },
+      { executingCount: 0, planningActive: false },
+    ]);
+  });
+
+  it("stop() resets the aggregates without fan-out", async () => {
+    const h = makeHarness({
+      sessions: new Map([["s1", { agentId: "codex", cwd: CWD }]]),
+    });
+    bindCodex(h);
+
+    h.activity.start();
+    await h.timers.runDue();
+    const fanouts = h.aggregates.length;
+    assert.ok(fanouts > 0);
+
+    h.activity.stop();
+    assert.strictEqual(h.activity.getExecutingCount(), 0);
+    assert.strictEqual(h.activity.hasPlanningBinding(), false);
+    assert.strictEqual(h.aggregates.length, fanouts);
   });
 });

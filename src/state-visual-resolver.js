@@ -128,6 +128,13 @@ function selectTieredStateFile(tiers, count, fallbackFile) {
   return fallbackFile;
 }
 
+// Non-negative integer coercion for extra tier inputs (trellis parallel
+// tasks). NaN / negatives / garbage count as 0 so an absent source is a no-op.
+function normalizeTierExtraCount(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
+}
+
 function getWorkingSvg(options = {}) {
   const count = countActiveSessionsByStates(
     options.sessions,
@@ -142,7 +149,12 @@ function getWorkingSvg(options = {}) {
 }
 
 function getJugglingSvg(options = {}) {
-  const count = countLiveSubagents(options.sessions);
+  // Trellis parallel executing tasks join live subagents as tier inputs
+  // (avatar R3.1): both are simultaneous load on the pet, so the tier keys
+  // off their sum. A trellis-only upgrade (no subagents) starts from 0 and
+  // the parallel count alone picks the tier.
+  const count = countLiveSubagents(options.sessions)
+    + normalizeTierExtraCount(options.trellisParallelCount);
   const stateSvgs = options.stateSvgs;
   return selectTieredStateFile(
     options.theme && options.theme.jugglingTiers,
@@ -198,6 +210,7 @@ module.exports = {
   resolveVisualBinding,
   countActiveSessionsByStates,
   countLiveSubagents,
+  normalizeTierExtraCount,
   selectTieredStateFile,
   getWorkingSvg,
   getJugglingSvg,

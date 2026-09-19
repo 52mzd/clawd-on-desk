@@ -87,6 +87,13 @@ function createHolidayAccessoryRuntime(options = {}) {
   const clearTimeoutFn = options.clearTimeout || clearTimeout;
   const logWarn = options.logWarn || console.warn;
   const onAccessoryChange = options.onAccessoryChange || (() => true);
+  // Ephemeral head-slot filler (avatar R3 trellis thinking cap): applied only
+  // when manual + holiday resolution left the head slot empty, so user
+  // choices always keep priority. main.js supplies the trellis planning
+  // probe; absent means no override.
+  const resolveHeadAccessoryOverride = typeof options.resolveHeadAccessoryOverride === "function"
+    ? options.resolveHeadAccessoryOverride
+    : null;
 
   let started = false;
   let refreshTimer = null;
@@ -97,12 +104,16 @@ function createHolidayAccessoryRuntime(options = {}) {
     const snapshot = getSettingsSnapshot() || {};
     const theme = getActiveTheme() || null;
     const themeId = theme && theme._id;
-    const headId = getEffectivePetAccessoryIdForTheme({
+    let headId = getEffectivePetAccessoryIdForTheme({
       petAccessory: snapshot.petAccessory,
       holidayAccessoryEnabled: snapshot.holidayAccessoryEnabled,
       themeId,
       date: now(),
     });
+    if (headId === "none" && resolveHeadAccessoryOverride) {
+      const overrideId = resolveHeadAccessoryOverride();
+      if (isPetAccessoryId(overrideId)) headId = overrideId;
+    }
     const mouthId = getPetMouthAccessoryIdForTheme(snapshot.petMouthAccessory, themeId);
     return {
       key: `${themeId || ""}|${headId}|${mouthId}`,

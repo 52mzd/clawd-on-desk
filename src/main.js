@@ -1055,11 +1055,18 @@ if (_loadedStartupTheme._id !== _requestedThemeId || _loadedStartupTheme._varian
 // wall clock — the midnight/holiday race the canonical payload exists to end.
 function getEffectivePetAccessoryPayloads(activeTheme = getActiveTheme()) {
   const snapshot = _settingsController.getSnapshot();
-  const headId = getEffectivePetAccessoryIdForTheme({
+  let headId = getEffectivePetAccessoryIdForTheme({
     petAccessory: snapshot.petAccessory,
     holidayAccessoryEnabled: snapshot.holidayAccessoryEnabled,
     themeId: activeTheme && activeTheme._id,
   });
+  // Trellis planning thinking cap (avatar R3): only fills an otherwise empty
+  // head slot — manual and holiday accessories keep priority. Themes without
+  // accessory support silently degrade via buildPetAccessoryPayload.
+  if (headId === "none") {
+    const phaseAccessoryId = getTrellisPhaseAccessoryId();
+    if (phaseAccessoryId) headId = phaseAccessoryId;
+  }
   const mouthId = getPetMouthAccessoryIdForTheme(
     snapshot.petMouthAccessory,
     activeTheme && activeTheme._id
@@ -1068,6 +1075,16 @@ function getEffectivePetAccessoryPayloads(activeTheme = getActiveTheme()) {
     head: buildPetAccessoryPayload(headId, activeTheme),
     mouth: buildPetMouthAccessoryPayload(mouthId, activeTheme),
   };
+}
+
+// Ephemeral, never persisted: while any bound live trellis task is in the
+// planning phase the pet wears the wizard hat. Shared by the accessory
+// payload resolver above and the holiday runtime's independent delivery so
+// both compute the same head slot.
+const TRELLIS_PLANNING_ACCESSORY_ID = "wizard-hat";
+function getTrellisPhaseAccessoryId() {
+  if (!_trellisActivity || !_trellisActivity.hasPlanningBinding()) return null;
+  return TRELLIS_PLANNING_ACCESSORY_ID;
 }
 
 function getEffectivePetAccessoryIds() {
@@ -2388,6 +2405,11 @@ const _stateCtx = {
   // (it needs _state.sessions) without reordering module setup.
   trellisResolver: (sessionId) =>
     _trellisActivity ? _trellisActivity.getTrellisInfo(sessionId) : null,
+  // Trellis parallel executing count (avatar R3.1): feeds the display-only
+  // working→juggling upgrade inside state.js. Same lazy forward reference as
+  // trellisResolver — pure aggregate cache read, zero extra IO.
+  getTrellisProjectExecutingCount: () =>
+    _trellisActivity ? _trellisActivity.getExecutingCount() : 0,
   hasReplyableCompletionMapping: (sessionId, session) => !!(
     telegramDirectSend
     && typeof telegramDirectSend.hasReplyableCompletionMapping === "function"
@@ -2533,6 +2555,20 @@ _trellisActivity = createTrellisActivity({
     // agent-idle semantics, not the pet's mouse-idle render state — those
     // disagree exactly when the user is away from the mouse).
     if (_trellisBubble) _trellisBubble.maybeShow();
+  },
+  // Avatar R3/R3.1: phase aggregates drive the pet visual. executingCount
+  // feeds the working→juggling display lift (state.js resolves it again on
+  // the next event; refresh here so the swap lands without waiting for one),
+  // planningActive toggles the wizard-hat via the standard accessory
+  // delivery. setState's own DND gate and the delivery's renderer-ack
+  // contract both stay intact; best-effort — a closed renderer retries on
+  // the next aggregate change.
+  onAggregateChange: () => {
+    try {
+      const displayState = _state.resolveDisplayState();
+      _state.setState(displayState, _state.getSvgOverride(displayState));
+    } catch {}
+    try { deliverAccessorySlotsSnapshot(); } catch {}
   },
   onCelebration: createTrellisCelebration({
     getDnd: () => doNotDisturb,
@@ -4733,6 +4769,10 @@ const holidayAccessoryRuntime = createHolidayAccessoryRuntime({
   sendToRenderer,
   onAccessoryChange: syncHitWin,
   logWarn: console.warn,
+  // Avatar R3: holiday refreshes (midnight timer / clock events) re-derive
+  // the head slot independently — route them through the same trellis
+  // planning override so a holiday delivery can't silently drop the hat.
+  resolveHeadAccessoryOverride: () => getTrellisPhaseAccessoryId(),
 });
 
 const settingsEffectRouter = createSettingsEffectRouter({

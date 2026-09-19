@@ -268,6 +268,24 @@ entry.id 直接当外部工具记录 id 用的代码都会静默失配（HUD 徽
   落定），无帧循环环境（测试 harness）同步 fallback，否则 0 或旧值。
   新增 `session-hud:*` IPC 通道必须同步补 session-ipc.test.js 频道
   白名单与依赖基座（required dep 缺失会被白名单测试拦住）。
+- **阶段化身与并行 juggling**（avatar R3/R3.1）：`onAggregateChange({
+  executingCount, planningActive})` 只在聚合值变化时 fan out（steady
+  轮零触发；`stop()` 复位不 fan out）。三段契约：① **thinking-cap
+  配件链**——planning 阶段 wizard-hat 是 ephemeral 补位：仅当
+  manual+holiday 解析后 head 槽为 `none` 时注入（main.js
+  `getEffectivePetAccessoryPayloads` 与 holiday runtime 注入的
+  `resolveHeadAccessoryOverride` 两条独立 delivery 必须同口径），不写
+  prefs、不顶掉 holiday（窗口内）或 manual 选择；主题无该配件经
+  `buildPetAccessoryPayload` 静默降级。② **juggling 显示层升级**——
+  `resolveDisplayState` 仅在 base 为 `working` 且跨项目
+  `executingCount >= 2` 时返回 `juggling`：显示层 only，不改状态机、
+  不加 REQUIRED_STATES、不写回 session.state；juggling tier 取
+  `live subagents + trellisParallelCount` 之和
+  （`normalizeTierExtraCount` 把 NaN/负/垃圾归 0）。③ **求和口径**——
+  per-root 去重（同 root 多会话只计一次），仅统计本轮仍有 bound
+  live session 的 root（复用 `parallelCache`，零额外 IO）；最后绑定
+  消失的下一轮必须清零（`clearStaleBindings`）。注入侧
+  `getTrellisProjectExecutingCount` 缺失/throw/垃圾值一律归 0 走旧路径。
 
 #### §4.1 详情行高度契约（code-spec 7 段式）
 

@@ -3432,13 +3432,35 @@ function disposeKimiPermissionSession(sessionId) {
   stopKimiPermissionPoll(sessionId);
 }
 
+// Injected by main.js from the trellis-activity aggregate cache (pure memory
+// read). Absent getter — unit-test runtimes, no trellis wiring — means 0 and
+// the display upgrade below is inert.
+const TRELLIS_JUGGLING_MIN_PARALLEL = 2;
+function getTrellisExecutingCount() {
+  if (typeof ctx.getTrellisProjectExecutingCount !== "function") return 0;
+  try {
+    const n = Number(ctx.getTrellisProjectExecutingCount());
+    return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
+  } catch {
+    return 0;
+  }
+}
+
 function resolveDisplayState() {
-  return resolveDisplayStateFromSessions(sessions, {
+  const base = resolveDisplayStateFromSessions(sessions, {
     statePriority: STATE_PRIORITY,
     permissionLocked: hasPermissionAnimationLock(),
     updateVisualState,
     updateVisualPriority,
   });
+  // Trellis parallel-task juggling (avatar R3.1): a working pet with ≥2
+  // executing trellis tasks across bound projects shows the juggling visual.
+  // Display-only lift of "working" — subagent juggling (session.state ===
+  // "juggling", priority 4) already outranks working and is never touched.
+  if (base === "working" && getTrellisExecutingCount() >= TRELLIS_JUGGLING_MIN_PARALLEL) {
+    return "juggling";
+  }
+  return base;
 }
 
 function setUpdateVisualState(kind) {
@@ -3466,6 +3488,7 @@ function getSvgOverride(state) {
     displayHintMap: DISPLAY_HINT_MAP,
     theme,
     stateSvgs: STATE_SVGS,
+    trellisParallelCount: getTrellisExecutingCount(),
   });
 }
 

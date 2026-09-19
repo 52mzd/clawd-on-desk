@@ -60,6 +60,7 @@ function createTrellisActivity(options) {
   const clearTimeoutFn = opts.clearTimeoutFn || clearTimeout;
   const onTrellisUpdate = typeof opts.onTrellisUpdate === "function" ? opts.onTrellisUpdate : null;
   const onCelebration = typeof opts.onCelebration === "function" ? opts.onCelebration : null;
+  const onAggregateChange = typeof opts.onAggregateChange === "function" ? opts.onAggregateChange : null;
 
   let lifecycleToken = 0;
   let pollTimer = null;
@@ -84,6 +85,12 @@ function createTrellisActivity(options) {
   // Absolute .trellis root → { count, activeTasks, computedAt } (per-root
   // summary cache: parallelCount + the Settings active-task digest).
   const parallelCache = new Map();
+  // Project aggregates for the pet visual (avatar R3/R3.1): total executing
+  // tasks across roots that still have a bound live session, and whether any
+  // bound task is in the planning phase. Both are rewritten from the same
+  // caches each poll round — pure memory reads, zero extra IO (R4).
+  let executingCount = 0;
+  let planningActive = false;
 
   // ── lifecycle ──
 
@@ -129,6 +136,8 @@ function createTrellisActivity(options) {
     taskRelPaths.clear();
     lastCelebrationAt.clear();
     parallelCache.clear();
+    executingCount = 0;
+    planningActive = false;
     return wasStarted;
   }
 
@@ -137,6 +146,39 @@ function createTrellisActivity(options) {
   function getTrellisInfo(sessionId) {
     const value = sessionCache.get(sessionId);
     return value === undefined ? null : value;
+  }
+
+  // R3 thinking-cap gate: true while any bound live session's task is in
+  // the planning phase. The cache only holds entries for live sessions, so
+  // this cannot go stale beyond one poll round.
+  function hasPlanningBinding() {
+    for (const info of sessionCache.values()) {
+      if (info && info.phase === "plan") return true;
+    }
+    return false;
+  }
+
+  // R3.1 parallel-task juggling input: total executing tasks across roots
+  // that still have a bound live session (per-root deduped, so two sessions
+  // on one project count that project's tasks once).
+  function getExecutingCount() {
+    return executingCount;
+  }
+
+  function setAggregate(nextExecuting, nextPlanning) {
+    if (nextExecuting === executingCount && nextPlanning === planningActive) return;
+    executingCount = nextExecuting;
+    planningActive = nextPlanning;
+    if (onAggregateChange) onAggregateChange({ executingCount, planningActive });
+  }
+
+  // Aggregate fanout for rounds with no bound session left: stale bindings
+  // must not keep the wizard-hat or the juggling tier alive after the last
+  // bound session disappears from the live snapshot.
+  function clearStaleBindings() {
+    if (sessionCache.size === 0) return;
+    sessionCache.clear();
+    setAggregate(0, false);
   }
 
   // ── read-only fs helpers ──
@@ -196,6 +238,8 @@ function createTrellisActivity(options) {
       if (bound.length) {
         delayMs = ACTIVE_POLL_MS;
         await refreshBindings(bound);
+      } else {
+        clearStaleBindings();
       }
     } catch (err) {
       // A failed round must never kill the loop: log, retry next round (D6).
@@ -300,6 +344,21 @@ function createTrellisActivity(options) {
 
     const archived = await detectArchivedTasks(nextResolved);
     recordPhaseTransitions(nextResolved, archived);
+
+    // R3/R3.1 project aggregate: count executing tasks per root that still
+    // has a bound session this round (resolveSessionTrellis already warmed
+    // parallelCache), then fan out only on change.
+    const boundRoots = new Set();
+    for (const { session, root } of bound) {
+      if (nextResolved.get(session.sessionId)) boundRoots.add(root);
+    }
+    let nextExecuting = 0;
+    for (const root of boundRoots) {
+      const summary = parallelCache.get(root);
+      if (summary) nextExecuting += summary.count;
+    }
+    setAggregate(nextExecuting, hasPlanningBinding());
+
     if (changed.length && onTrellisUpdate) onTrellisUpdate(changed);
   }
 
@@ -551,6 +610,8 @@ function createTrellisActivity(options) {
     stop,
     getTrellisInfo,
     getByProject,
+    getExecutingCount,
+    hasPlanningBinding,
   };
 }
 
