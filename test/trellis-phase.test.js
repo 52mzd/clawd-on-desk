@@ -12,6 +12,7 @@ const {
   sessionPointerKey,
   derivePhase,
   deriveProgress,
+  deriveNextStepHint,
 } = require("../src/trellis-phase");
 
 // Every sanitize/hash expectation below was produced by running the Python
@@ -252,5 +253,43 @@ describe("trellis-phase deriveProgress (subtask counting, never 0/0)", () => {
       deriveProgress({ subtasks: [null, "x", { status: "completed" }] }),
       { done: 1, total: 3 }
     );
+  });
+});
+
+describe("deriveNextStepHint", () => {
+  it("maps plan → trellisHintPlan without params", () => {
+    assert.deepStrictEqual(deriveNextStepHint({ phase: "plan" }), { key: "trellisHintPlan" });
+  });
+
+  it("maps execute → trellisHintExecute with sanitized progress params", () => {
+    assert.deepStrictEqual(
+      deriveNextStepHint({ phase: "execute", progress: { done: 2, total: 5 } }),
+      { key: "trellisHintExecute", params: { done: 2, total: 5 } }
+    );
+    // Missing/invalid progress degrades to 0/0, never NaN into i18n strings.
+    assert.deepStrictEqual(
+      deriveNextStepHint({ phase: "execute", progress: null }),
+      { key: "trellisHintExecute", params: { done: 0, total: 0 } }
+    );
+    // Fractional counts truncate; negatives clamp to 0.
+    assert.deepStrictEqual(
+      deriveNextStepHint({ phase: "execute", progress: { done: 1.7, total: 3 } }),
+      { key: "trellisHintExecute", params: { done: 1, total: 3 } }
+    );
+    assert.deepStrictEqual(
+      deriveNextStepHint({ phase: "execute", progress: { done: -2, total: -4 } }),
+      { key: "trellisHintExecute", params: { done: 0, total: 0 } }
+    );
+  });
+
+  it("maps finish → trellisHintFinish", () => {
+    assert.deepStrictEqual(deriveNextStepHint({ phase: "finish" }), { key: "trellisHintFinish" });
+  });
+
+  it("returns null for done / unknown phase / null input (no nagging)", () => {
+    assert.strictEqual(deriveNextStepHint({ phase: "done" }), null);
+    assert.strictEqual(deriveNextStepHint({ phase: null }), null);
+    assert.strictEqual(deriveNextStepHint(null), null);
+    assert.strictEqual(deriveNextStepHint("execute"), null);
   });
 });

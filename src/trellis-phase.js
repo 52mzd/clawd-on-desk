@@ -120,6 +120,29 @@ function deriveProgress(taskJson) {
   return { done, total: subtasks.length };
 }
 
+// Next-step guidance for the idle bubble + HUD tooltip. Pure mapping from
+// phase → {key, params?} | null; done/unknown stay null (archive is already
+// covered by the celebration channel, no nagging hint for it).
+function deriveNextStepHint(trellisInfo) {
+  if (!trellisInfo || typeof trellisInfo !== "object") return null;
+  const phase = trellisInfo.phase;
+  if (phase === "plan") return { key: "trellisHintPlan" };
+  if (phase === "execute") {
+    const progress = trellisInfo.progress;
+    const done = Number(progress && progress.done);
+    const total = Number(progress && progress.total);
+    return {
+      key: "trellisHintExecute",
+      params: {
+        done: Number.isFinite(done) ? Math.max(0, Math.trunc(done)) : 0,
+        total: Number.isFinite(total) ? Math.max(0, Math.trunc(total)) : 0,
+      },
+    };
+  }
+  if (phase === "finish") return { key: "trellisHintFinish" };
+  return null;
+}
+
 module.exports = {
   PLATFORM_ALIASES,
   SANITIZE_MAX_LEN,
@@ -129,4 +152,5 @@ module.exports = {
   sessionPointerKey,
   derivePhase,
   deriveProgress,
+  deriveNextStepHint,
 };

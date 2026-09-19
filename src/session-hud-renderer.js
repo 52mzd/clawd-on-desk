@@ -184,9 +184,9 @@ function usageChipInfo(session) {
 // clicks bubble to the row's handler, so jumping reuses the row's existing
 // focus path without a new channel.
 const TRELLIS_PHASE_CHIP = {
-  plan: { key: "sessionHudTrellisPhasePlan", cls: "trellis-plan" },
-  execute: { key: "sessionHudTrellisPhaseExecute", cls: "trellis-execute" },
-  finish: { key: "sessionHudTrellisPhaseFinish", cls: "trellis-finish" },
+  plan: { key: "sessionHudTrellisPhasePlan", cls: "trellis-plan", hintKey: "trellisHintPlan" },
+  execute: { key: "sessionHudTrellisPhaseExecute", cls: "trellis-execute", hintKey: "trellisHintExecute" },
+  finish: { key: "sessionHudTrellisPhaseFinish", cls: "trellis-finish", hintKey: "trellisHintFinish" },
   done: { key: "sessionHudTrellisPhaseDone", cls: "trellis-done" },
 };
 
@@ -205,12 +205,18 @@ function trellisChipInfo(session) {
   if (Number.isFinite(parallel) && parallel > 1) {
     label += ` \u00d7${Math.trunc(parallel)}`;
   }
+  let hint = "";
+  if (phase.hintKey) {
+    hint = t(phase.hintKey)
+      .replace("{done}", String(Math.max(0, Math.trunc(Number(info.progress && info.progress.done) || 0))))
+      .replace("{total}", String(Math.max(0, Math.trunc(Number(info.progress && info.progress.total) || 0))));
+  }
   return {
     label,
     cls: phase.cls,
     title: t("sessionHudTrellisTooltip")
       .replace("{title}", info.title || info.taskPath || "")
-      .replace("{phase}", t(phase.key)),
+      .replace("{phase}", t(phase.key)) + (hint ? "\n" + hint : ""),
   };
 }
 

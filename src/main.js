@@ -94,6 +94,7 @@ const createSettingsEffectRouter = require("./settings-effect-router");
 const { createRecapRuntime } = require("./recap-runtime");
 const { createTrellisActivity } = require("./trellis-activity");
 const { createTrellisCelebration } = require("./trellis-celebration");
+const { createTrellisBubble, TRELLIS_BUBBLE_DIMENSIONS } = require("./trellis-bubble");
 const { createKimiQuotaClient } = require("./kimi-quota-client");
 const { createKimiQuotaCredentialStore } = require("./kimi-quota-credential-store");
 const { createKimiQuotaRuntime } = require("./kimi-quota-runtime");
@@ -1599,7 +1600,11 @@ function requestClickReaction(file, duration) {
 
 function sendToRenderer(channel, ...args) {
   if (channel === "state-change") {
-    return requestDisplayedVisual(args[0], args[1], args[2] || {});
+    const delivered = requestDisplayedVisual(args[0], args[1], args[2] || {});
+    // Pet render state settled on idle → bubble candidate (gate chain
+    // re-evaluates agent-idle + dedup inside maybeShow).
+    if (_trellisBubble && args[0] === "idle") _trellisBubble.maybeShow();
+    return delivered;
   }
   return sendRawToRenderer(channel, ...args);
 }
@@ -2259,6 +2264,7 @@ function deliverRendererThemeConfig() {
 // _state.sessions as its live-session view); _stateCtx.trellisResolver reads
 // it lazily, so a plain forward let declaration is enough.
 let _trellisActivity = null;
+let _trellisBubble = null;
 
 const recapRuntime = createRecapRuntime({
   // A default-filled snapshot is not user authority when prefs were unreadable,
@@ -2411,6 +2417,100 @@ const { parseSessionKey } = require("./session-key");
 // reaction entry (requestClickReaction) shared with the 4-click combo — the
 // celebrate helper owns the DND / petHidden / mini gates and picks the
 // theme's reactions.double clip, silently skipping themes without one.
+// Idle thought-bubble: names the bound trellis task + next-step hint.
+// Same gate chain as the celebration; shown once per task per Clawd session.
+// Trigger points: state-change("idle") in sendToRenderer (above) and the
+// onTrellisUpdate callback just above.
+_trellisBubble = createTrellisBubble({
+  getDnd: () => doNotDisturb,
+  getPetHidden: () => petWindowRuntime.isPetEffectivelyHidden(),
+  getMiniMode: () => _mini.getMiniMode(),
+  getPetState: () => {
+    // "idle" here means no working session (agent idle), NOT the pet's
+    // mouse-idle animation state — the user is usually at the computer when
+    // the bubble should appear, so mouse activity must not gate it.
+    const snap = _state.getLastSessionSnapshot ? _state.getLastSessionSnapshot() : null;
+    const sessions = snap && Array.isArray(snap.sessions) ? snap.sessions : [];
+    return sessions.some((s) => s && s.state === "working") ? "working" : "idle";
+  },
+  getPetBounds: () => petWindowRuntime.getPetWindowBounds(),
+  getWorkArea: () => {
+    const b = petWindowRuntime.getPetWindowBounds() || { x: 0, y: 0, width: 0, height: 0 };
+    return screen.getDisplayMatching(b).workArea;
+  },
+  getAvoidRects: () => [
+    ..._perm.getVisibleBubbleBounds(),
+    ...(() => {
+      const hudWin = _sessionHud.getWindow();
+      return hudWin && !hudWin.isDestroyed() ? [hudWin.getBounds()] : [];
+    })(),
+  ],
+  getHudReservedOffset: () => _sessionHud.getHudReservedOffset(),
+  getPermissionReservedHeight: () =>
+    _perm.getVisibleBubbleBounds().reduce((max, r) => Math.max(max, r.height || 0), 0),
+  getWindow: () => {
+    // Same shape as update-bubble: standalone transparent window, no parent.
+    // macOS "panel" type matches the proven update-bubble construction.
+    const bubbleWin = new BrowserWindow({
+      width: TRELLIS_BUBBLE_DIMENSIONS.width,
+      height: TRELLIS_BUBBLE_DIMENSIONS.height,
+      show: false,
+      frame: false,
+      transparent: true,
+      alwaysOnTop: true,
+      resizable: false,
+      skipTaskbar: true,
+      hasShadow: false,
+      focusable: false,
+      ...(process.platform === "darwin" ? { type: "panel" } : {}),
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    });
+    bubbleWin.setAlwaysOnTop(true, "screen-saver");
+    bubbleWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false });
+    bubbleWin.loadFile(path.join(__dirname, "trellis-bubble.html"));
+    return bubbleWin;
+  },
+  setText: (win, { title, hint }) => {
+    if (!win || win.isDestroyed()) return;
+    const inject = () => {
+      if (win.isDestroyed()) return;
+      win.webContents.executeJavaScript(
+        `window.__setBubbleText(${JSON.stringify({ title, hint })})`
+      ).catch(() => { /* window closing */ });
+    };
+    // loadFile is async: injecting before did-finish-load means
+    // __setBubbleText is undefined and the error gets swallowed —
+    // the window then shows as fully transparent (invisible).
+    if (win.webContents.isLoadingMainFrame()) {
+      win.webContents.once("did-finish-load", inject);
+    } else {
+      inject();
+    }
+  },
+  formatHint: ({ key, params }) => {
+    let text = translate(key);
+    if (params) {
+      text = text
+        .replace("{done}", String(params.done))
+        .replace("{total}", String(params.total));
+    }
+    return text;
+  },
+  getTrellisInfo: () => {
+    // First live bound session wins; bubble names one task, not a list.
+    const snapshot = _state.getLastSessionSnapshot ? _state.getLastSessionSnapshot() : null;
+    const sessions = snapshot && Array.isArray(snapshot.sessions) ? snapshot.sessions : [];
+    for (const entry of sessions) {
+      const info = entry && entry.trellis;
+      if (info && info.taskPath) return info;
+    }
+    return null;
+  },
+});
+
 _trellisActivity = createTrellisActivity({
   getLiveSessions: () => {
     const snapshot = _state.getLastSessionSnapshot ? _state.getLastSessionSnapshot() : null;
@@ -2427,8 +2527,12 @@ _trellisActivity = createTrellisActivity({
     }));
   },
   state: _state,
-  onTrellisUpdate: () => {
+  onTrellisUpdate: (changedKeys) => {
     _state.emitSessionSnapshot();
+    // Binding arrived/changed → let the bubble decide (its gate chain uses
+    // agent-idle semantics, not the pet's mouse-idle render state — those
+    // disagree exactly when the user is away from the mouse).
+    if (_trellisBubble) _trellisBubble.maybeShow();
   },
   onCelebration: createTrellisCelebration({
     getDnd: () => doNotDisturb,
@@ -2439,6 +2543,7 @@ _trellisActivity = createTrellisActivity({
   }),
 });
 _trellisActivity.start();
+
 displayedVisualProjection = createDisplayedVisualProjection({
   projectActualFile: ({ actualFile, requested }) => {
     const activeTheme = getActiveTheme();
@@ -6000,6 +6105,9 @@ if (!gotTheLock) {
     if (displayedVisualProjection) displayedVisualProjection.dispose();
     if (_trellisActivity) {
       try { _trellisActivity.stop(); } catch {}
+    }
+    if (_trellisBubble) {
+      try { _trellisBubble.dispose(); } catch {}
     }
     try { recapRuntime.dispose(); } catch {}
     _state.cleanup();
