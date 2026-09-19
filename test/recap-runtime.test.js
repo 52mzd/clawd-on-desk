@@ -32,6 +32,7 @@ function fixture(t, options = {}) {
     setTimeout: () => ({ unref() {} }),
     clearTimeout: () => {},
     onRecorded: options.onRecorded,
+    getTrellisDailyCounts: options.getTrellisDailyCounts,
   });
   return {
     root,
@@ -173,6 +174,29 @@ test("runtime writes journal before aggregate, dedupes, and exposes no HMAC iden
   assert.equal(JSON.stringify(view).includes("private-server"), false);
   await f.runtime.whenReady();
   assert.equal(f.runtime.query("today").days[0].rows[0].metrics.activityEvents, 1);
+});
+
+test("query surfaces the Trellis projector snapshot and tolerates its failure", (t) => {
+  const calls = [];
+  const f = fixture(t, {
+    getTrellisDailyCounts: (localDate, timeZoneId) => {
+      calls.push([localDate, timeZoneId]);
+      if (calls.length === 1) return { projects: 2, tasksCreated: 3, tasksCompleted: 1 };
+      if (calls.length === 2) return null;
+      throw new Error("projector exploded");
+    },
+  });
+  f.runtime.start();
+  assert.deepEqual(f.runtime.query("today").trellis, { projects: 2, tasksCreated: 3, tasksCompleted: 1 });
+  assert.equal(f.runtime.query("today").trellis, null);
+  assert.equal(f.runtime.query("today").trellis, null);
+  assert.deepEqual(calls, [["2026-08-29", "UTC"], ["2026-08-29", "UTC"], ["2026-08-29", "UTC"]]);
+});
+
+test("query without a Trellis projector reports trellis null", (t) => {
+  const f = fixture(t);
+  f.runtime.start();
+  assert.equal(f.runtime.query("today").trellis, null);
 });
 
 test("runtime announces only accepted durable records", (t) => {

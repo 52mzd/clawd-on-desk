@@ -78,6 +78,12 @@ function createRecapRuntime(options = {}) {
   const clearTimer = options.clearTimeout || clearTimeout;
   const logWarn = options.logWarn || console.warn;
   const onChanged = typeof options.onRecorded === "function" ? options.onRecorded : null;
+  // Optional Trellis lifecycle projector: (localDate, timeZoneId) => counts
+  // | null. Kept outside the store/journal pipeline — Trellis counts are
+  // recomputed from task trees on every query and never persisted.
+  const getTrellisDailyCounts = typeof options.getTrellisDailyCounts === "function"
+    ? options.getTrellisDailyCounts
+    : null;
   const store = options.store || createRecapStore({
     root: options.root || DEFAULT_ROOT,
     now,
@@ -434,6 +440,15 @@ function createRecapRuntime(options = {}) {
     return true;
   }
 
+  function queryTrellis(localDate, timeZoneId) {
+    if (!getTrellisDailyCounts) return null;
+    try {
+      return getTrellisDailyCounts(localDate, timeZoneId);
+    } catch {
+      return null;
+    }
+  }
+
   function query(period = "today", optionsValue = {}) {
     const queryNow = now();
     const queryTime = freezeLocalTime(queryNow, getTimeZone());
@@ -458,6 +473,7 @@ function createRecapRuntime(options = {}) {
         startDate,
         endDate,
         recordingEnabled: false,
+        trellis: null,
         days: [],
       };
     }
@@ -536,6 +552,7 @@ function createRecapRuntime(options = {}) {
       recordingStartedLocalMinute: startedParts ? startedParts.localMinute : null,
       recordingStartedHourElapsedMinutes,
       recordingEnabled: enabled,
+      trellis: queryTrellis(queryTime.localDate, queryTime.timeZoneId),
       days,
     };
   }

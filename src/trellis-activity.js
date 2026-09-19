@@ -593,6 +593,19 @@ function createTrellisActivity(options) {
     return summary;
   }
 
+  // Roots whose .trellis directory was resolved from a live session cwd
+  // during this process. Positive lookups are cached forever (a cwd does not
+  // move its .trellis root), so a project worked on earlier today still
+  // feeds the recap Trellis section after its sessions ended. stop() clears
+  // the cache together with everything else.
+  function getKnownRoots() {
+    const roots = new Set();
+    for (const entry of rootCache.values()) {
+      if (entry && entry.root) roots.add(entry.root);
+    }
+    return [...roots];
+  }
+
   // Phase-5 read for the Settings → Trellis tab: active (planning /
   // in_progress) task digests of one project, served from the polling cache
   // only — a pure memory lookup, never a fresh disk scan. null when the root
@@ -610,6 +623,7 @@ function createTrellisActivity(options) {
     stop,
     getTrellisInfo,
     getByProject,
+    getKnownRoots,
     getExecutingCount,
     hasPlanningBinding,
   };

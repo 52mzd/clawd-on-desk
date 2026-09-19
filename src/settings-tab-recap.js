@@ -529,6 +529,44 @@
     return partial ? `${formatted} · ${t("recapMetricPartial")}` : formatted;
   }
 
+  // Trellis lifecycle strip (today view only): counts come from the
+  // query's trellis snapshot. null (no observed .trellis root, projector
+  // failure) or all-zero hides the whole section — the same null convention
+  // as every other recap metric.
+  function buildTrellisSection(data) {
+    if (view.period !== "today" || !data || !data.trellis) return null;
+    const created = Number.isSafeInteger(data.trellis.tasksCreated) ? data.trellis.tasksCreated : 0;
+    const completed = Number.isSafeInteger(data.trellis.tasksCompleted) ? data.trellis.tasksCompleted : 0;
+    if (created === 0 && completed === 0) return null;
+    const section = document.createElement("section");
+    section.className = "recap-trellis";
+    const identity = document.createElement("div");
+    identity.className = "recap-trellis-identity";
+    const mark = document.createElement("span");
+    mark.className = "recap-trellis-mark";
+    mark.setAttribute("aria-hidden", "true");
+    const name = document.createElement("strong");
+    name.textContent = t("recapTrellisLabel");
+    identity.appendChild(mark);
+    identity.appendChild(name);
+    const metrics = document.createElement("dl");
+    metrics.className = "recap-trellis-metrics";
+    const entries = [["recapTrellisCreated", created], ["recapTrellisCompleted", completed]];
+    for (const [labelKey, value] of entries) {
+      const pair = document.createElement("div");
+      const label = document.createElement("dt");
+      label.textContent = t(labelKey);
+      const count = document.createElement("dd");
+      count.textContent = formatNumber(value);
+      pair.appendChild(label);
+      pair.appendChild(count);
+      metrics.appendChild(pair);
+    }
+    section.appendChild(identity);
+    section.appendChild(metrics);
+    return section;
+  }
+
   function buildAgentRows(summary, interaction) {
     const list = document.createElement("div");
     list.className = "recap-agent-list";
@@ -902,6 +940,9 @@
     hint.textContent = t("recapInteractionHint");
     lede.appendChild(hint);
     card.appendChild(lede);
+
+    const trellisSection = buildTrellisSection(data);
+    if (trellisSection) card.appendChild(trellisSection);
 
     const interaction = {
       rowElements: new Map(),

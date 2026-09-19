@@ -92,6 +92,7 @@ const { registerSettingsIpc } = require("./settings-ipc");
 const { registerTrellisIpc } = require("./trellis-ipc");
 const createSettingsEffectRouter = require("./settings-effect-router");
 const { createRecapRuntime } = require("./recap-runtime");
+const { computeTrellisDailyCounts } = require("./recap-trellis");
 const { createTrellisActivity } = require("./trellis-activity");
 const { createTrellisCelebration } = require("./trellis-celebration");
 const { createTrellisBubble, TRELLIS_BUBBLE_DIMENSIONS } = require("./trellis-bubble");
@@ -2292,6 +2293,14 @@ const recapRuntime = createRecapRuntime({
   powerMonitor,
   logWarn: console.warn,
   onRecorded: () => settingsWindowRuntime.notifyRecapChanged(),
+  // Trellis lifecycle counts for the Footprints page: recomputed from the
+  // task trees of roots observed by _trellisActivity (created after this
+  // runtime, hence the lazy getter); never written into recap storage.
+  getTrellisDailyCounts: (localDate, timeZoneId) => computeTrellisDailyCounts({
+    roots: _trellisActivity ? _trellisActivity.getKnownRoots() : [],
+    localDate,
+    timeZoneId,
+  }),
 });
 
 const _stateCtx = {

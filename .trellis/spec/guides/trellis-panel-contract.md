@@ -198,7 +198,13 @@ createTrellisActivity({ state?, getLiveSessions?, fs, now, setTimeoutFn,
 activity.start() / activity.stop()
 activity.getTrellisInfo(sessionKey)   // → TrellisInfo | null（null = 不渲染）
 activity.getByProject(projectPath)    // → { count, activeTasks:[{title,phase}] } | null
+activity.getKnownRoots()              // → string[]（本进程正向缓存的 .trellis 根，stop() 清空）
 ```
+
+`getKnownRoots()` 只读导出 rootCache 的正向缓存（cwd 命中过 .trellis 根），
+供 recap Trellis 段（`src/recap-trellis.js`）作扫描根：会话结束后根保留
+（当天早些时候做过的项目晚上仍进小结），stop() 清空后 recap 查询得到空
+数组 → 返回 null → 该段隐藏。**只返回根路径字符串，不含任何任务内容。**
 
 `onCelebration(taskRelPath: string)` 两个触发源，参数统一是
 `.trellis/tasks/<name>` 相对路径：①轮询观察到 →finish/done 跃迁；

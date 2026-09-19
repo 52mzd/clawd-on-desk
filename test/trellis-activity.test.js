@@ -768,6 +768,48 @@ describe("trellis-activity getByProject", () => {
   });
 });
 
+// ── getKnownRoots (recap Trellis section data source) ──
+
+describe("trellis-activity getKnownRoots", () => {
+  it("returns deduplicated resolved roots and survives session changes", async () => {
+    const h = makeHarness({
+      sessions: new Map([
+        ["pi:one", { agentId: "pi", cwd: CWD }],
+        ["pi:two", { agentId: "pi", cwd: path.join(PROJECT, "lib") }],
+      ]),
+    });
+    addTask(h.fakeFs, "task-a", IN_PROGRESS_TASK);
+    h.activity.start();
+    await h.timers.runDue();
+
+    assert.deepStrictEqual(h.activity.getKnownRoots(), [path.join(PROJECT, ".trellis")]);
+
+    // Roots are retained after the sessions end (positive cache): a project
+    // worked on earlier today still feeds the recap section tonight.
+    h.sessions.clear();
+    h.clock.now += 60 * 1000;
+    await h.timers.runDue();
+    assert.deepStrictEqual(h.activity.getKnownRoots(), [path.join(PROJECT, ".trellis")]);
+  });
+
+  it("is empty without a .trellis root and after stop()", async () => {
+    const h = makeHarness({
+      sessions: new Map([["pi:mine", { agentId: "pi", cwd: CWD }]]),
+    });
+    h.activity.start();
+    await h.timers.runDue();
+    assert.deepStrictEqual(h.activity.getKnownRoots(), []);
+
+    addTask(h.fakeFs, "task-a", IN_PROGRESS_TASK);
+    h.clock.now += 60 * 1000;
+    await h.timers.runDue();
+    assert.deepStrictEqual(h.activity.getKnownRoots(), [path.join(PROJECT, ".trellis")]);
+
+    h.activity.stop();
+    assert.deepStrictEqual(h.activity.getKnownRoots(), []);
+  });
+});
+
 // ── read-only red line (design D7) ──
 
 describe("trellis-activity read-only red line", () => {
