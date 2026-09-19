@@ -139,3 +139,26 @@ Settings 新增 Trellis tab：扫描多目录项目的 Trellis 安装/版本/平
 ### Status
 
 [OK] **Completed**
+
+
+## Session 5: 创意池 v1 全量落地：R3/R3.1 阶段化身 + R5 Dashboard 面板 + recap 日报
+
+**Date**: 2026-09-20
+**Task**: 创意池 v1 全量落地：R3/R3.1 阶段化身 + R5 Dashboard 面板 + recap 日报
+**Branch**: `main`
+
+### Summary
+
+创意池剩余项三连发（每件独立 implement→check→commit→archive）：① avatar-animations（2abf05c3）：R3 planning 阶段 ephemeral wizard-hat 配件（manual>holiday>trellis 优先级链，不写 prefs）+ R3.1 trellis 并行 executingCount≥2 时显示层升级 juggling（state-priority.js 零改动、注入 getter 缺失时降级为 0 完全走旧路径）；② dashboard-page（110de440）：dashboard-trellis-panel.js UMD 纯聚合 + 签名防抖 + hidden 属性 CSS 守卫 + focusSession 行点击/多会话 chip 展开，7 语言 2 新键；③ recap-report（26c5cb97）：recap-trellis.js 无状态重算投影器（active createdAt + archive completedAt 目录即真相），recap-v1 schema 零变更、null≠0 隐藏语义、getKnownRoots 契约入 spec。全量 npm test 失败集三件均与基线一致；真机冒烟 trellis 计数与 Python 独立遍历一致。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2abf05c3` | (see git log) |
+| `110de440` | (see git log) |
+| `26c5cb97` | (see git log) |
+
+### Status
+
+[OK] **Completed**
