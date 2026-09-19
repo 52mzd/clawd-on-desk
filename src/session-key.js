@@ -39,6 +39,28 @@ function resolveSessionIdentity(rawSessionId, profileId = LOCAL_SESSION_PROFILE_
   });
 }
 
+function decodePart(value) {
+  return Buffer.from(value, "base64url").toString("utf8");
+}
+
+// Reverse of makeSessionKey for consumers (e.g. the trellis activity poller)
+// that receive a scoped session key but need the raw agent session id that
+// external tooling (e.g. trellis .runtime pointer files) recorded on disk.
+function parseSessionKey(key) {
+  if (typeof key !== "string" || !key) return null;
+  const parts = key.split(".");
+  if (parts.length !== 3 || parts[0] !== SESSION_KEY_VERSION) return null;
+  try {
+    const profileId = decodePart(parts[1]);
+    const rawSessionId = decodePart(parts[2]);
+    if (!profileId || !rawSessionId) return null;
+    if (!isValidSessionProfileId(profileId)) return null;
+    return { profileId, rawSessionId };
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
   LOCAL_SESSION_PROFILE_ID,
   SESSION_KEY_VERSION,
@@ -46,4 +68,5 @@ module.exports = {
   isValidSessionProfileId,
   makeSessionKey,
   resolveSessionIdentity,
+  parseSessionKey,
 };

@@ -127,6 +127,7 @@ function makeStrings() {
     "trellisGlobalUpgradeTarget",
     "trellisRootUnreadable", "trellisNoProjectsUnreadable", "trellisChannelAuto",
     "trellisUpgradeAllCount",
+    "trellisActiveTasks", "trellisPhasePlan", "trellisPhaseExecute", "trellisPhaseFinish", "trellisPhaseDone",
   ];
   const strings = {};
   for (const key of keys) strings[key] = key;
@@ -134,6 +135,11 @@ function makeStrings() {
   // actually reached the copy.
   strings.trellisStaleRecord = "stale:{platforms}";
   strings.trellisStaleFix = "fix:{platform}";
+  strings.trellisActiveTasks = "active:{tasks}";
+  strings.trellisPhasePlan = "P-plan";
+  strings.trellisPhaseExecute = "P-execute";
+  strings.trellisPhaseFinish = "P-finish";
+  strings.trellisPhaseDone = "P-done";
   return strings;
 }
 
@@ -516,6 +522,39 @@ describe("settings-tab-trellis degradation and scoping", () => {
     findButton(renderPanel(session.core, session), "trellisUpgradeAll").dispatch("click");
     await flushPromises();
     assert.strictEqual(findButton(renderPanel(session.core, session), "trellisCancel").disabled, true);
+  });
+  it("renders the active-task digest attached to a scanned project row", async () => {
+    const session = loadTab();
+    await scanWith(session, makeScanResult({
+      projects: [{
+        path: "/tmp/root/p", name: "p", installed: true, current: "0.6.17", target: "0.6.17",
+        upgradable: false, platforms: [], staleIds: [], staleRecord: false,
+        activeTasks: [
+          { title: "Trellis 流程感知", phase: "execute" },
+          { title: "Next thing", phase: "plan" },
+        ],
+      }],
+    }));
+
+    const rendered = texts(renderPanel(session.core, session));
+    assert.ok(
+      rendered.includes("active:Trellis 流程感知 (P-execute) · Next thing (P-plan)"),
+      `digest renders on the project row: ${rendered.join(" | ")}`
+    );
+  });
+
+  it("renders no digest when the project has no active tasks", async () => {
+    const session = loadTab();
+    await scanWith(session, makeScanResult({
+      projects: [{
+        path: "/tmp/root/q", name: "q", installed: true, current: "0.6.17", target: "0.6.17",
+        upgradable: false, platforms: [], staleIds: [], staleRecord: false,
+      }],
+    }));
+
+    const rendered = texts(renderPanel(session.core, session));
+    assert.ok(rendered.some((text) => typeof text === "string" && text.includes("/tmp/root/q")), "row renders");
+    assert.ok(!rendered.some((text) => typeof text === "string" && text.includes("active:")), "no digest");
   });
 });
 

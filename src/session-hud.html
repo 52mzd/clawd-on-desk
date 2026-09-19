@@ -257,6 +257,22 @@ body { padding: 2px 3px 8px; }
 .usage-warm { background: rgba(245, 158, 11, 0.15); color: #b45309; }
 .usage-hot { background: rgba(239, 68, 68, 0.10); color: #dc2626; }
 
+/* Trellis phase badge (phase 3): same compact chip geometry as state-chip;
+   unknown phases never reach the DOM (trellisChipInfo filters them). */
+.trellis-chip {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.trellis-plan { background: rgba(59, 130, 246, 0.13); color: #2563eb; }
+.trellis-execute { background: rgba(22, 163, 74, 0.13); color: #16a34a; }
+.trellis-finish { background: rgba(245, 158, 11, 0.15); color: #b45309; }
+.trellis-done { background: rgba(107, 114, 128, 0.13); color: #52525b; }
+
 @media (prefers-color-scheme: dark) {
   .chip-thinking { background: rgba(99, 102, 241, 0.20); color: #818cf8; }
   .chip-working { background: rgba(22, 163, 74, 0.20); color: #4ade80; }
@@ -268,6 +284,10 @@ body { padding: 2px 3px 8px; }
   .usage-neutral { background: rgba(107, 114, 128, 0.20); color: #a1a1aa; }
   .usage-warm { background: rgba(245, 158, 11, 0.20); color: #fbbf24; }
   .usage-hot { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+  .trellis-plan { background: rgba(59, 130, 246, 0.20); color: #60a5fa; }
+  .trellis-execute { background: rgba(22, 163, 74, 0.20); color: #4ade80; }
+  .trellis-finish { background: rgba(245, 158, 11, 0.20); color: #fbbf24; }
+  .trellis-done { background: rgba(107, 114, 128, 0.20); color: #a1a1aa; }
 }
 
 .completion-bell {

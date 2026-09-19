@@ -179,6 +179,41 @@ function usageChipInfo(session) {
   };
 }
 
+// Trellis phase badge (phase 3): rendered only when the session snapshot
+// carries a trellis binding. The badge is NOT a separate click target —
+// clicks bubble to the row's handler, so jumping reuses the row's existing
+// focus path without a new channel.
+const TRELLIS_PHASE_CHIP = {
+  plan: { key: "sessionHudTrellisPhasePlan", cls: "trellis-plan" },
+  execute: { key: "sessionHudTrellisPhaseExecute", cls: "trellis-execute" },
+  finish: { key: "sessionHudTrellisPhaseFinish", cls: "trellis-finish" },
+  done: { key: "sessionHudTrellisPhaseDone", cls: "trellis-done" },
+};
+
+function trellisChipInfo(session) {
+  const info = session && session.trellis;
+  if (!info || typeof info !== "object") return null;
+  const phase = TRELLIS_PHASE_CHIP[info.phase];
+  if (!phase) return null;
+  let label = t(phase.key);
+  const done = Number(info.progress && info.progress.done);
+  const total = Number(info.progress && info.progress.total);
+  if (Number.isFinite(done) && Number.isFinite(total) && total > 0) {
+    label += ` ${Math.max(0, Math.trunc(done))}/${Math.trunc(total)}`;
+  }
+  const parallel = Number(info.parallelCount);
+  if (Number.isFinite(parallel) && parallel > 1) {
+    label += ` \u00d7${Math.trunc(parallel)}`;
+  }
+  return {
+    label,
+    cls: phase.cls,
+    title: t("sessionHudTrellisTooltip")
+      .replace("{title}", info.title || info.taskPath || "")
+      .replace("{phase}", t(phase.key)),
+  };
+}
+
 const BELL_SVG = `<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/></svg>`;
 const FOCUS_UNAVAILABLE_SVG = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4l16 16"/><path d="M9.5 5h5"/><path d="M7 9h10"/><path d="M5 14h9"/><path d="M12 19h5"/></svg>`;
 const FOLDER_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h6l2 2h10v9H3z"/><path d="M3 7V5h6l2 2"/></svg>`;
@@ -310,6 +345,16 @@ function createRowForSession(session, now) {
     right.appendChild(bell);
     hasRightContent = true;
 
+  }
+
+  const trellisInfo = feedbackText ? null : trellisChipInfo(session);
+  if (trellisInfo) {
+    const chip = document.createElement("span");
+    chip.className = `trellis-chip ${trellisInfo.cls}`;
+    chip.textContent = trellisInfo.label;
+    chip.title = trellisInfo.title;
+    right.appendChild(chip);
+    hasRightContent = true;
   }
 
   if (!canFocus) {

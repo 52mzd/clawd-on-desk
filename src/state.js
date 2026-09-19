@@ -1100,6 +1100,9 @@ function buildSessionSnapshot() {
     permissionAutomationMode: typeof ctx.getPermissionAutomationMode === "function"
       ? ctx.getPermissionAutomationMode()
       : "off",
+    trellisResolver: typeof ctx.trellisResolver === "function"
+      ? ctx.trellisResolver
+      : null,
   });
 }
 

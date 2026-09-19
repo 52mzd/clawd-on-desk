@@ -7,6 +7,7 @@ const {
   LOCAL_SESSION_PROFILE_ID,
   makeSessionKey,
   resolveSessionIdentity,
+  parseSessionKey,
 } = require("../src/session-key");
 
 test("local session action ids use the same opaque profile envelope", () => {
@@ -42,4 +43,28 @@ test("a local raw id cannot collide with a remote canonical key", () => {
     rawSessionId: remote,
   });
   assert.notEqual(local, remote);
+});
+
+test("parseSessionKey reverses makeSessionKey back to the raw session id", () => {
+  const key = makeSessionKey({
+    profileId: "profile_a",
+    rawSessionId: "pi:01a0b040-370d-70b0-8e1a-9c8626dfd17e",
+  });
+  const parsed = parseSessionKey(key);
+  assert.deepEqual(parsed, {
+    profileId: "profile_a",
+    rawSessionId: "pi:01a0b040-370d-70b0-8e1a-9c8626dfd17e",
+  });
+});
+
+test("parseSessionKey rejects malformed and non-session keys", () => {
+  assert.equal(parseSessionKey(""), null);
+  assert.equal(parseSessionKey(null), null);
+  assert.equal(parseSessionKey("thread-1"), null);
+  assert.equal(parseSessionKey("s1.only"), null);
+  assert.equal(parseSessionKey("s1.a.b.c"), null);
+  assert.equal(parseSessionKey("v2.a.b"), null);
+  // Note: an unknown-but-well-formed profile id ("no-such-profile") IS
+  // parsed successfully — profile validity is dynamic (remote SSH profiles)
+  // and not parseSessionKey's concern; it only reverses the envelope.
 });

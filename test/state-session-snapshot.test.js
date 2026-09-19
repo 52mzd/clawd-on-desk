@@ -1275,3 +1275,59 @@ describe("state-session-snapshot builder", () => {
     assert.notStrictEqual(sessionSnapshotSignature(nova), sessionSnapshotSignature(renamed));
   });
 });
+
+describe("trellis resolver pass-through", () => {
+  const trellisInfo = {
+    taskPath: ".trellis/tasks/09-19-trellis-phase-awareness",
+    title: "Trellis 流程感知",
+    phase: "execute",
+    progress: { done: 2, total: 5 },
+    parallelCount: 3,
+  };
+
+  function buildWith(resolver) {
+    return buildSessionSnapshot(new Map([
+      ["bound", session("working")],
+      ["unbound", session("idle")],
+    ]), {
+      statePriority: STATE_PRIORITY,
+      getAgentIconUrl: () => null,
+      ...(resolver === undefined ? {} : { trellisResolver: resolver }),
+    });
+  }
+
+  it("passes the resolver result through untouched for the matching session id", () => {
+    const snapshot = buildWith((id) => (id === "bound" ? trellisInfo : null));
+    const byId = new Map(snapshot.sessions.map((entry) => [entry.id, entry]));
+    assert.deepStrictEqual(byId.get("bound").trellis, trellisInfo);
+    assert.strictEqual(byId.get("bound").trellis, trellisInfo);
+    assert.strictEqual(byId.get("unbound").trellis, null);
+  });
+
+  it("degrades to null when the resolver is absent, returns null/undefined, or throws", () => {
+    assert.strictEqual(buildWith().sessions.every((entry) => entry.trellis === null), true);
+    assert.strictEqual(buildWith(() => null).sessions.every((entry) => entry.trellis === null), true);
+    assert.strictEqual(buildWith(() => undefined).sessions.every((entry) => entry.trellis === null), true);
+    assert.strictEqual(
+      buildWith(() => { throw new Error("boom"); }).sessions.every((entry) => entry.trellis === null),
+      true
+    );
+  });
+
+  it("includes trellis in the snapshot signature so binding changes broadcast", () => {
+    const before = buildWith(() => null);
+    const after = buildWith((id) => (id === "bound" ? trellisInfo : null));
+    assert.notStrictEqual(sessionSnapshotSignature(before), sessionSnapshotSignature(after));
+
+    const progressed = buildWith((id) => (id === "bound"
+      ? { ...trellisInfo, phase: "finish", progress: { done: 5, total: 5 } }
+      : null));
+    assert.notStrictEqual(sessionSnapshotSignature(after), sessionSnapshotSignature(progressed));
+  });
+
+  it("keeps two snapshots without trellis differences signature-identical", () => {
+    const a = buildWith(() => trellisInfo);
+    const b = buildWith(() => ({ ...trellisInfo }));
+    assert.strictEqual(sessionSnapshotSignature(a), sessionSnapshotSignature(b));
+  });
+});

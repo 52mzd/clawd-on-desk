@@ -92,6 +92,8 @@ const { registerSettingsIpc } = require("./settings-ipc");
 const { registerTrellisIpc } = require("./trellis-ipc");
 const createSettingsEffectRouter = require("./settings-effect-router");
 const { createRecapRuntime } = require("./recap-runtime");
+const { createTrellisActivity } = require("./trellis-activity");
+const { createTrellisCelebration } = require("./trellis-celebration");
 const { createKimiQuotaClient } = require("./kimi-quota-client");
 const { createKimiQuotaCredentialStore } = require("./kimi-quota-credential-store");
 const { createKimiQuotaRuntime } = require("./kimi-quota-runtime");
@@ -2253,6 +2255,11 @@ function deliverRendererThemeConfig() {
   return !!finalizePetAccessorySlotsDelivery(delivery, delivered);
 }
 
+// Trellis phase awareness (phase 3): constructed after _state below (it needs
+// _state.sessions as its live-session view); _stateCtx.trellisResolver reads
+// it lazily, so a plain forward let declaration is enough.
+let _trellisActivity = null;
+
 const recapRuntime = createRecapRuntime({
   // A default-filled snapshot is not user authority when prefs were unreadable,
   // recovered, or written by a future app version. Start paused in that case;
@@ -2370,6 +2377,11 @@ const _stateCtx = {
     codexWorkingStaleMs,
     detachedIdleStaleMs,
   }),
+  // Trellis phase awareness (phase 3): snapshot entries query this lazily on
+  // every build, so the activity owner can be constructed after _state below
+  // (it needs _state.sessions) without reordering module setup.
+  trellisResolver: (sessionId) =>
+    _trellisActivity ? _trellisActivity.getTrellisInfo(sessionId) : null,
   hasReplyableCompletionMapping: (sessionId, session) => !!(
     telegramDirectSend
     && typeof telegramDirectSend.hasReplyableCompletionMapping === "function"
@@ -2388,6 +2400,45 @@ const _stateCtx = {
   hasAnyEnabledAgent: () => _runtimeAgentGate.hasAnyEnabledAgent(),
 };
 const _state = require("./state")(_stateCtx);
+const { parseSessionKey } = require("./session-key");
+// Trellis phase awareness (phase 3): read-only polling owner (design D3/D4).
+// Binds live sessions onto .trellis tasks, serves the snapshot resolver via
+// _stateCtx, and re-emits the session snapshot when a binding changes — the
+// signature (state-session-snapshot) already includes entry.trellis, so
+// emitSessionSnapshot fans the update out through the existing broadcast
+// path (Dashboard + HUD sendSnapshot with hudShow*/hudPinned merge).
+// Phase 4: onCelebration routes →finish/done transitions into the one-shot
+// reaction entry (requestClickReaction) shared with the 4-click combo — the
+// celebrate helper owns the DND / petHidden / mini gates and picks the
+// theme's reactions.double clip, silently skipping themes without one.
+_trellisActivity = createTrellisActivity({
+  getLiveSessions: () => {
+    const snapshot = _state.getLastSessionSnapshot ? _state.getLastSessionSnapshot() : null;
+    const sessions = snapshot && Array.isArray(snapshot.sessions) ? snapshot.sessions : [];
+    return sessions.map((entry) => ({
+      id: entry.id,
+      sessionId: entry.id,
+      // Snapshot ids are scoped keys ("s1.<b64>.<b64>"); trellis pointer files
+      // on disk are named after the RAW session id, so decode before matching.
+      rawSessionId: (parseSessionKey(entry.id) || {}).rawSessionId || entry.id,
+      agentId: entry.agentId,
+      cwd: entry.cwd,
+      headless: !!entry.headless,
+    }));
+  },
+  state: _state,
+  onTrellisUpdate: () => {
+    _state.emitSessionSnapshot();
+  },
+  onCelebration: createTrellisCelebration({
+    getDnd: () => doNotDisturb,
+    getPetHidden: () => petWindowRuntime.isPetEffectivelyHidden(),
+    getMiniMode: () => _mini.getMiniMode(),
+    getTheme: () => getActiveTheme(),
+    playReaction: requestClickReaction,
+  }),
+});
+_trellisActivity.start();
 displayedVisualProjection = createDisplayedVisualProjection({
   projectActualFile: ({ actualFile, requested }) => {
     const activeTheme = getActiveTheme();
@@ -4986,6 +5037,11 @@ const trellisIpcRuntime = registerTrellisIpc({
   // Reuse the Settings-window trust test: trellis-ipc refuses every call when
   // this is missing or throws, so wiring it here is what opens the surface.
   isTrustedEvent: settingsIpcRuntime.isTrustedEvent,
+  // Phase 5 (R5): the Settings → Trellis tab consumes the active-task digest
+  // through the existing scan payload; this getter is a pure cache read
+  // inside trellis-activity (no new channel, no fresh disk scan).
+  getActivityByProject: (projectPath) =>
+    _trellisActivity ? _trellisActivity.getByProject(projectPath) : null,
 });
 
 const sessionHistoryRuntime = createSessionHistoryRuntime({
@@ -5942,6 +5998,9 @@ if (!gotTheLock) {
     if (_lanWss) _lanWss.cleanup();
     _updateBubble.cleanup();
     if (displayedVisualProjection) displayedVisualProjection.dispose();
+    if (_trellisActivity) {
+      try { _trellisActivity.stop(); } catch {}
+    }
     try { recapRuntime.dispose(); } catch {}
     _state.cleanup();
     _tick.cleanup();

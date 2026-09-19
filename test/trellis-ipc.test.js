@@ -114,6 +114,8 @@ function createHarness(options = {}) {
     dialog: options.dialog || null,
     getSettingsWindow: () => null,
     sendToSettings: (channel, payload) => progress.push([channel, payload]),
+    // Phase-5 digest source for the scan payload (see withActiveTasks).
+    ...("getActivityByProject" in options ? { getActivityByProject: options.getActivityByProject } : {}),
     // The trust gate is fail-closed in production; these tests exercise the
     // handler bodies, so they opt in with a permissionless guard. Passing
     // `isTrustedEvent: null` explicitly keeps the guard absent.
@@ -245,6 +247,50 @@ describe("trellis IPC registration", () => {
     const bogusResult = await bogus.ipcMain.invoke("settings:trellis-scan", { channel: "--evil" });
     assert.strictEqual(bogusResult.status, "ok");
     assert.strictEqual(bogusResult.projects[0].channel, "latest");
+  });
+
+  it("attaches the read-only active-task digest to scanned projects", async () => {
+    const root = makeTmpDir();
+    const projectPath = makeProject(root, "digest");
+    const digestCalls = [];
+    const h = createHarness({
+      roots: [root],
+      getActivityByProject: (p) => {
+        digestCalls.push(p);
+        if (p === projectPath) return [{ title: "A", phase: "execute" }, { title: "B", phase: "plan" }];
+        return null;
+      },
+    });
+
+    const result = await h.ipcMain.invoke("settings:trellis-scan");
+    assert.strictEqual(result.status, "ok");
+    const row = result.projects.find((p) => p.path === projectPath);
+    assert.ok(row, "scanned row present");
+    assert.deepStrictEqual(row.activeTasks, [{ title: "A", phase: "execute" }, { title: "B", phase: "plan" }]);
+    assert.deepStrictEqual(digestCalls, [projectPath]);
+  });
+
+  it("leaves rows untouched when the digest is absent, null, or malformed", async () => {
+    const root = makeTmpDir();
+    const projectPath = makeProject(root, "nodigest");
+    // A throwing getter must degrade exactly like a null one.
+    const h = createHarness({
+      roots: [root],
+      getActivityByProject: () => { throw new Error("cache missing"); },
+    });
+    const result = await h.ipcMain.invoke("settings:trellis-scan");
+    const row = result.projects.find((p) => p.path === projectPath);
+    assert.ok(row);
+    assert.strictEqual("activeTasks" in row, false);
+
+    // Malformed entries are dropped; if nothing survives, no field at all.
+    const junk = createHarness({
+      roots: [root],
+      getActivityByProject: () => [{ title: "A", phase: 42 }, { title: "", phase: "plan" }, "junk"],
+    });
+    const junkResult = await junk.ipcMain.invoke("settings:trellis-scan");
+    const junkRow = junkResult.projects.find((p) => p.path === projectPath);
+    assert.strictEqual("activeTasks" in junkRow, false);
   });
 
   it("gives every stale platform its own read-only repair command", async () => {

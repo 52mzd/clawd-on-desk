@@ -25,6 +25,15 @@
   }
   const UNKNOWN_PLATFORM_PREFIX = "unknown:";
   const GLOBAL_INSTALL_COMMAND = "npm i -g @mindfoldhq/trellis";
+  // Phase labels for the active-task digest (project.activeTasks, attached
+  // to the scan payload by the main process). Mirrors the HUD's phase set;
+  // an unknown phase falls back to its raw string instead of a bare key.
+  const PHASE_KEYS = {
+    plan: "trellisPhasePlan",
+    execute: "trellisPhaseExecute",
+    finish: "trellisPhaseFinish",
+    done: "trellisPhaseDone",
+  };
 
   let state = null;
   let helpers = null;
@@ -701,6 +710,20 @@
       badge.title = staleText;
       warning.appendChild(badge);
       text.appendChild(warning);
+    }
+
+    // Active Trellis tasks for this project (phase 5 / R5): served from the
+    // read-only activity cache on the scan payload. Absent (nothing active,
+    // or no bound session yet) → nothing is rendered, the row stays as before.
+    const activeTasks = Array.isArray(project.activeTasks) ? project.activeTasks : [];
+    if (activeTasks.length > 0) {
+      const tasks = activeTasks
+        .map((task) => `${task.title} (${PHASE_KEYS[task.phase] ? t(PHASE_KEYS[task.phase]) : task.phase})`)
+        .join(" · ");
+      const digest = document.createElement("span");
+      digest.className = "row-desc";
+      digest.textContent = tf("trellisActiveTasks", { tasks });
+      text.appendChild(digest);
     }
 
     const version = document.createElement("span");

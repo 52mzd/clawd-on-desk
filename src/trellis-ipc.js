@@ -88,6 +88,30 @@ function withStaleFixes(projects) {
   });
 }
 
+// Phase 5 (R5): attach each project's active-task digest (title + phase) to
+// the scan payload. The data comes from the read-only trellis-activity
+// polling cache (main injects the getter); a null digest leaves the row
+// untouched so the tab renders exactly as before. Only the {title, phase}
+// projection crosses the boundary — the digest carries no extra paths.
+function withActiveTasks(projects, getActivityByProject) {
+  if (typeof getActivityByProject !== "function" || !Array.isArray(projects)) return projects;
+  return projects.map((project) => {
+    if (!project || typeof project.path !== "string") return project;
+    let digest = null;
+    try {
+      digest = getActivityByProject(project.path);
+    } catch {
+      digest = null;
+    }
+    if (!Array.isArray(digest) || digest.length === 0) return project;
+    const activeTasks = digest
+      .filter((task) => task && typeof task.title === "string" && task.title && typeof task.phase === "string")
+      .map((task) => ({ title: task.title, phase: task.phase }));
+    if (activeTasks.length === 0) return project;
+    return { ...project, activeTasks };
+  });
+}
+
 function registerTrellisIpc(options = {}) {
   const ipcMain = requireDependency(options.ipcMain, "ipcMain");
   const settingsController = requireDependency(options.settingsController, "settingsController");
@@ -100,6 +124,12 @@ function registerTrellisIpc(options = {}) {
   const sendToSettings = typeof options.sendToSettings === "function"
     ? options.sendToSettings
     : () => {};
+  // Optional read-only digest source for withActiveTasks (phase 5). Absent
+  // (e.g. in tests that only exercise the CLI surface) the scan payload is
+  // left untouched.
+  const getActivityByProject = typeof options.getActivityByProject === "function"
+    ? options.getActivityByProject
+    : null;
   // Fail closed: a missing guard and a throwing guard both deny every call. A
   // permissive default here would silently turn any renderer into a write
   // surface, and a leaked exception message would hand the renderer internals.
@@ -147,7 +177,7 @@ function registerTrellisIpc(options = {}) {
     const result = await runtime.scan(channel ? { channel } : {});
     return {
       ...result,
-      projects: withStaleFixes(result.projects),
+      projects: withActiveTasks(withStaleFixes(result.projects), getActivityByProject),
       platformCatalog: PLATFORM_CATALOG,
       channelCatalog: CHANNEL_CATALOG,
     };
