@@ -179,6 +179,7 @@ async function renderer(options = {}) {
         canOfferLocalFolder: () => false,
         focusUnavailableReasonKey: () => "sessionFocusUnavailableRemote",
       },
+      ClawdDashboardTrellisPanel: require("../src/dashboard-trellis-panel"),
     },
     ResizeObserver: options.noResizeObserver ? undefined : class {
       constructor(callback) { this.callback = callback; observers.push(this); }

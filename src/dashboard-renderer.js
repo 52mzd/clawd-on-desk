@@ -1,6 +1,7 @@
 "use strict";
 
 const { canOfferLocalFolder, focusUnavailableReasonKey } = globalThis.ClawdSessionFocusUnavailable;
+const { aggregateTrellisTasks, TRELLIS_PHASE_BADGE } = globalThis.ClawdDashboardTrellisPanel;
 
 const AGENT_LABELS = {
   "claude-code": "Claude Code",
@@ -32,6 +33,7 @@ const titleEl = document.getElementById("title");
 const countEl = document.getElementById("count");
 const contentEl = document.getElementById("content");
 const quotaSummaryEl = document.getElementById("quotaSummary");
+const trellisPanelEl = document.getElementById("trellisPanel");
 // Fixed node in the header. Keeping the mode banner outside the card tree
 // means entering the mode never reflows or rebuilds the user's content.
 const quickBannerEl = document.getElementById("quickBanner");
@@ -1084,6 +1086,128 @@ function renderQuotaSummary(snapshot) {
   quotaSummaryEl.hidden = false;
 }
 
+// ── Trellis tasks panel ────────────────────────────────────────────────────
+// Read-only project of the per-session `trellis` bindings already riding
+// the snapshot (no new channel, no watcher): deduplicated per task by
+// aggregateTrellisTasks, rendered under the header like the quota summary,
+// and hidden entirely when no live session carries a binding. Expanded
+// multi-session rows survive the rebuild the same way HUD detail rows do
+// (module Set keyed by taskPath, re-read on every rebuild).
+const expandedTrellisTasks = new Set();
+let lastTrellisPanelSignature = null;
+
+function computeTrellisPanelSignature(tasks) {
+  return JSON.stringify({
+    lang: (i18nPayload && i18nPayload.lang) || "en",
+    tasks,
+    expanded: [...expandedTrellisTasks].sort(),
+  });
+}
+
+function trellisTaskRowTitle(task) {
+  return t("sessionHudTrellisTooltip")
+    .replace("{title}", task.title || task.taskPath)
+    .replace("{phase}", t(TRELLIS_PHASE_BADGE[task.phase].labelKey));
+}
+
+function createTrellisSessionChip(binding) {
+  const chip = document.createElement("button");
+  chip.type = "button";
+  chip.className = binding.canFocus
+    ? "trellis-session-chip"
+    : "trellis-session-chip trellis-session-chip-unfocusable";
+  chip.textContent = binding.displayTitle;
+  chip.title = binding.displayTitle;
+  if (!binding.canFocus) chip.disabled = true;
+  chip.addEventListener("click", (event) => {
+    event.stopPropagation();
+    window.dashboardAPI.focusSession(binding.id);
+  });
+  return chip;
+}
+
+function createTrellisTaskRow(task) {
+  const row = document.createElement("div");
+  row.className = "trellis-task-row";
+  row.title = trellisTaskRowTitle(task);
+
+  const main = document.createElement("div");
+  main.className = "trellis-task-main";
+  main.appendChild(createText("span", "trellis-task-title", task.title || task.taskPath));
+
+  const badge = TRELLIS_PHASE_BADGE[task.phase];
+  const phaseEl = createText("span", `trellis-phase-badge ${badge.cls}`, t(badge.labelKey));
+  main.appendChild(phaseEl);
+
+  if (task.progress) {
+    main.appendChild(createText(
+      "span",
+      "trellis-task-progress",
+      `${task.progress.done}/${task.progress.total}`
+    ));
+  }
+  if (task.sessions.length > 1) {
+    main.appendChild(createText(
+      "span",
+      "trellis-task-count",
+      t("dashboardTrellisBoundSessions").replace("{n}", String(task.sessions.length))
+    ));
+  }
+  row.appendChild(main);
+
+  // One focusable binding: the whole row is the jump target, reusing the
+  // card's existing focus path. Several bindings: the row expands into
+  // session chips and each chip owns its own focus call.
+  row.addEventListener("click", () => {
+    if (task.sessions.length > 1) {
+      if (expandedTrellisTasks.has(task.taskPath)) expandedTrellisTasks.delete(task.taskPath);
+      else expandedTrellisTasks.add(task.taskPath);
+      lastTrellisPanelSignature = null;
+      renderTrellisPanel();
+      return;
+    }
+    const only = task.sessions[0];
+    if (only && only.canFocus) window.dashboardAPI.focusSession(only.id);
+  });
+
+  if (expandedTrellisTasks.has(task.taskPath)) {
+    const chips = document.createElement("div");
+    chips.className = "trellis-task-sessions";
+    for (const binding of task.sessions) chips.appendChild(createTrellisSessionChip(binding));
+    row.appendChild(chips);
+    row.classList.add("trellis-task-row-expanded");
+  }
+
+  return row;
+}
+
+function renderTrellisPanel() {
+  if (!trellisPanelEl) return;
+  const sessions = Array.isArray(snapshot && snapshot.sessions) ? snapshot.sessions : [];
+  const tasks = aggregateTrellisTasks(sessions);
+  const signature = computeTrellisPanelSignature(tasks);
+  if (signature === lastTrellisPanelSignature) return;
+  lastTrellisPanelSignature = signature;
+
+  if (!tasks.length) {
+    expandedTrellisTasks.clear();
+    trellisPanelEl.hidden = true;
+    trellisPanelEl.replaceChildren();
+    return;
+  }
+
+  const livePaths = new Set(tasks.map((task) => task.taskPath));
+  for (const taskPath of expandedTrellisTasks) {
+    if (!livePaths.has(taskPath)) expandedTrellisTasks.delete(taskPath);
+  }
+
+  const fragment = document.createDocumentFragment();
+  fragment.appendChild(createText("div", "trellis-panel-title", t("dashboardTrellisSectionTitle")));
+  for (const task of tasks) fragment.appendChild(createTrellisTaskRow(task));
+  trellisPanelEl.replaceChildren(fragment);
+  trellisPanelEl.hidden = false;
+}
+
 function badgeLabel(badge) {
   const key = {
     running: "sessionBadgeRunning",
@@ -2073,6 +2197,7 @@ function render(options = {}) {
   countEl.textContent = t("dashboardCount").replace("{n}", count);
   document.title = t("dashboardWindowTitle");
   renderQuotaSummary(snapshot);
+  renderTrellisPanel();
 
   renderQuickBanner();
 

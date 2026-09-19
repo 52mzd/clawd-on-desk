@@ -194,6 +194,128 @@ h1 {
   font-size: 11px;
 }
 
+/* Trellis tasks panel: a read-only view of the per-session trellis bindings
+   riding the snapshot. Phase badge hues mirror the HUD chips
+   (session-hud.html .trellis-plan…) so one phase answers with the same
+   color on both surfaces. */
+.trellis-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+/* Author `display` overrides the UA rule for [hidden], so hidden needs its
+   own explicit override — same pattern as .quick-banner[hidden] above. */
+.trellis-panel[hidden] {
+  display: none;
+}
+
+.trellis-panel-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.trellis-task-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--row-border);
+  border-radius: 8px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.trellis-task-row:hover {
+  background: var(--surface-alt);
+}
+
+.trellis-task-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.trellis-task-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.trellis-phase-badge {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 999px;
+}
+
+.trellis-phase-badge.phase-plan { background: rgba(59, 130, 246, 0.13); color: #2563eb; }
+.trellis-phase-badge.phase-execute { background: rgba(22, 163, 74, 0.13); color: #16a34a; }
+.trellis-phase-badge.phase-finish { background: rgba(245, 158, 11, 0.15); color: #b45309; }
+.trellis-phase-badge.phase-done { background: rgba(107, 114, 128, 0.13); color: #52525b; }
+
+@media (prefers-color-scheme: dark) {
+  .trellis-phase-badge.phase-plan { background: rgba(59, 130, 246, 0.20); color: #60a5fa; }
+  .trellis-phase-badge.phase-execute { background: rgba(22, 163, 74, 0.20); color: #4ade80; }
+  .trellis-phase-badge.phase-finish { background: rgba(245, 158, 11, 0.20); color: #fbbf24; }
+  .trellis-phase-badge.phase-done { background: rgba(107, 114, 128, 0.20); color: #a1a1aa; }
+}
+
+.trellis-task-progress {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.trellis-task-count {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--subtle);
+}
+
+.trellis-task-sessions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.trellis-session-chip {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-alt);
+  color: var(--text);
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.trellis-session-chip:hover {
+  border-color: var(--accent);
+}
+
+.trellis-session-chip-unfocusable {
+  color: var(--subtle);
+  cursor: default;
+}
+
+.trellis-session-chip-unfocusable:hover {
+  border-color: var(--border);
+}
+
 .quota-summary {
   display: flex;
   flex-direction: column;
@@ -850,10 +972,12 @@ button:disabled {
       </div>
       <div id="quickBanner" class="quick-banner" role="status" aria-live="polite" hidden></div>
       <div id="quotaSummary" class="quota-summary" hidden></div>
+      <div id="trellisPanel" class="trellis-panel" hidden></div>
     </header>
     <main id="content" class="content" aria-live="polite"></main>
   </div>
   <script src="./session-focus-unavailable.js"></script>
+  <script src="./dashboard-trellis-panel.js"></script>
   <script src="./dashboard-renderer.js"></script>
 </body>
 </html>

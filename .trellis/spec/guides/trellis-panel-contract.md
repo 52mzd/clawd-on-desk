@@ -7,9 +7,11 @@ paths:
   - src/session-key.js
   - src/state-session-snapshot.js
   - src/session-hud-renderer.js
+  - src/dashboard-trellis-panel.js
   - test/trellis-*.test.js
   - test/settings-tab-trellis.test.js
   - test/session-key.test.js
+  - test/dashboard-trellis-panel.test.js
 ---
 
 # Trellis 面板的外部进程契约
@@ -335,6 +337,42 @@ Correct 渲染层实测 offsetHeight → IPC 回传 → main 重算
         .trellis-detail { flex: 0 0 auto; }
 ```
 
+#### §4.2 Dashboard Trellis 面板（第二个 `entry.trellis` UI 消费者）
+
+**1. Scope/Trigger**：Dashboard 页内任何消费 snapshot `entry.trellis`
+做任务列表的渲染代码。当前实现：`src/dashboard-trellis-panel.js`
+（纯聚合）+ `src/dashboard-renderer.js` 的 `renderTrellisPanel`。
+
+**2. Signatures**：
+- `aggregateTrellisTasks(sessions)` → 按 `taskPath` 去重的任务数组；
+  phase 不在 `TRELLIS_PHASE_BADGE` 四相内、taskPath 空白的绑定直接丢弃
+- `TRELLIS_PHASE_BADGE`：labelKey 复用 HUD 既有 `sessionHudTrellisPhase*`
+  7 语言键（**不新开 dashboard 前缀阶段键**），cls 是 Dashboard 本地徽标类
+- 模块是 `session-focus-unavailable.js` 的 UMD twin：测试 require、
+  `dashboard.html` 以相邻 `<script>` 加载、renderer 经
+  `globalThis.ClawdDashboardTrellisPanel` 解构——纯函数体内零 DOM/零 i18n/零 IPC
+
+**3. Contracts**：
+- 数据源只用 snapshot 内 `entry.trellis`（resolver 产物），不新开 watcher/IPC
+- 每秒 render() 重建卡片树时靠签名防抖：签名 =
+  `{lang, tasks, expanded(sorted)}` 的 JSON.stringify 全量比较；
+  展开/收起切换把签名置 null 强制重渲染
+- 展开态存模块级 `Set<taskPath>`，重建时重读；清理时机：任务列表清空时
+  `clear()`、每次重建剔除不在 livePaths 的 key（不是只增不减）
+- 隐藏语义：`.trellis-panel { display:flex }` 会让 author display 覆盖
+  UA 的 `[hidden]{display:none}`，必须显式写 `.trellis-panel[hidden] `
+  `{ display:none }`（同 `.quick-banner[hidden]` 既有模式），并有静态测试守卫
+
+**4. Wrong vs Correct**：
+```text
+Wrong   在 renderer 里内联聚合逻辑 / 新开 dashboardTrellisPhase* 键
+        面板隐藏只靠 `el.hidden = true`（flex 覆盖后仍泄漏 12px 边距）
+        expanded Set 只在 click 时写入，从不清理
+Correct 聚合入 dashboard-trellis-panel.js UMD；阶段文案复用 sessionHudTrellisPhase*
+        hidden 属性 + .trellis-panel[hidden] { display:none } 成对出现
+        重建时以 liveTasks 的 taskPath 集合修剪 Set
+```
+
 ### 5. 失败模式
 
 | 症状 | 根因 | 防护 |
@@ -344,6 +382,7 @@ Correct 渲染层实测 offsetHeight → IPC 回传 → main 重算
 | 阶段在 done/finish 间抖动连播动画 | 归档中目录移动的中间态 | 跃迁史 + 10s 抑制；指针悬空时 `detectArchivedTasks` 在同轮用 `tasks/archive/<month>/<name>` 精确名匹配判定 done 并庆祝（归档删指针与移目录是同一次提交，等下一轮必然绑定已消失；无归档副本的消失保持静默） |
 | 详情行文字被截断（显示不完整） | 用固定常数当展开行高度，遇换行即溢出 | 高度双轨制：固定行高 ×28 + 渲染层实测弹性高度回传（见 §4） |
 | 展开后 HUD 越缩越小 | detail 行可 flex-shrink，实测回传的是被压缩值，反馈成 runaway loop | `.trellis-detail { flex: 0 0 auto }`；实测值与压缩值必须区分 |
+| Dashboard 面板隐藏后仍留空白间距 | `.trellis-panel { display:flex }` 覆盖了 UA `[hidden]` 规则 | `.trellis-panel[hidden] { display:none }` + 静态测试断言（见 §4.2） |
 
 ### 6. 测试断言点（review 必查）
 

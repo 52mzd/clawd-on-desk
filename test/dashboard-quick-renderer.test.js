@@ -197,6 +197,7 @@ async function renderer(options = {}) {
         canOfferLocalFolder: () => false,
         focusUnavailableReasonKey: () => "sessionFocusUnavailableRemote",
       },
+      ClawdDashboardTrellisPanel: require("../src/dashboard-trellis-panel"),
     },
     setTimeout: (fn, delay) => {
       const id = ++timerId;
