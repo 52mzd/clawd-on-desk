@@ -246,6 +246,15 @@ entry.id 直接当外部工具记录 id 用的代码都会静默失配（HUD 徽
   不改 REQUIRED_STATES）。触发源两路：轮询可见的相位跃迁，以及归档
   完成（`task.py archive` 删指针+移目录是同一次提交，中间态不落盘，
   靠「绑定消失 + 归档副本存在」负空间检测；无副本的消失静默）。
+- **idle 任务气泡**（trellis-bubble）：agent-idle（无 working 会话）+
+  绑定任务 → 桌宠旁 thought-bubble 显示任务名 + `deriveNextStepHint`
+  引导行（plan/execute/finish 三档，done/null 不弹）；同 task 每会话
+  一次；4s 自动隐藏；DND/petHidden/mini 同门槛；定位复用 update-bubble
+  的 `__test.computeUpdateBubbleBounds`（permission stack + HUD 避让）。
+  两个语义坑：①「idle」是 agent-idle 不是鼠标 idle 渲染态（用户在场
+  时鼠标在动，鼠标 idle 永远不触发）；② loadFile 异步——注入文本必须
+  等 `did-finish-load`，否则 executeJavaScript 被 catch 吞掉、窗口全
+  透明。HUD chip tooltip 同源引导文案（7 语言）。
 
 ### 5. 失败模式
 
