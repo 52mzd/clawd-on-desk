@@ -85,3 +85,34 @@ Settings 新增 Trellis tab：扫描多目录项目的 Trellis 安装/版本/平
 ### Next Steps
 
 - 残余：归档庆祝动画未真机观察（单测覆盖）；配件映射/杂耍动画按 design D5 降级为 P2
+
+
+## Session 3: 归档庆祝修复：负空间检测 + 真机验证闭环
+
+**Date**: 2026-09-19
+**Task**: 归档庆祝修复：负空间检测 + 真机验证闭环
+**Branch**: `main`
+
+### Summary
+
+真机验证发现归档庆祝永不触发：task.py archive 删指针+移目录是同一次提交，等下一轮轮询绑定已消失，status 翻转的中间态不落盘。修复 detectArchivedTasks：跟踪每轮活跃绑定的 taskPath，绑定消失且 tasks/archive/<月>/<同名> 存在时同轮判定 done 并庆祝（精确名匹配、无归档副本的消失静默）。真机 4 轮验证（A-D）：切 clawd 主题后归档触发庆祝动画 src 轨迹已捕获；codex-pet 主题无 reactions.double 资产静默降级符合设计。break-loop 分析归因 E 隐性假设（轮询能观察到中间态），spec 三处沉淀：panel-contract Signatures 双触发源契约/归档负空间检测 Wrong-Correct 对、cross-layer guide Mistake 5。临时 prefs（theme 切换）已还原，工作树 clean。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ffb0d21f` | (see git log) |
+| `17208efa` | (see git log) |
+| `6cd4111a` | (see git log) |
+
+### Testing
+
+- [OK] trellis 系 8 文件 193/193 全绿（含新增归档庆祝正/负用例）；真机 CDP 探针确认 HUD 徽标绑定→归档→动画轨迹
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 无；归档庆祝已真机闭环。创意池 P2 项（配件映射/杂耍动画）在 phase-awareness 归档任务 design.md 中待取
