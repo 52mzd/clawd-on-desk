@@ -194,6 +194,32 @@ could return empty Phase 2.1 detail.
 
 ---
 
+## Internal-ID vs External-ID Boundary Checklist
+
+When internal state assigns its own identifier to an entity that ALSO has an
+external id (session keys vs agent-reported session ids, internal user ids vs
+provider ids, canonical names vs display names), the two id spaces never mix:
+
+- [ ] Before passing an id to an external system (or matching against files
+      the external system wrote), ask: **is this MY id or THEIR id?**
+- [ ] If it is an internal scoped/encoded key, decode to the external raw id
+      at the boundary (e.g. `parseSessionKey()` before reading trellis pointer
+      files named after raw session ids)
+- [ ] A match that silently never fires (null/empty/0 hits) is the signature
+      of this bug class — suspect id-space mismatch before business logic
+- [ ] Add a round-trip test (encode → decode → equals) plus an end-to-end
+      binding test that consumes the external artifact (real pointer file
+      name as fixture)
+
+**Real-world example**: Clawd's session HUD consumed snapshot entries whose
+`id` is a scoped key (`s1.<b64-profile>.<b64-raw>`), while trellis pointer
+files on disk are named after the raw session id (`pi_<uuid>.json`). Pointer
+matching always missed; the HUD showed the session row but no trellis badge
+(chips = 0) with zero errors logged. Fix: decode the scoped key at the
+`getLiveSessions` boundary before constructing the pointer filename.
+
+---
+
 ## Mode-Detection Probe Checklist
 
 When a CLI auto-detects a mode by probing a remote resource (e.g., checking if `index.json` exists to decide marketplace vs direct download):

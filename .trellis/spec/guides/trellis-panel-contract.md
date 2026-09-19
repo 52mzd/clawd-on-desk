@@ -1,11 +1,15 @@
 ---
 name: trellis-panel-contract
-description: Trellis Settings 面板的外部进程契约——argv 冻结、信任门禁、输出解析身份
+description: Trellis 集成契约——外部进程 argv 冻结/信任门禁/输出解析身份，以及只读流程感知的会话绑定契约
 paths:
   - src/trellis-*.js
   - src/settings-tab-trellis.js
+  - src/session-key.js
+  - src/state-session-snapshot.js
+  - src/session-hud-renderer.js
   - test/trellis-*.test.js
   - test/settings-tab-trellis.test.js
+  - test/session-key.test.js
 ---
 
 # Trellis 面板的外部进程契约
@@ -168,3 +172,111 @@ function parseVersionOutput(text) {
 即：**两个分支用例里只有一个能抓到该 bug**。所以“有一个用例失败了”不等于“测试够了”；反过来，若当初只写了分支 B，这次 bug 会全程绿灯。
 
 同一个 `--version` 既是 cwd 相关的，就意味着「已安装版本」只在**工具找不到项目的 cwd** 下才有唯一含义。若将来复用这个函数，必须显式保证 cwd 干净（`/tmp` 或应用目录），否则会静默读到某个项目的版本。建议在任何复用点旁写下这个前提。
+
+---
+
+## Scenario: 只读感知 Trellis 工作流状态（会话 → 任务绑定）
+
+### 1. Scope / Trigger
+
+「把磁盘上 Trellis 的任务/阶段/绑定状态呈现给用户」且**不执行任何 trellis 命令**的代码适用本条。
+
+- 新增/修改 `src/trellis-activity.js`（轮询/对齐/缓存/跃迁）
+- 新增/修改 `src/trellis-phase.js`（sanitize / platform 别名 / 阶段推导）
+- 消费 snapshot 的 `entry.trellis` 字段做 UI
+
+不适用：spawn CLI 的路径（见上一 Scenario）。
+
+### 2. Signatures
+
+```js
+// src/trellis-activity.js — 工厂；fs/timer 全部可注入
+createTrellisActivity({ state?, getLiveSessions?, fs, now, setTimeoutFn,
+                        clearTimeoutFn?, onTrellisUpdate, onCelebration? })
+activity.start() / activity.stop()
+activity.getTrellisInfo(sessionKey)   // → TrellisInfo | null（null = 不渲染）
+activity.getByProject(projectPath)    // → { count, activeTasks:[{title,phase}] } | null
+```
+
+`TrellisInfo = { taskPath, title, phase: plan|execute|finish|done,
+                 progress: {done,total}|null, parallelCount }`
+
+### 3. 会话绑定的双源真相（关键契约）
+
+trellis 指针文件（`<project>/.trellis/.runtime/sessions/<platform>_<sanitized-raw-id>.json`）
+存的是 **raw 会话 id**（如 `pi:01a0b040-…`）；而 Clawd snapshot 的 `entry.id` 是
+**scoped key**（`s1.<b64url-profile>.<b64url-raw>`，见 `src/session-key.js`）。
+两者**永不直接相等**：
+
+```js
+// main.js 组装侧：先解出 raw id 再交给 activity
+const { parseSessionKey } = require("./session-key");
+getLiveSessions: () => snapshot.sessions.map((entry) => ({
+  id: entry.id,
+  rawSessionId: (parseSessionKey(entry.id) || {}).rawSessionId || entry.id,  // 解不开则原样回落
+  agentId: entry.agentId, cwd: entry.cwd, headless: !!entry.headless,
+}))
+// trellis-activity.js 消费侧：指针 key 永远用 raw id 构造
+sessionPointerKey(session.agentId, session.rawSessionId || session.sessionId)
+```
+
+**新增 session key 消费者时先问：我要的是 scoped 还是 raw？** 任何把 snapshot
+entry.id 直接当外部工具记录 id 用的代码都会静默失配（HUD 徽标 chips=0 的真机根因）。
+
+### 4. 契约
+
+- **只读红线**：`trellis-activity` / `trellis-phase` 只允许
+  `readFile / stat / readdir`；零写、零 spawn、零网络。`trellis-celebration`
+  只经注入回调播动画，不得自行 spawn。
+- **对照测试**：sanitize / platform 别名表的 Node 复刻必须用**真实指针文件名**
+  做 fixture 逐条断言（Python `_sanitize_key` / `_CONTEXT_KEY_PLATFORM_ALIASES`
+  是权威）；CLI 改表时测试失败而非静默漂移。
+- **别名表保守原则**：无真机指针证据的 agent（traecode/grok-build/qwen 等）
+  一律 `trellisPlatformFor → null`，不类比推断；待证据出现再逐条补。
+- **null 语义三态**：`phase` 为 null（未知 status）→ 不渲染；
+  `upgradable` 类比同理——未知绝不渲染成「已最新」。
+- **轮询骨架**：自调度 setTimeout 链 + lifecycleToken（禁 setInterval），
+  空闲退避 15s / 活跃 5s；无可绑定会话时当轮零 IO。
+- **跃迁庆祝**：→ finish/done 才播，同 task <10s 抑制；DND / petHidden /
+  mini 模式不播；主题缺 reactions.double 资产静默跳过（可选能力降级，
+  不改 REQUIRED_STATES）。
+
+### 5. 失败模式
+
+| 症状 | 根因 | 防护 |
+| --- | --- | --- |
+| HUD 行有会话但徽标不渲染 | snapshot scoped id 当 raw id 用，指针永不命中 | §3 双源契约 + `parseSessionKey` round-trip 测试 |
+| 徽标显示陈旧阶段 | 缓存 diff 未触发 `onTrellisUpdate` → snapshot 未重发 | 更新必须走既有 sendSnapshot 路径，不绕开直发 webContents.send |
+| 阶段在 done/finish 间抖动连播动画 | 归档中目录移动的中间态 | 跃迁史 + 10s 抑制；指针悬空先 null、下轮归档位恢复 done |
+
+### 6. 测试断言点（review 必查）
+
+- fake fs 写操作计数恒 0（只读断言）
+- scoped id 经 `getLiveSessions`+`rawSessionId` 绑定成功的端到端用例
+- `parseSessionKey` 与 `makeSessionKey` round-trip；malformed / 非 `s1.` / 未知
+  profile 的拒收
+- stop() 后已排入 timer 不再执行（token 守卫）
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```js
+// 把 snapshot entry.id（scoped key）直接当外部记录 id 用
+const ptrPath = path.join(root, ".runtime", "sessions",
+  sessionPointerKey(session.agentId, session.id) + ".json");
+// session.id = "s1.cHJvZmlsZV9h.piMwMWIw...") → 文件名永不存在
+// 症状：指针永不命中，UI 静默降级（chips=0），零报错零日志
+```
+
+#### Correct
+
+```js
+// 在注入边界先解出 raw id，指针 key 永远用 raw id 构造
+getLiveSessions: () => snapshot.sessions.map((entry) => ({
+  id: entry.id,
+  rawSessionId: (parseSessionKey(entry.id) || {}).rawSessionId || entry.id,
+  agentId: entry.agentId, cwd: entry.cwd,
+}))
+// activity 内部：sessionPointerKey(agentId, session.rawSessionId || session.sessionId)
+```
