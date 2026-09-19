@@ -75,6 +75,10 @@ function createTrellisActivity(options) {
   // the baseline and never celebrates — otherwise booting Clawd onto a
   // finished task would cheer out of nowhere.
   const phaseHistory = new Map();
+  // Absolute task dir → taskPath (".trellis/tasks/<name>") as last reported
+  // by a live pointer. Retained across rounds so an archive-completion
+  // celebration (pointer already deleted) can still name the task.
+  const taskRelPaths = new Map();
   // Absolute task dir → ms of the last celebration (jitter suppression, D5).
   const lastCelebrationAt = new Map();
   // Absolute .trellis root → { count, activeTasks, computedAt } (per-root
@@ -122,6 +126,7 @@ function createTrellisActivity(options) {
     sessionCache.clear();
     rootCache.clear();
     phaseHistory.clear();
+    taskRelPaths.clear();
     lastCelebrationAt.clear();
     parallelCache.clear();
     return wasStarted;
@@ -293,7 +298,8 @@ function createTrellisActivity(options) {
       sessionCache.set(sessionId, resolved ? resolved.info : null);
     }
 
-    recordPhaseTransitions(nextResolved);
+    const archived = await detectArchivedTasks(nextResolved);
+    recordPhaseTransitions(nextResolved, archived);
     if (changed.length && onTrellisUpdate) onTrellisUpdate(changed);
   }
 
@@ -316,8 +322,45 @@ function createTrellisActivity(options) {
 
   // Phase-transition watching (D5): only arrivals at finish/done celebrate;
   // planning → execute is announced by the working animation itself.
-  function recordPhaseTransitions(nextResolved) {
+  // Archive completion: `task.py archive` moves the task dir and deletes
+  // the session pointer in one commit — by the time the next poll round
+  // runs, the binding is already gone. Detect "bound last round, gone now,
+  // dir lives under archive/" and surface it as an explicit completion so
+  // the celebration fires on the real archive event (not just the brief
+  // pre-archive status flip, which poll timing may skip entirely).
+  // returns [{ archivedDir, relPath }] for entries that completed.
+  async function detectArchivedTasks(nextResolved) {
+    const liveDirs = new Set();
+    for (const resolved of nextResolved.values()) {
+      if (!resolved) continue;
+      liveDirs.add(resolved.absDir);
+      if (resolved.info && resolved.info.taskPath) {
+        taskRelPaths.set(resolved.absDir, resolved.info.taskPath);
+      }
+    }
+    const archived = [];
+    for (const [dir, relPath] of [...taskRelPaths.entries()]) {
+      if (liveDirs.has(dir)) continue;
+      // Binding vanished. If the task dir moved into archive/ it completed.
+      // archive/ is a sibling: <root>/tasks/<name> → tasks/archive/<month>/<name>.
+      taskRelPaths.delete(dir);
+      if (!relPath) continue;
+      const archiveRoot = path.resolve(dir, "..", "archive");
+      const archivedDir = await findArchivedTaskDir(archiveRoot, path.basename(relPath));
+      if (!archivedDir) continue;
+      phaseHistory.set(archivedDir, "done");
+      archived.push({ archivedDir, relPath });
+    }
+    return archived;
+  }
+
+  function recordPhaseTransitions(nextResolved, archived) {
     const nowMs = nowFn();
+    for (const { archivedDir, relPath } of archived) {
+      if (lastCelebrationAt.has(archivedDir)) continue;
+      lastCelebrationAt.set(archivedDir, nowMs);
+      if (onCelebration) onCelebration(relPath);
+    }
     const seen = new Map(); // abs task dir → { relPath, phase }
     for (const resolved of nextResolved.values()) {
       if (!resolved || !resolved.info) continue;
@@ -429,7 +472,7 @@ function createTrellisActivity(options) {
       };
     }
     // Task dir gone → maybe archived (tasks/archive/<month>/<name>).
-    const archivedDir = await findArchivedTaskDir(root, path.basename(absTaskDir));
+    const archivedDir = await findArchivedTaskDir(path.join(root, "tasks", "archive"), path.basename(absTaskDir));
     if (!archivedDir) return null;
     const taskJson = await readJsonObject(path.join(archivedDir, "task.json"));
     const value = taskJson.ok ? taskJson.value : {};
@@ -446,12 +489,13 @@ function createTrellisActivity(options) {
     return typeof title === "string" && title.trim() ? title : path.basename(absTaskDir);
   }
 
-  async function findArchivedTaskDir(root, taskName) {
-    const archiveDir = path.join(root, "tasks", "archive");
-    const months = await readdirQuiet(archiveDir);
+  // archiveRoot is the tasks/archive dir itself. Only exact-name moves count;
+  // the target name is what `task.py archive` wrote, so no fuzzy matching.
+  async function findArchivedTaskDir(archiveRoot, taskName) {
+    const months = await readdirQuiet(archiveRoot);
     if (!months) return null;
     for (const month of months) {
-      const candidate = path.join(archiveDir, month, taskName);
+      const candidate = path.join(archiveRoot, month, taskName);
       const st = await statQuiet(candidate);
       if (st && st.isDirectory()) return candidate;
     }
