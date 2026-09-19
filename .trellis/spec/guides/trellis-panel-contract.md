@@ -198,6 +198,10 @@ activity.getTrellisInfo(sessionKey)   // → TrellisInfo | null（null = 不渲�
 activity.getByProject(projectPath)    // → { count, activeTasks:[{title,phase}] } | null
 ```
 
+`onCelebration(taskRelPath: string)` 两个触发源，参数统一是
+`.trellis/tasks/<name>` 相对路径：①轮询观察到 →finish/done 跃迁；
+②归档完成（绑定消失 + `tasks/archive/<月>/<同名>` 出现）。
+
 `TrellisInfo = { taskPath, title, phase: plan|execute|finish|done,
                  progress: {done,total}|null, parallelCount }`
 
@@ -239,7 +243,9 @@ entry.id 直接当外部工具记录 id 用的代码都会静默失配（HUD 徽
   空闲退避 15s / 活跃 5s；无可绑定会话时当轮零 IO。
 - **跃迁庆祝**：→ finish/done 才播，同 task <10s 抑制；DND / petHidden /
   mini 模式不播；主题缺 reactions.double 资产静默跳过（可选能力降级，
-  不改 REQUIRED_STATES）。
+  不改 REQUIRED_STATES）。触发源两路：轮询可见的相位跃迁，以及归档
+  完成（`task.py archive` 删指针+移目录是同一次提交，中间态不落盘，
+  靠「绑定消失 + 归档副本存在」负空间检测；无副本的消失静默）。
 
 ### 5. 失败模式
 
@@ -259,24 +265,41 @@ entry.id 直接当外部工具记录 id 用的代码都会静默失配（HUD 徽
 
 ### 7. Wrong vs Correct
 
-#### Wrong
+#### Wrong：把 scoped snapshot id 直接当外部记录 id
 
 ```js
-// 把 snapshot entry.id（scoped key）直接当外部记录 id 用
 const ptrPath = path.join(root, ".runtime", "sessions",
   sessionPointerKey(session.agentId, session.id) + ".json");
-// session.id = "s1.cHJvZmlsZV9h.piMwMWIw...") → 文件名永不存在
+// session.id = "s1.cHJvZmlsZV9h.piMwMWIw..." → 文件名永不存在
 // 症状：指针永不命中，UI 静默降级（chips=0），零报错零日志
 ```
 
-#### Correct
+#### Correct：注入边界先解 raw id
 
 ```js
-// 在注入边界先解出 raw id，指针 key 永远用 raw id 构造
 getLiveSessions: () => snapshot.sessions.map((entry) => ({
   id: entry.id,
   rawSessionId: (parseSessionKey(entry.id) || {}).rawSessionId || entry.id,
   agentId: entry.agentId, cwd: entry.cwd,
 }))
 // activity 内部：sessionPointerKey(agentId, session.rawSessionId || session.sessionId)
+```
+
+#### Wrong：期待轮询能观察到归档前的 status 翻转
+
+```js
+const phase = derivePhase(taskJson.status);   // archived 后再读已无源
+if (prev === "execute" && phase === "done") celebrate();
+// task.py archive 删指针+移目录是一次提交 → 这个分支永不触发
+```
+
+#### Correct：归档完成 = 负空间检测
+
+```js
+// 上一轮还在绑定的任务，这一轮绑定消失且归档副本存在
+for (const [dir, relPath] of taskRelPaths) {
+  if (liveDirs.has(dir)) continue;
+  const archivedDir = await findArchivedTaskDir(archiveRoot, basename(relPath));
+  if (archivedDir) onCelebration(relPath);   // 显式 done，不依赖中间态
+}
 ```

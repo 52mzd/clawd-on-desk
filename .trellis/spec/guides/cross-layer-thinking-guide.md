@@ -53,6 +53,12 @@ For each boundary:
 
 ## Common Cross-Layer Mistakes
 
+### Mistake 5: Polling Assumes Transitional States Persist
+
+**Bad**: 庆祝/告警逻辑挂在「轮询周期内能观察到中间状态」上（如 status 翻转为 done）
+
+**Good**: 先验证生产方是否原子变更（删指针+移目录同一次提交）——中间态可能根本不落盘。检测事件要考虑负空间：绑定消失 + 归档副本出现 = 完成；无副本的消失 = 静默。案例：trellis 归档庆祝首版永不触发（ffb0d21f）
+
 ### Mistake 1: Implicit Format Assumptions
 
 **Bad**: Assuming date format without checking
