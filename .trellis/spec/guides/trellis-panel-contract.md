@@ -255,6 +255,67 @@ entry.id 直接当外部工具记录 id 用的代码都会静默失配（HUD 徽
   时鼠标在动，鼠标 idle 永远不触发）；② loadFile 异步——注入文本必须
   等 `did-finish-load`，否则 executeJavaScript 被 catch 吞掉、窗口全
   透明。HUD chip tooltip 同源引导文案（7 语言）。
+- **HUD Trellis 详情行**（点击展开，取代 hover tooltip）：点 chip 在
+  该会话行下方插入 `.trellis-detail` 弹性行，显示任务名 + 引导行。
+  三个硬约束：① **高度双轨制**——`computeHudHeight(rowCount,
+  detailExtra)` 只认固定行高×28px，弹性展开高度必须由渲染层实测
+  （`offsetHeight`+margin）经 `session-hud:set-trellis-detail-height`
+  IPC 回传 main 重算 bounds，禁止拍常数（固定值遇换行即截断）；
+  ② **flex 收缩禁区**——HUD 容器是 column flexbox + overflow:hidden，
+  `.trellis-detail` 必须 `flex: 0 0 auto`，否则窗口不够高时行被压缩，
+  实测值就是被压缩后的值，反馈回窗口尺寸成 runaway shrink loop
+  （症状：越点越矮）；③ **测量时序**——实测必须在 rAF 后（布局
+  落定），无帧循环环境（测试 harness）同步 fallback，否则 0 或旧值。
+  新增 `session-hud:*` IPC 通道必须同步补 session-ipc.test.js 频道
+  白名单与依赖基座（required dep 缺失会被白名单测试拦住）。
+
+#### §4.1 详情行高度契约（code-spec 7 段式）
+
+**1. Scope/Trigger**：HUD 内任何「主进程算窗口尺寸 × 渲染层弹性内容」
+组合。触发源：新增跨层 IPC `session-hud:set-trellis-detail-height`。
+
+**2. Signatures**（全链路，自渲染层起）：
+- renderer `reportTrellisDetailHeight()` → rAF 后 Σ(`.trellis-detail`
+  .offsetHeight + 4px margin)，`Math.round` 后单次上报
+- preload `sessionHudAPI.setTrellisDetailHeight(px:number)`
+- IPC `session-hud:set-trellis-detail-height`（send，无 ack）
+- main `_sessionHud.setTrellisDetailHeight(px)`（runtime 导出字段）
+- session-hud.js `setTrellisDetailHeight(px)` →
+  `computeHudHeight(rowCount, detailExtraPx)`
+
+**3. Contracts**：
+- `height = rowCount × HUD_ROW_HEIGHT(28) + HUD_BORDER_Y + detailExtraPx`
+- detailExtraPx 只能来自渲染层实测，main 侧不预测、不缓存跨快照
+- 单向流：renderer 实测 → IPC → main 重算 bounds → setBounds
+- extra=0 时公式与旧版完全一致（无展开即零行为变化，向后兼容）
+
+**4. Validation & Error Matrix**：
+| 条件 | 行为 |
+| --- | --- |
+| px 为 NaN/非数字/≤0 | 归 0，等同全部收起 |
+| \|Δpx\| < 2 | 忽略（防亚像素抖动重排循环） |
+| 展开会话被折叠/消失 | render() 从 Set 清除，下轮上报 0，窗口回落 |
+
+**5. Good/Base/Bad**：
+- Good：7 语言长引导文案换行 3 行 → 实测 ~70px → 窗口完整容纳
+- Base：无展开 → extra=0 → 高度公式与历史行为逐字节一致
+- Bad：拍常数 44px → 任何换行即截断（§5 首行失败模式）
+
+**6. Tests Required**：
+- `test/session-ipc.test.js`：通道白名单 + noop 依赖基座（required
+  dep 缺失必须 throw，白名单用例拦截漏注册）
+- `test/session-renderer-behavior.test.js`：无 rAF 环境测量同步
+  fallback（缺失则 4 个用例时序被吞）
+- `test/session-hud.test.js`：`computeHudHeight(rowCount, extra)` 的
+  0/负/NaN/正常四类输入
+
+**7. Wrong vs Correct**：
+```text
+Wrong   computeHudHeight(rows, detailCount * 44)   // 拍常数
+        .trellis-detail { }                        // 可 flex-shrink
+Correct 渲染层实测 offsetHeight → IPC 回传 → main 重算
+        .trellis-detail { flex: 0 0 auto; }
+```
 
 ### 5. 失败模式
 
@@ -263,6 +324,8 @@ entry.id 直接当外部工具记录 id 用的代码都会静默失配（HUD 徽
 | HUD 行有会话但徽标不渲染 | snapshot scoped id 当 raw id 用，指针永不命中 | §3 双源契约 + `parseSessionKey` round-trip 测试 |
 | 徽标显示陈旧阶段 | 缓存 diff 未触发 `onTrellisUpdate` → snapshot 未重发 | 更新必须走既有 sendSnapshot 路径，不绕开直发 webContents.send |
 | 阶段在 done/finish 间抖动连播动画 | 归档中目录移动的中间态 | 跃迁史 + 10s 抑制；指针悬空时 `detectArchivedTasks` 在同轮用 `tasks/archive/<month>/<name>` 精确名匹配判定 done 并庆祝（归档删指针与移目录是同一次提交，等下一轮必然绑定已消失；无归档副本的消失保持静默） |
+| 详情行文字被截断（显示不完整） | 用固定常数当展开行高度，遇换行即溢出 | 高度双轨制：固定行高 ×28 + 渲染层实测弹性高度回传（见 §4） |
+| 展开后 HUD 越缩越小 | detail 行可 flex-shrink，实测回传的是被压缩值，反馈成 runaway loop | `.trellis-detail { flex: 0 0 auto }`；实测值与压缩值必须区分 |
 
 ### 6. 测试断言点（review 必查）
 

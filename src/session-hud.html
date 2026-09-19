@@ -354,6 +354,44 @@ body { padding: 2px 3px 8px; }
     animation: none;
   }
 }
+.trellis-chip {
+  cursor: pointer;
+}
+.trellis-chip-active {
+  background: #2f6feb;
+  border-color: #2f6feb;
+  color: #fff;
+}
+.trellis-detail {
+  display: flex;
+  flex-direction: column;
+  /* flex: 0 0 auto — must not shrink: the HUD host is a column flexbox
+     with overflow hidden, so a shrinkable detail row gets compressed when
+     the window is still short, and offsetHeight reporting would feed the
+     shrunken value back into window sizing (runaway shrink loop). */
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 6px 10px 6px 30px;
+  margin: 2px 4px;
+  border-radius: 6px;
+  background: rgba(30, 30, 36, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+.trellis-detail-title {
+  font-size: 11px;
+  color: #ececf1;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.35;
+}
+.trellis-detail-guide {
+  font-size: 10px;
+  color: #a1a1aa;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.35;
+}
 </style>
 </head>
 <body>

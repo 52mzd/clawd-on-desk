@@ -188,9 +188,12 @@ function countQuotaCoins(snapshot, showQuota, hiddenQuotaProviders) {
   return ringGeom.countQuotaCoins(snapshot, showQuota, hiddenQuotaProviders);
 }
 
-function computeHudHeight(rowCount) {
+function computeHudHeight(rowCount, trellisDetailExtraHeight) {
   if (!Number.isFinite(rowCount) || rowCount <= 0) return HUD_ROW_HEIGHT;
-  return rowCount * HUD_ROW_HEIGHT + HUD_BORDER_Y;
+  const extra = Number.isFinite(trellisDetailExtraHeight) && trellisDetailExtraHeight > 0
+    ? Math.round(trellisDetailExtraHeight)
+    : 0;
+  return rowCount * HUD_ROW_HEIGHT + HUD_BORDER_Y + extra;
 }
 
 function computeHudReservedOffset(cardHeight) {
@@ -306,6 +309,7 @@ module.exports = function initSessionHud(ctx) {
   let hudWindow = null;
   let didFinishLoad = false;
   let latestSnapshot = null;
+  let trellisDetailExtraHeight = 0;
   let hudFlippedAbove = false;
   let lastReservedOffset = 0;
   const hiddenDestroyTimers = { hud: null, ring: null };
@@ -416,7 +420,7 @@ module.exports = function initSessionHud(ctx) {
     let contentBounds = null;
     if (hudEnabled && hasSessions) {
       const layout = computeHudLayout(snapshot, { showStateLabels: ctx.sessionHudShowStateLabels !== false });
-      const height = computeHudHeight(layout.rowCount);
+      const height = computeHudHeight(layout.rowCount, trellisDetailExtraHeight);
       const computed = computeSessionHudBounds({ hitRect, anchorRect, workArea, width, height, scale, widthScale });
       contentBounds = computed && computed.contentBounds;
     }
@@ -863,7 +867,7 @@ module.exports = function initSessionHud(ctx) {
       ? ctx.getNearestWorkArea(cx, cy)
       : { x: 0, y: 0, width: 1280, height: 800 };
     const layout = computeHudLayout(snapshot, { showStateLabels: ctx.sessionHudShowStateLabels !== false });
-    const height = computeHudHeight(layout.rowCount);
+    const height = computeHudHeight(layout.rowCount, trellisDetailExtraHeight);
     const width = getHudWidth(
       ctx.sessionHudShowElapsed !== false,
       ctx.sessionHudShowStateLabels !== false,
@@ -951,6 +955,13 @@ module.exports = function initSessionHud(ctx) {
     syncSessionHud(latestSnapshot || getCurrentSnapshot(), { sendSnapshot: false });
   }
 
+  function setTrellisDetailHeight(px) {
+    const next = Number.isFinite(px) && px > 0 ? Math.round(px) : 0;
+    if (Math.abs(next - trellisDetailExtraHeight) < 2) return;
+    trellisDetailExtraHeight = next;
+    repositionSessionHud();
+  }
+
   function repositionQuotaRing() {
     const snapshot = latestSnapshot || getCurrentSnapshot();
     const scale = getTextScale();
@@ -1012,6 +1023,7 @@ module.exports = function initSessionHud(ctx) {
     revealFromPet,
     handlePinnedChanged,
     clearReveal,
+    setTrellisDetailHeight,
   };
 };
 

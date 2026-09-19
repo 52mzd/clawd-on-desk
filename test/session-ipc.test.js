@@ -96,6 +96,9 @@ function createHarness(overrides = {}) {
     setSessionHudPinned: overrides.setSessionHudPinned || ((value) => {
       calls.push(["setSessionHudPinned", value]);
     }),
+    setSessionHudTrellisDetailHeight: overrides.setSessionHudTrellisDetailHeight || ((px) => {
+      calls.push(["setSessionHudTrellisDetailHeight", px]);
+    }),
     ackSessionCompletion: overrides.ackSessionCompletion || ((sessionId) => {
       calls.push(["ackSessionCompletion", sessionId]);
       return true;
@@ -177,6 +180,7 @@ test("session IPC registers owned channels and disposes them", () => {
     "session-hud:focus-session",
     "session-hud:open-dashboard",
     "session-hud:set-pinned",
+    "session-hud:set-trellis-detail-height",
     "settings:open-dashboard",
     "show-dashboard",
   ]);
@@ -489,6 +493,7 @@ test("registerSessionIpc requires ackSessionCompletion dep", () => {
   assert.throws(
     () => registerSessionIpc({
       ipcMain: new FakeIpcMain(),
+      setSessionHudTrellisDetailHeight: () => {},
       getSessionSnapshot: () => ({}),
       getI18n: () => ({}),
       focusSession: () => {},

@@ -23,6 +23,56 @@ function isHudSession(session) {
   return !!session && !session.headless && session.state !== "sleeping" && !session.hiddenFromHud;
 }
 
+// Native title tooltips never appear in the HUD host (non-activating
+// transparent window suppresses macOS help tags), and floating hover cards
+// are cramped. Click the trellis chip to expand the HUD with an inline
+// detail row under the session line instead.
+const trellisExpandedSessions = new Set();
+
+function toggleTrellisDetail(sessionId) {
+  if (trellisExpandedSessions.has(sessionId)) {
+    trellisExpandedSessions.delete(sessionId);
+  } else {
+    trellisExpandedSessions.add(sessionId);
+  }
+  render();
+}
+
+function createTrellisDetailRow(session) {
+  const row = document.createElement("div");
+  row.className = "trellis-detail";
+  const info = trellisChipInfo(session);
+  if (!info) return row;
+  const lines = String(info.title || "").split("\n");
+  const title = document.createElement("div");
+  title.className = "trellis-detail-title";
+  title.textContent = lines[0] || "";
+  row.appendChild(title);
+  const guide = document.createElement("div");
+  guide.className = "trellis-detail-guide";
+  guide.textContent = lines.slice(1).join(" ");
+  row.appendChild(guide);
+  return row;
+}
+
+function reportTrellisDetailHeight() {
+  const measure = () => {
+    const rows = document.querySelectorAll(".trellis-detail");
+    let total = 0;
+    for (const row of rows) total += row.offsetHeight + 4; // 2px margin top + bottom
+    if (window.sessionHudAPI && typeof window.sessionHudAPI.setTrellisDetailHeight === "function") {
+      window.sessionHudAPI.setTrellisDetailHeight(Math.round(total));
+    }
+  };
+  // Layout must settle before measuring; fall back to sync when rAF is
+  // unavailable (test harness has no frame loop).
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(measure);
+  } else {
+    measure();
+  }
+}
+
 function t(key) {
   const dict = i18nPayload && i18nPayload.translations ? i18nPayload.translations : {};
   return dict[key] || key;
@@ -358,7 +408,15 @@ function createRowForSession(session, now) {
     const chip = document.createElement("span");
     chip.className = `trellis-chip ${trellisInfo.cls}`;
     chip.textContent = trellisInfo.label;
+    // Native title tooltips never show in the HUD host (non-activating
+    // transparent window suppresses system help tags on macOS). Click the
+    // chip to expand the HUD with an inline detail row under this line.
     chip.title = trellisInfo.title;
+    chip.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggleTrellisDetail(session.id);
+    });
+    if (trellisExpandedSessions.has(session.id)) chip.classList.add("trellis-chip-active");
     right.appendChild(chip);
     hasRightContent = true;
   }
@@ -521,10 +579,18 @@ function render() {
 
   const now = Date.now();
   const { expanded, folded } = splitHudLayout(sessions);
+  const expandedIds = new Set(expanded.map((session) => session.id));
+  for (const sessionId of trellisExpandedSessions) {
+    if (!expandedIds.has(sessionId)) trellisExpandedSessions.delete(sessionId);
+  }
 
   for (const session of expanded) {
     hudEl.appendChild(createRowForSession(session, now));
+    if (trellisExpandedSessions.has(session.id)) {
+      hudEl.appendChild(createTrellisDetailRow(session));
+    }
   }
+  reportTrellisDetailHeight();
   if (folded.length > 0) {
     hudEl.appendChild(createFoldedRow(folded.length));
   }

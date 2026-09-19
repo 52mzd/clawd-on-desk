@@ -5193,6 +5193,11 @@ registerSessionIpc({
   getSessionHistory: () => sessionHistoryRuntime.getHistory(),
   resumeSessionFromHistory: (payload) => sessionHistoryRuntime.resume(payload),
   showDashboard: (options) => showDashboard(options),
+  setSessionHudTrellisDetailHeight: (px) => {
+    if (typeof _sessionHud.setTrellisDetailHeight === "function") {
+      _sessionHud.setTrellisDetailHeight(Number(px) || 0);
+    }
+  },
   setSessionHudPinned: (value) => {
     const result = _settingsController.applyUpdate("sessionHudPinned", !!value);
     if (result && typeof result.then === "function") {
