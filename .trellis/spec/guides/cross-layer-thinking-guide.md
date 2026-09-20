@@ -55,6 +55,32 @@ For each boundary:
 
 ### Mistake 5: Polling Assumes Transitional States Persist
 
+### Mistake 6: Measurement Feeds The Layout It Measured
+
+When the renderer measures a DOM element (`offsetHeight` and friends) and
+reports the value back to the main process, which then resizes the very
+window hosting that element, the measurement joins a feedback loop. If the
+measured element can shrink (flex children in an `overflow:hidden` column
+flexbox), the loop runs away: small window → compressed element → smaller
+reported value → smaller window. Symptom: UI gets *smaller* on every update,
+which looks nothing like a sizing bug.
+
+Rules:
+
+- Measured elements must opt out of flex shrink (`flex: 0 0 auto`) so the
+  reported value is the natural height, never the compressed one
+- Measure after layout settles (post-rAF), with a sync fallback for test
+  harnesses that have no frame loop
+- Damp tiny deltas (ignore `|Δ| < 2px`) so sub-pixel jitter cannot loop
+- Fixed constants are fine only for rows whose height is itself fixed;
+  wrapped/elastic content must be measured
+
+**Real-world example**: the HUD trellis detail row (see
+`trellis-panel-contract.md` §4.1) first used a hardcoded 44px (truncated on
+wrap), then measured `offsetHeight` without `flex: 0 0 auto` — the HUD
+shrank on every click until the row vanished. The fix was all three rules
+at once.
+
 **Bad**: 庆祝/告警逻辑挂在「轮询周期内能观察到中间状态」上（如 status 翻转为 done）
 
 **Good**: 先验证生产方是否原子变更（删指针+移目录同一次提交）——中间态可能根本不落盘。检测事件要考虑负空间：绑定消失 + 归档副本出现 = 完成；无副本的消失 = 静默。案例：trellis 归档庆祝首版永不触发（ffb0d21f）
@@ -124,6 +150,9 @@ After implementation:
 - [ ] Checked data survives round-trip
 - [ ] Checked that consumers import shared decoders / projections instead of
       casting payload fields locally
+- [ ] If any measured size is reported across layers: confirmed the measured
+      element cannot be shrunk by the layout that consumes the measurement
+      (Mistake 6)
 - [ ] Checked that derived state points back to the source event identifier
       (`seq`, `id`, `version`) instead of inventing a second cursor
 
