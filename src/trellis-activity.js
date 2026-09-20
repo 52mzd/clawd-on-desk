@@ -628,6 +628,95 @@ function createTrellisActivity(options) {
     return summary;
   }
 
+  // On-demand single read for the Dashboard task-detail card: resolves the
+  // .trellis root from the bound session's cwd (reusing the polling root
+  // cache), then reads task.json / prd.md / implement.md of that one task —
+  // active or archived. Never scheduled, never cached: every call is a fresh
+  // read, and it touches none of the snapshot caches, so opening a detail
+  // cannot jitter phase badges or celebrations.
+  //
+  // taskPath is the snapshot-relative posix path (".trellis/tasks/<name>"
+  // for a live task, ".trellis/tasks/archive/<month>/<name>" for one that
+  // already moved). Results:
+  //   { status: "ok", task: { title, phase, rawStatus, createdAt,
+  //                           completedAt, archived, checklist } }
+  //   { status: "missing" }          — no root / task dir nowhere on disk
+  //   { status: "error", message }   — unreadable (corrupt) task.json
+  const TASK_DETAIL_PREFIX = ".trellis/tasks/";
+
+  async function readTaskDetail(cwd, taskPath) {
+    if (typeof cwd !== "string" || !cwd.trim()) return { status: "missing" };
+    if (typeof taskPath !== "string" || !taskPath.startsWith(TASK_DETAIL_PREFIX)) {
+      return { status: "missing" };
+    }
+    // Only a cwd that a live trellis-capable session is actually working in
+    // may resolve a root. Panel rows are built from exactly those sessions,
+    // so a compromised renderer cannot probe .trellis trees no session ever
+    // touched (roots come from sessions, never from the request itself).
+    const liveCwds = new Set(collectLiveSessions().map((session) => session.cwd));
+    if (!liveCwds.has(cwd)) return { status: "missing" };
+    // Split on BOTH separators before validating: on win32 path.join
+    // normalizes backslash segments too, so a "/"-only split would let
+    // ".trellis/tasks/a\..\..\x" join outside the root.
+    const segments = taskPath.slice(TASK_DETAIL_PREFIX.length).split(/[\\/]/);
+    // Path containment: the renderer supplies this string, so traversal
+    // segments must be rejected before they ever reach path.join.
+    if (!segments.length || segments.some((s) => !s || s === "." || s === "..")) {
+      return { status: "missing" };
+    }
+    const root = await findTrellisRoot(cwd);
+    if (!root) return { status: "missing" };
+
+    let absDir = path.join(root, "tasks", ...segments);
+    let archived = segments[0] === "archive";
+    const st = await statQuiet(absDir);
+    if (!(st && st.isDirectory())) {
+      if (archived) return { status: "missing" };
+      // Active dir gone → maybe it was just archived (task.py moves the dir
+      // in one commit); the archive copy answers the same detail read.
+      const archivedDir = await findArchivedTaskDir(
+        path.join(root, "tasks", "archive"),
+        segments[segments.length - 1]
+      );
+      if (!archivedDir) return { status: "missing" };
+      absDir = archivedDir;
+      archived = true;
+    }
+
+    const taskJson = await readJsonObject(path.join(absDir, "task.json"));
+    // A corrupt task.json cannot answer any of the card's fields — surface
+    // a retryable error instead of half-empty data.
+    if (!taskJson.ok) return { status: "error", message: "unreadable-task-json" };
+    const value = taskJson.value;
+    const hasPrd = Boolean(await statQuiet(path.join(absDir, "prd.md")));
+    const checklist = await readChecklist(absDir);
+    return {
+      status: "ok",
+      task: {
+        title: pickTitle(value, absDir),
+        phase: derivePhase({
+          status: value.status,
+          hasPrd,
+          isArchived: archived,
+          implementChecklist: checklist,
+        }),
+        rawStatus: typeof value.status === "string" ? value.status : null,
+        createdAt: sanitizeTaskDate(value.createdAt),
+        completedAt: sanitizeTaskDate(value.completedAt),
+        archived,
+        checklist: {
+          items: checklist.items,
+          done: checklist.done,
+          total: checklist.total,
+        },
+      },
+    };
+  }
+
+  function sanitizeTaskDate(value) {
+    return typeof value === "string" && value.trim() ? value.trim() : null;
+  }
+
   // Roots whose .trellis directory was resolved from a live session cwd
   // during this process. Positive lookups are cached forever (a cwd does not
   // move its .trellis root), so a project worked on earlier today still
@@ -661,6 +750,7 @@ function createTrellisActivity(options) {
     getKnownRoots,
     getExecutingCount,
     hasPlanningBinding,
+    readTaskDetail,
   };
 }
 

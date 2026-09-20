@@ -34,6 +34,7 @@ const countEl = document.getElementById("count");
 const contentEl = document.getElementById("content");
 const quotaSummaryEl = document.getElementById("quotaSummary");
 const trellisPanelEl = document.getElementById("trellisPanel");
+const trellisDetailOverlayEl = document.getElementById("trellisDetailOverlay");
 // Fixed node in the header. Keeping the mode banner outside the card tree
 // means entering the mode never reflows or rebuilds the user's content.
 const quickBannerEl = document.getElementById("quickBanner");
@@ -1153,6 +1154,20 @@ function createTrellisTaskRow(task) {
       t("dashboardTrellisBoundSessions").replace("{n}", String(task.sessions.length))
     ));
   }
+  // Row-tail detail button: opens the on-demand task-detail card. The row
+  // itself keeps its v1 click semantics (single binding → focus, several →
+  // expand chips), so the button stops propagation before anything else.
+  const detailBtn = document.createElement("button");
+  detailBtn.type = "button";
+  detailBtn.className = "trellis-task-detail-btn";
+  detailBtn.textContent = "ⓘ";
+  detailBtn.title = t("dashboardTrellisDetailOpen");
+  detailBtn.setAttribute("aria-label", t("dashboardTrellisDetailOpen"));
+  detailBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    void openTrellisDetail(task);
+  });
+  main.appendChild(detailBtn);
   row.appendChild(main);
 
   // One focusable binding: the whole row is the jump target, reusing the
@@ -1206,6 +1221,235 @@ function renderTrellisPanel() {
   for (const task of tasks) fragment.appendChild(createTrellisTaskRow(task));
   trellisPanelEl.replaceChildren(fragment);
   trellisPanelEl.hidden = false;
+}
+
+// ── Trellis task detail overlay ────────────────────────────────────────────
+// Opened by the row-tail ⓘ button: a modal card inside the Dashboard window.
+// Data is fetched once per open (single IPC round-trip, never polled); the
+// binding-session list and the card title are frozen from the panel's own
+// aggregate at open time, so the one-second rebuilds underneath do not churn
+// the open card. Only the language participates in re-renders.
+const trellisDetail = {
+  open: false,
+  loading: false,
+  seq: 0,
+  request: null, // { taskPath, title, cwd, sessions } — frozen at open time
+  result: null,  // IPC reply { status, task? }
+};
+let lastTrellisDetailSignature = null;
+
+function computeTrellisDetailSignature() {
+  return JSON.stringify({
+    lang: (i18nPayload && i18nPayload.lang) || "en",
+    open: trellisDetail.open,
+    loading: trellisDetail.loading,
+    request: trellisDetail.request,
+    result: trellisDetail.result,
+  });
+}
+
+async function openTrellisDetail(task) {
+  if (!trellisDetailOverlayEl || !task) return;
+  const cwdSource = task.sessions.find((binding) => binding && binding.cwd);
+  trellisDetail.open = true;
+  trellisDetail.loading = true;
+  trellisDetail.seq += 1;
+  const seq = trellisDetail.seq;
+  trellisDetail.request = {
+    taskPath: task.taskPath,
+    title: task.title || "",
+    cwd: cwdSource ? cwdSource.cwd : "",
+    sessions: task.sessions.slice(),
+  };
+  trellisDetail.result = null;
+  lastTrellisDetailSignature = null;
+  renderTrellisDetail();
+
+  let result = null;
+  try {
+    if (typeof window.dashboardAPI.getTrellisTaskDetail !== "function") {
+      throw new Error("bridge-unavailable");
+    }
+    result = await window.dashboardAPI.getTrellisTaskDetail({
+      taskPath: trellisDetail.request.taskPath,
+      cwd: trellisDetail.request.cwd,
+    });
+  } catch {
+    result = null;
+  }
+  // Stale guard: another detail was opened (or this one closed) while the
+  // read was in flight — drop the reply instead of overwriting newer UI.
+  if (!trellisDetail.open || seq !== trellisDetail.seq) return;
+  trellisDetail.loading = false;
+  trellisDetail.result = result && typeof result === "object" ? result : { status: "error" };
+  lastTrellisDetailSignature = null;
+  renderTrellisDetail();
+}
+
+function closeTrellisDetail() {
+  if (!trellisDetail.open) return;
+  trellisDetail.open = false;
+  trellisDetail.loading = false;
+  trellisDetail.request = null;
+  trellisDetail.result = null;
+  lastTrellisDetailSignature = null;
+  renderTrellisDetail();
+}
+
+function createTrellisDetailCheckItem(item) {
+  const li = document.createElement("li");
+  li.className = item.checked
+    ? "trellis-detail-check-item trellis-detail-check-item-done"
+    : "trellis-detail-check-item";
+  li.appendChild(createText("span", "trellis-detail-check-box", item.checked ? "☑" : "☐"));
+  li.appendChild(createText("span", "trellis-detail-check-text", item.text));
+  return li;
+}
+
+function appendTrellisDetailMeta(card, task) {
+  const meta = document.createElement("div");
+  meta.className = "trellis-detail-meta";
+  if (task.createdAt) {
+    meta.appendChild(createText(
+      "span",
+      "trellis-detail-meta-item",
+      t("dashboardTrellisDetailCreated").replace("{date}", task.createdAt)
+    ));
+  }
+  if (task.completedAt) {
+    meta.appendChild(createText(
+      "span",
+      "trellis-detail-meta-item",
+      t("dashboardTrellisDetailCompleted").replace("{date}", task.completedAt)
+    ));
+  }
+  if (task.checklist && task.checklist.total > 0) {
+    meta.appendChild(createText(
+      "span",
+      "trellis-detail-meta-item",
+      t("dashboardTrellisDetailSteps")
+        .replace("{done}", String(task.checklist.done))
+        .replace("{total}", String(task.checklist.total))
+    ));
+  }
+  if (meta.children.length) card.appendChild(meta);
+
+  if (task.checklist && task.checklist.total > 0) {
+    const bar = document.createElement("div");
+    bar.className = "trellis-detail-progress";
+    const fill = document.createElement("div");
+    fill.className = "trellis-detail-progress-fill";
+    fill.style.width = `${Math.round((task.checklist.done / task.checklist.total) * 100)}%`;
+    bar.appendChild(fill);
+    card.appendChild(bar);
+  }
+}
+
+function appendTrellisDetailChecklist(card, task) {
+  const section = document.createElement("div");
+  section.className = "trellis-detail-section";
+  section.appendChild(createText(
+    "div",
+    "trellis-detail-section-title",
+    t("dashboardTrellisDetailChecklist")
+  ));
+  const checklist = task.checklist;
+  if (checklist && checklist.total > 0) {
+    const list = document.createElement("ul");
+    list.className = "trellis-detail-checklist";
+    for (const item of checklist.items) list.appendChild(createTrellisDetailCheckItem(item));
+    section.appendChild(list);
+  } else {
+    section.appendChild(createText("div", "trellis-detail-empty", t("dashboardTrellisDetailChecklistEmpty")));
+  }
+  card.appendChild(section);
+}
+
+function appendTrellisDetailSessions(card, request) {
+  if (!request || !request.sessions.length) return;
+  const section = document.createElement("div");
+  section.className = "trellis-detail-section";
+  section.appendChild(createText(
+    "div",
+    "trellis-detail-section-title",
+    t("dashboardTrellisDetailSessions")
+  ));
+  const chips = document.createElement("div");
+  chips.className = "trellis-task-sessions";
+  for (const binding of request.sessions) chips.appendChild(createTrellisSessionChip(binding));
+  section.appendChild(chips);
+  card.appendChild(section);
+}
+
+function buildTrellisDetailCard() {
+  const card = document.createElement("div");
+  card.className = "trellis-detail-card";
+  const request = trellisDetail.request || { title: "", taskPath: "", sessions: [] };
+
+  const header = document.createElement("div");
+  header.className = "trellis-detail-header";
+  const heading = document.createElement("div");
+  heading.className = "trellis-detail-heading";
+  const result = trellisDetail.result;
+  const detail = result && result.status === "ok" && result.task ? result.task : null;
+  heading.appendChild(createText(
+    "h2",
+    "trellis-detail-title",
+    (detail && detail.title) || request.title || request.taskPath
+  ));
+  if (detail) {
+    const badge = TRELLIS_PHASE_BADGE[detail.phase];
+    if (badge) {
+      heading.appendChild(createText("span", `trellis-phase-badge ${badge.cls}`, t(badge.labelKey)));
+    }
+    if (detail.archived) {
+      heading.appendChild(createText(
+        "span",
+        "trellis-detail-archived-badge",
+        t("dashboardTrellisDetailArchived")
+      ));
+    }
+  }
+  header.appendChild(heading);
+
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "trellis-detail-close";
+  close.textContent = "✕";
+  close.title = t("dashboardTrellisDetailClose");
+  close.setAttribute("aria-label", t("dashboardTrellisDetailClose"));
+  close.addEventListener("click", closeTrellisDetail);
+  header.appendChild(close);
+  card.appendChild(header);
+
+  if (trellisDetail.loading) {
+    card.appendChild(createText("div", "trellis-detail-empty", t("dashboardTrellisDetailLoading")));
+  } else if (detail) {
+    appendTrellisDetailMeta(card, detail);
+    appendTrellisDetailChecklist(card, detail);
+  } else if (result && result.status === "missing") {
+    card.appendChild(createText("div", "trellis-detail-empty", t("dashboardTrellisDetailMissing")));
+  } else {
+    card.appendChild(createText("div", "trellis-detail-empty", t("dashboardTrellisDetailError")));
+  }
+
+  appendTrellisDetailSessions(card, request);
+  return card;
+}
+
+function renderTrellisDetail() {
+  if (!trellisDetailOverlayEl) return;
+  const signature = computeTrellisDetailSignature();
+  if (signature === lastTrellisDetailSignature) return;
+  lastTrellisDetailSignature = signature;
+  if (!trellisDetail.open) {
+    trellisDetailOverlayEl.hidden = true;
+    trellisDetailOverlayEl.replaceChildren();
+    return;
+  }
+  trellisDetailOverlayEl.replaceChildren(buildTrellisDetailCard());
+  trellisDetailOverlayEl.hidden = false;
+  trellisDetailOverlayEl.setAttribute("aria-label", t("dashboardTrellisDetailTitle"));
 }
 
 function badgeLabel(badge) {
@@ -2198,6 +2442,7 @@ function render(options = {}) {
   document.title = t("dashboardWindowTitle");
   renderQuotaSummary(snapshot);
   renderTrellisPanel();
+  renderTrellisDetail();
 
   renderQuickBanner();
 
@@ -2225,6 +2470,20 @@ function render(options = {}) {
 }
 
 async function init() {
+  // Detail overlay dismissal: ESC (when the keyboard mode is not holding the
+  // key) and a click on the dimmed backdrop outside the card.
+  if (typeof document.addEventListener === "function") {
+    document.addEventListener("keydown", (event) => {
+      if (!trellisDetail.open) return;
+      if (quick.active || quick.pending) return;
+      if (event.key === "Escape") closeTrellisDetail();
+    });
+  }
+  if (trellisDetailOverlayEl && typeof trellisDetailOverlayEl.addEventListener === "function") {
+    trellisDetailOverlayEl.addEventListener("click", (event) => {
+      if (event.target === trellisDetailOverlayEl) closeTrellisDetail();
+    });
+  }
   window.dashboardAPI.onLangChange((payload) => {
     i18nPayload = payload || i18nPayload;
     render();

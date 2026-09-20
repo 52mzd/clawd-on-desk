@@ -899,6 +899,194 @@ describe("trellis-activity getKnownRoots", () => {
 
 // ── read-only red line (design D7) ──
 
+describe("trellis-activity readTaskDetail", () => {
+  const TASK_JSON = {
+    title: "详情任务",
+    status: "in_progress",
+    createdAt: "2026-09-20",
+    completedAt: null,
+    subtasks: [],
+  };
+  const MD = ["# implement", "- [x] done thing", "- [ ] next thing", ""].join("\n");
+
+  // readTaskDetail resolves a root only from a live trellis-capable
+  // session's cwd, so every harness needs one session working in CWD.
+  function makeDetailHarness(sessions = new Map([["pi:detail", { agentId: "pi", cwd: CWD }]])) {
+    return makeHarness({ sessions });
+  }
+
+  it("reads an active task with checklist, dates and derived phase", async () => {
+    const h = makeDetailHarness();
+    addTask(h.fakeFs, "09-20-x", TASK_JSON, { prd: true, implementMd: MD });
+    const result = await h.activity.readTaskDetail(CWD, ".trellis/tasks/09-20-x");
+    assert.strictEqual(result.status, "ok");
+    assert.strictEqual(result.task.title, "详情任务");
+    assert.strictEqual(result.task.phase, "execute");
+    assert.strictEqual(result.task.rawStatus, "in_progress");
+    assert.strictEqual(result.task.createdAt, "2026-09-20");
+    assert.strictEqual(result.task.completedAt, null);
+    assert.strictEqual(result.task.archived, false);
+    assert.strictEqual(result.task.checklist.total, 2);
+    assert.strictEqual(result.task.checklist.done, 1);
+    assert.deepStrictEqual(
+      result.task.checklist.items.map((i) => [i.text, i.checked]),
+      [["done thing", true], ["next thing", false]]
+    );
+    assert.deepStrictEqual(h.fakeFs.writeOps, [], "detail reads stay read-only");
+  });
+
+  it("derives the check phase from a fully-ticked checklist", async () => {
+    const h = makeDetailHarness();
+    addTask(h.fakeFs, "t", TASK_JSON, {
+      prd: true,
+      implementMd: "- [x] a\n- [x] b\n",
+    });
+    const result = await h.activity.readTaskDetail(CWD, ".trellis/tasks/t");
+    assert.strictEqual(result.status, "ok");
+    assert.strictEqual(result.task.phase, "check");
+    assert.strictEqual(result.task.checklist.done, 2);
+  });
+
+  it("returns an empty checklist when implement.md is absent", async () => {
+    const h = makeDetailHarness();
+    addTask(h.fakeFs, "t", TASK_JSON, { prd: true });
+    const result = await h.activity.readTaskDetail(CWD, ".trellis/tasks/t");
+    assert.strictEqual(result.status, "ok");
+    assert.deepStrictEqual(result.task.checklist, { items: [], done: 0, total: 0 });
+  });
+
+  it("falls back to the archive copy when the active dir just disappeared", async () => {
+    const h = makeDetailHarness();
+    const active = addTask(h.fakeFs, "gone", TASK_JSON, { prd: true, implementMd: MD });
+    // The fake fs implies directories from files, so the active dir only
+    // disappears once every file under it is gone (task.py moves the whole
+    // dir in one commit).
+    for (const name of ["task.json", "prd.md", "implement.md"]) {
+      h.fakeFs.remove(path.join(active, name));
+    }
+    h.fakeFs.add(
+      path.join(PROJECT, ".trellis", "tasks", "archive", "2026-09", "gone", "task.json"),
+      JSON.stringify({ ...TASK_JSON, status: "completed", completedAt: "2026-09-21" })
+    );
+    h.fakeFs.add(
+      path.join(PROJECT, ".trellis", "tasks", "archive", "2026-09", "gone", "implement.md"),
+      MD
+    );
+    const result = await h.activity.readTaskDetail(CWD, ".trellis/tasks/gone");
+    assert.strictEqual(result.status, "ok");
+    assert.strictEqual(result.task.archived, true);
+    assert.strictEqual(result.task.phase, "done");
+    assert.strictEqual(result.task.completedAt, "2026-09-21");
+  });
+
+  it("reads an already-archived taskPath directly", async () => {
+    const h = makeDetailHarness();
+    addTask(h.fakeFs, "old", TASK_JSON);
+    const archivedJson = path.join(
+      PROJECT, ".trellis", "tasks", "archive", "2026-08", "old", "task.json"
+    );
+    h.fakeFs.add(archivedJson, JSON.stringify(TASK_JSON));
+    const result = await h.activity.readTaskDetail(
+      CWD,
+      ".trellis/tasks/archive/2026-08/old"
+    );
+    assert.strictEqual(result.status, "ok");
+    assert.strictEqual(result.task.archived, true);
+    assert.strictEqual(result.task.phase, "done");
+  });
+
+  it("reports missing when no root or no task dir exists anywhere", async () => {
+    const noRoot = makeDetailHarness(new Map([["pi:x", { agentId: "pi", cwd: "/nowhere" }]]));
+    assert.deepStrictEqual(
+      await noRoot.activity.readTaskDetail("/nowhere", ".trellis/tasks/x"),
+      { status: "missing" }
+    );
+
+    const h = makeDetailHarness();
+    addTask(h.fakeFs, "other", TASK_JSON);
+    assert.deepStrictEqual(
+      await h.activity.readTaskDetail(CWD, ".trellis/tasks/nope"),
+      { status: "missing" }
+    );
+    assert.deepStrictEqual(
+      await h.activity.readTaskDetail(CWD, ".trellis/tasks/archive/2026-09/nope"),
+      { status: "missing" }
+    );
+  });
+
+  it("reports an error for a corrupt task.json instead of half-empty data", async () => {
+    const h = makeDetailHarness();
+    const dir = addTask(h.fakeFs, "corrupt", TASK_JSON);
+    h.fakeFs.remove(path.join(dir, "task.json"));
+    h.fakeFs.add(path.join(dir, "task.json"), "{not json");
+    const result = await h.activity.readTaskDetail(CWD, ".trellis/tasks/corrupt");
+    assert.deepStrictEqual(result, { status: "error", message: "unreadable-task-json" });
+  });
+
+  it("rejects malformed and traversal taskPath inputs before any fs read", async () => {
+    const h = makeDetailHarness();
+    addTask(h.fakeFs, "t", TASK_JSON);
+    for (const bad of [
+      null,
+      undefined,
+      42,
+      "",
+      ".trellis/tasks/",
+      "tasks/t",
+      ".trellis/other/t",
+      ".trellis/tasks/../secrets",
+      ".trellis/tasks/a/../../escape",
+      ".trellis/tasks//double",
+      ".trellis/tasks/a\\..\\..\\..\\Windows",
+      ".trellis/tasks/t\\..\\secret",
+      ".trellis/tasks/archive/2026-09\\..\\..\\..\\win",
+    ]) {
+      assert.deepStrictEqual(
+        await h.activity.readTaskDetail(CWD, bad),
+        { status: "missing" },
+        JSON.stringify(bad)
+      );
+    }
+    assert.deepStrictEqual(
+      await h.activity.readTaskDetail(null, ".trellis/tasks/t"),
+      { status: "missing" }
+    );
+  });
+
+  it("falls back to the task dir basename when task.json has no title", async () => {
+    const h = makeDetailHarness();
+    addTask(h.fakeFs, "nameless", { status: "planning", subtasks: [] }, { prd: true });
+    const result = await h.activity.readTaskDetail(CWD, ".trellis/tasks/nameless");
+    assert.strictEqual(result.status, "ok");
+    assert.strictEqual(result.task.title, "nameless");
+    assert.strictEqual(result.task.phase, "plan");
+    assert.strictEqual(result.task.createdAt, null);
+  });
+
+  it("refuses a cwd no live trellis-capable session is working in", async () => {
+    // Disk has the task under PROJECT, but the only live session works in
+    // CWD — a cwd the panel never showed must not resolve any root.
+    const h = makeDetailHarness(new Map([[
+      "pi:other",
+      { agentId: "pi", cwd: path.join(PROJECT, "unrelated") },
+    ]]));
+    addTask(h.fakeFs, "t", TASK_JSON);
+    assert.deepStrictEqual(
+      await h.activity.readTaskDetail(path.join(PROJECT, "app-sub"), ".trellis/tasks/t"),
+      { status: "missing" }
+    );
+    // headless sessions do not count either
+    const headless = makeHarness({
+      sessions: new Map([["pi:hl", { agentId: "pi", cwd: CWD, headless: true }]]),
+    });
+    addTask(headless.fakeFs, "t", TASK_JSON);
+    assert.deepStrictEqual(
+      await headless.activity.readTaskDetail(CWD, ".trellis/tasks/t"),
+      { status: "missing" }
+    );
+  });
+});
+
 describe("trellis-activity read-only red line", () => {
   it("performs zero write operations across a full lifecycle", async () => {
     const h = makeHarness({

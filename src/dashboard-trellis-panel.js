@@ -67,8 +67,12 @@
       }
       entry.phase = info.phase;
       entry.progress = normalizeProgress(info.progress) || entry.progress;
+      // cwd rides along for the detail view: its on-demand read resolves
+      // the .trellis root from a bound session's working directory, exactly
+      // like the polling binder does.
       entry.sessions.push({
         id: session.id,
+        cwd: typeof session.cwd === "string" ? session.cwd : "",
         displayTitle: session.displayTitle || session.sessionTitle || session.id,
         agentId: session.agentId || null,
         agentName: session.agentName || null,

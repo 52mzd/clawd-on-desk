@@ -44,6 +44,10 @@ function registerSessionIpc(options = {}) {
     options.resumeSessionFromHistory,
     "resumeSessionFromHistory"
   );
+  const getTrellisTaskDetail = requiredDependency(
+    options.getTrellisTaskDetail,
+    "getTrellisTaskDetail"
+  );
   const quickMode = options.quickMode || null;
   const disposers = [];
 
@@ -133,6 +137,29 @@ function registerSessionIpc(options = {}) {
       agentId: payload.agentId,
       sessionId: payload.sessionId,
     });
+  });
+
+  // One-shot on-demand read of a Trellis task's files at a renderer-supplied
+  // path — same trusted-frame gate as session history, plus strict payload
+  // validation (the detail view is opened per click, never polled).
+  handle("dashboard:trellis-task-detail", (event, payload) => {
+    const rejected = rejectUntrustedDashboardEvent(event);
+    if (rejected) return rejected;
+    const keys = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? Object.keys(payload).sort()
+      : [];
+    if (
+      keys.length !== 2
+      || keys[0] !== "cwd"
+      || keys[1] !== "taskPath"
+      || typeof payload.cwd !== "string"
+      || !payload.cwd
+      || typeof payload.taskPath !== "string"
+      || !payload.taskPath
+    ) {
+      return { status: "invalid" };
+    }
+    return getTrellisTaskDetail(payload);
   });
 
   handle("dashboard:set-session-alias", (_event, payload) => setSessionAlias(payload));

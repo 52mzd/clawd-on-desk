@@ -5259,6 +5259,12 @@ registerSessionIpc({
     sessionAutomationCoordinator.clearSessionAutomationGrant(payload),
   getSessionHistory: () => sessionHistoryRuntime.getHistory(),
   resumeSessionFromHistory: (payload) => sessionHistoryRuntime.resume(payload),
+  getTrellisTaskDetail: (payload) => {
+    if (!_trellisActivity || typeof _trellisActivity.readTaskDetail !== "function") {
+      return { status: "error", message: "trellis-activity-unavailable" };
+    }
+    return _trellisActivity.readTaskDetail(payload.cwd, payload.taskPath);
+  },
   showDashboard: (options) => showDashboard(options),
   setSessionHudTrellisDetailHeight: (px) => {
     if (typeof _sessionHud.setTrellisDetailHeight === "function") {

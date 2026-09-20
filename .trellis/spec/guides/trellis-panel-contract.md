@@ -399,6 +399,60 @@ Correct 聚合入 dashboard-trellis-panel.js UMD；阶段文案复用 sessionHud
         重建时以 liveTasks 的 taskPath 集合修剪 Set
 ```
 
+#### §4.3 任务详情卡（readTaskDetail + Dashboard overlay）
+
+**1. Scope/Trigger**：任何「按需单次读取某个 Trellis 任务文件并呈现」的
+代码。当前实现：`src/trellis-activity.js` 的 `readTaskDetail`、
+`src/session-ipc.js` 的 `dashboard:trellis-task-detail`、
+`src/dashboard-renderer.js` 的 trellis-detail overlay。
+
+**2. Signatures**（全链路，自渲染层起）：
+- renderer `openTrellisDetail(task)` → 单次 `dashboardAPI.getTrellisTaskDetail(
+  { taskPath, cwd })`（冻结于打开瞬间，从不轮询）
+- preload `getTrellisTaskDetail(payload)` → `ipcRenderer.invoke`
+- IPC `dashboard:trellis-task-detail`（handle，同步返回结果对象）
+- main `_trellisActivity.readTaskDetail(cwd, taskPath)` →
+  `{status:"ok",task:{title,phase,rawStatus,createdAt,completedAt,
+  archived,checklist}}` | `{status:"missing"}` | `{status:"error",message}`
+
+**3. Contracts**：
+- **payload 恰为 `{cwd,taskPath}` 两字符串**：`Object.keys` 排序后长度必须
+  是 2；结构化克隆后的 `{"__proto__":…}` 是 own property，会被这个门拦下，
+  污染面到不了 owner
+- **trusted-frame 门禁**：与 session history 同一道
+  `isTrustedDashboardEvent`（sender===owner contents && mainFrame &&
+  精确页面 URL），不依赖 webFrameId
+- **cwd 白名单**：cwd 必须命中 `collectLiveSessions()` 的 cwd 集合
+  （面板行本身就来自这些会话）；陌生 cwd 直接 missing，即使磁盘上
+  root 可达也不读——根永远来自会话，不来自请求
+- **路径遏制（双分隔符）**：taskPath 必须以 `.trellis/tasks/` 开头，且
+  按 `/[\\/]/` 拆分后每段非空、非 `.`、非 `..`。**win32 的 `path.join`
+  会把反斜杠段也 normalize**：`"/"`-only 拆分放行
+  `.trellis/tasks/a\..\..\x` → join 越界到 root 外（POSIX 分支碰巧无害，
+  win32 分支真越界——分支相关错误，拆分逻辑必须平台无关）
+- **归档回退**：active 目录消失时复用 `findArchivedTaskDir` 精确名匹配
+  （与轮询/庆祝同一语义）；跨月同名取 readdir 首个，与既有回退一致
+- **降级语义**：无 root/无目录/被拒 → `missing`（卡片提示可能已归档）；
+  task.json 损坏 → `error`（不渲染半空数据）；checklist 只解析
+  checkbox 列表，不渲染任意 markdown
+- **overlay 生命周期**：每秒 render() 调 `renderTrellisDetail`，但签名 =
+  `{lang,open,loading,request,result}` 的 JSON 全量比较——request
+  （含 sessions 快照）在打开时冻结，所以周期重建既不关卡也不闪；
+  任务从面板消失后卡片靠冻结引用继续存活。ESC（quick 模式持键时不
+  抢）/backdrop 点击/✕ 关闭；监听器只在 init 注册一次
+- **CSS hidden 守卫**：`.trellis-detail-overlay[hidden]{display:none}`
+  必须与 `display:flex` 成对出现（静态测试断言，同 `.trellis-panel`）
+
+**4. Wrong vs Correct**：
+```text
+Wrong   taskPath.split("/") 后只拒 ".." 段        // win32 反斜杠段漏网
+        findTrellisRoot(renderer 传入的任意 cwd)   // 任意目录探测 .trellis
+        overlay 重建引用面板实时 sessions          // 每秒卡片闪变/被归档期关掉
+Correct taskPath.slice(prefix).split(/[\\/]/) 后逐段拒绝
+        cwd ∈ collectLiveSessions() 的 cwd 集合，否则 missing
+        request 冻结于 open 瞬间，签名含 request/result 才重渲染
+```
+
 ### 5. 失败模式
 
 | 症状 | 根因 | 防护 |
@@ -409,6 +463,8 @@ Correct 聚合入 dashboard-trellis-panel.js UMD；阶段文案复用 sessionHud
 | 详情行文字被截断（显示不完整） | 用固定常数当展开行高度，遇换行即溢出 | 高度双轨制：固定行高 ×28 + 渲染层实测弹性高度回传（见 §4） |
 | 展开后 HUD 越缩越小 | detail 行可 flex-shrink，实测回传的是被压缩值，反馈成 runaway loop | `.trellis-detail { flex: 0 0 auto }`；实测值与压缩值必须区分 |
 | Dashboard 面板隐藏后仍留空白间距 | `.trellis-panel { display:flex }` 覆盖了 UA `[hidden]` 规则 | `.trellis-panel[hidden] { display:none }` + 静态测试断言（见 §4.2） |
+| 详情卡读出 root 外文件（win32） | taskPath 只按 `/` 拆分，`a\..\..\x` 单段过检，`path.join` normalize 后越界 | 双分隔符拆分 + 逐段拒绝（见 §4.3）；两平台都要有用例 |
+| 陌生 cwd 能探测任意 .trellis | readTaskDetail 直接 findTrellisRoot(renderer 的 cwd) | cwd 必须命中 live 会话集合（见 §4.3） |
 
 ### 6. 测试断言点（review 必查）
 

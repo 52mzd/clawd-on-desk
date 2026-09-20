@@ -318,6 +318,187 @@ h1 {
   border-color: var(--border);
 }
 
+/* Row-tail detail button (ⓘ): opens the task-detail overlay card. */
+.trellis-task-detail-btn {
+  flex: 0 0 auto;
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--subtle);
+  font-size: 13px;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.trellis-task-detail-btn:hover {
+  background: rgba(59, 130, 246, 0.12);
+  color: var(--text);
+}
+
+/* Task detail: a modal card inside the Dashboard window. Clicks on the
+   dimmed backdrop (not the card) and ESC close it. Same palette as the
+   panel above; the card scrolls independently of the page. */
+.trellis-detail-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 15, 20, 0.45);
+}
+
+/* Author display overrides the UA [hidden] rule — same pattern as the
+   trellis panel above. */
+.trellis-detail-overlay[hidden] {
+  display: none;
+}
+
+.trellis-detail-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(420px, 100%);
+  max-height: min(520px, 100%);
+  overflow-y: auto;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+}
+
+.trellis-detail-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.trellis-detail-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.trellis-detail-title {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.3;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.trellis-detail-archived-badge {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: rgba(107, 114, 128, 0.13);
+  color: #52525b;
+}
+
+.trellis-detail-close {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.trellis-detail-close:hover {
+  background: var(--surface-alt);
+  color: var(--text);
+}
+
+.trellis-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.trellis-detail-meta-item {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.trellis-detail-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-alt);
+  overflow: hidden;
+}
+
+.trellis-detail-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--done);
+  transition: width 0.2s ease;
+}
+
+.trellis-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.trellis-detail-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.trellis-detail-checklist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.trellis-detail-check-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 3px 4px;
+  border-radius: 6px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.trellis-detail-check-box {
+  flex: 0 0 auto;
+  color: var(--subtle);
+  line-height: 1.4;
+}
+
+.trellis-detail-check-item-done .trellis-detail-check-box {
+  color: var(--done);
+}
+
+.trellis-detail-check-item-done .trellis-detail-check-text {
+  color: var(--muted);
+}
+
+.trellis-detail-empty {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
 .quota-summary {
   display: flex;
   flex-direction: column;
@@ -978,6 +1159,7 @@ button:disabled {
     </header>
     <main id="content" class="content" aria-live="polite"></main>
   </div>
+  <div id="trellisDetailOverlay" class="trellis-detail-overlay" role="dialog" hidden></div>
   <script src="./session-focus-unavailable.js"></script>
   <script src="./dashboard-trellis-panel.js"></script>
   <script src="./dashboard-renderer.js"></script>

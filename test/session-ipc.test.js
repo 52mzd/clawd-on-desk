@@ -123,6 +123,10 @@ function createHarness(overrides = {}) {
       calls.push(["resumeSessionFromHistory", payload]);
       return { status: "ok" };
     }),
+    getTrellisTaskDetail: overrides.getTrellisTaskDetail || ((payload) => {
+      calls.push(["getTrellisTaskDetail", payload]);
+      return { status: "ok", task: { title: "T", phase: "execute" } };
+    }),
     getDashboardWebContents: overrides.getDashboardWebContents
       || (() => dashboardWebContents),
     quickMode: Object.prototype.hasOwnProperty.call(overrides, "quickMode")
@@ -171,6 +175,7 @@ test("session IPC registers owned channels and disposes them", () => {
     "dashboard:resume-session",
     "dashboard:set-session-alias",
     "dashboard:set-session-automation",
+    "dashboard:trellis-task-detail",
     "session-hud:get-i18n",
     "session-hud:open-session-folder",
     "session:ack-completion",
@@ -396,6 +401,57 @@ test("resume-session takes exactly an agentId/sessionId pair", async () => {
   // Above all: no extra field may ride along. cwd is resolved in main from the
   // store, and a dangerous-mode flag has no route in from the Dashboard.
   assert.deepStrictEqual(calls, []);
+});
+
+test("trellis task-detail IPC is a trusted-frame, strictly-shaped one-shot read", async () => {
+  const { ipcMain, calls, trustedDashboardEvent } = createHarness();
+
+  const payload = { taskPath: ".trellis/tasks/09-20-x", cwd: "/proj/app" };
+  assert.deepStrictEqual(
+    await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-task-detail", payload),
+    { status: "ok", task: { title: "T", phase: "execute" } }
+  );
+  assert.deepStrictEqual(calls, [["getTrellisTaskDetail", payload]]);
+
+  // The handler reads real files at a renderer-supplied path, so a near-miss
+  // sender must not reach the owner.
+  calls.length = 0;
+  for (const event of [
+    { sender: trustedDashboardEvent.sender },
+    { sender: {}, senderFrame: trustedDashboardEvent.senderFrame },
+    { sender: trustedDashboardEvent.sender, senderFrame: { ...trustedDashboardEvent.senderFrame } },
+  ]) {
+    assert.deepStrictEqual(
+      await ipcMain.invokeFrom(event, "dashboard:trellis-task-detail", payload),
+      { status: "error", reason: "untrusted-dashboard-sender" }
+    );
+  }
+  assert.deepStrictEqual(calls, []);
+
+  for (const bad of [
+    null,
+    undefined,
+    "x",
+    42,
+    [],
+    {},
+    { taskPath: ".trellis/tasks/09-20-x" },
+    { cwd: "/proj/app" },
+    { taskPath: "", cwd: "/proj/app" },
+    { taskPath: ".trellis/tasks/x", cwd: "" },
+    { taskPath: 7, cwd: "/proj/app" },
+    { taskPath: ".trellis/tasks/x", cwd: "/proj/app", root: "/etc" },
+    // A structured-cloned `{"__proto__": ...}` arrives as an OWN property,
+    // so Object.keys sees it and the exact-two-keys gate rejects the frame.
+    { ["__proto__"]: "x", taskPath: ".trellis/tasks/x", cwd: "/proj/app" },
+  ]) {
+    assert.deepStrictEqual(
+      await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-task-detail", bad),
+      { status: "invalid" },
+      JSON.stringify(bad)
+    );
+  }
+  assert.deepStrictEqual(calls, [], "invalid payloads must never reach the fs-reading owner");
 });
 
 test("session IPC owns dashboard open bridges", () => {
