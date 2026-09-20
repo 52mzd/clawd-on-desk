@@ -71,7 +71,7 @@ describe("built-in accessory capability contracts", () => {
     const usages = projectThemeVisualUsages(raw);
     const files = collectRequiredAssetFiles(raw);
 
-    assert.strictEqual(usages.length, 50);
+    assert.strictEqual(usages.length, 51);
     assert.strictEqual(files.length, 48);
     assert.deepStrictEqual(
       new Set(files),
@@ -82,6 +82,10 @@ describe("built-in accessory capability contracts", () => {
     assert.ok(files.includes("clawd-working-typing-boss.svg"));
     assert.ok(!usages.some((usage) => usage.file === "clawd-working-typing-boss.svg"));
     assert.ok(!usages.some((usage) => usage.source === "rendering.objectChannelFiles"));
+    assert.ok(
+      usages.some((usage) => usage.file === "clawd-idle-reading.svg" && usage.source === "states.waiting"),
+      "the waiting-auth display override reuses the reading sprite"
+    );
     assert.strictEqual(normalized._capabilities.accessories, true);
     assertDeclaredTargetsExist("clawd", raw);
 
@@ -170,7 +174,7 @@ describe("built-in accessory capability contracts", () => {
     const usages = projectThemeVisualUsages(raw);
     const files = collectRequiredAssetFiles(raw);
 
-    assert.strictEqual(usages.length, 41);
+    assert.strictEqual(usages.length, 42);
     assert.strictEqual(files.length, 29);
     assert.strictEqual(normalized._capabilities.accessories, true);
     assert.ok(files.includes("cloudling-idle-to-sleeping.svg"));

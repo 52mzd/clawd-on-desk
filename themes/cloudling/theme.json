@@ -227,6 +227,9 @@
     "juggling": [
       "cloudling-juggling.svg"
     ],
+    "waiting": [
+      "cloudling-idle-reading.svg"
+    ],
     "attention": [
       "cloudling-attention.svg"
     ],

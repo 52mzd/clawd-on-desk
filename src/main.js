@@ -2038,6 +2038,18 @@ const _permCtx = {
   // pendingPermissions list changes (notifyPermissionsChanged), so a bubble
   // that leaves the list mid-edit can't strand the pet faded + click-through.
   syncImeEditingPetDodge: () => topmostRuntime.syncImeEditingPetDodge(),
+  // Waiting-auth display override: every pendingPermissions add/remove
+  // funnels through notifyPermissionsChanged, so re-resolve the pet display
+  // here (state.js owns the waiting visual, permission.js owns the list).
+  // DND keeps its own sleep visual — pending bubbles are dismissed before
+  // this fires and ctx.doNotDisturb is already true — and mini mode replays
+  // its own working visual, so both stay out of this re-resolve.
+  onPermissionsChanged: () => {
+    if (doNotDisturb) return;
+    if (_mini && _mini.getMiniMode()) return;
+    if (!_state) return;
+    try { _state.applyResolvedDisplayState(); } catch {}
+  },
   isAgentEnabled: (agentId) => _runtimeAgentGate.isAgentEnabled(agentId),
   isAgentPermissionsEnabled: (agentId) =>
     _runtimeAgentGate.isAgentPermissionsEnabled(agentId),
@@ -2419,6 +2431,11 @@ const _stateCtx = {
   // trellisResolver — pure aggregate cache read, zero extra IO.
   getTrellisProjectExecutingCount: () =>
     _trellisActivity ? _trellisActivity.getExecutingCount() : 0,
+  // Waiting-auth display override: feeds the display-only working→waiting
+  // lift inside state.js. Same lazy forward reference pattern as above — pure
+  // pending count read from the permission runtime, zero extra IO.
+  getPendingPermissionCount: () =>
+    _perm ? _perm.getPendingPermissionCount() : 0,
   hasReplyableCompletionMapping: (sessionId, session) => !!(
     telegramDirectSend
     && typeof telegramDirectSend.hasReplyableCompletionMapping === "function"

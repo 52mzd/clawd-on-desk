@@ -175,6 +175,7 @@ These are common optional states you can add when you want distinct visuals for 
 | `sweeping` | Context compaction | |
 | `carrying` | Worktree creation | |
 | `juggling` | Subagent active | Declare this and/or `jugglingTiers` if you want a distinct juggling visual |
+| `waiting` | Permission request pending | Display-only override of `working`/`thinking` while a permission request is pending. Omit to keep the working visual; never active while sleeping/DND or in mini mode |
 | `roam` | Free roam walk | Bind a dedicated walk visual; see Free Roam Walk Visual below |
 
 ### Free Roam Walk Visual
