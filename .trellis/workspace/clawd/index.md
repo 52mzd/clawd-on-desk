@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 5
+- **Total Sessions**: 6
 - **Last Active**: 2026-09-20
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~164 | Active |
+| `journal-1.md` | ~185 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 6 | 2026-09-20 | Spec 收口：HUD 详情行契约复盘沉淀为跨层 Mistake 6 | `c28bbfca` | `main` |
 | 5 | 2026-09-20 | 创意池 v1 全量落地：R3/R3.1 阶段化身 + R5 Dashboard 面板 + recap 日报 | `2abf05c3`, `110de440`, `26c5cb97` | `main` |
 | 4 | 2026-09-20 | Trellis HUD 展开详情行：替代 hover tooltip | `702a08fc`, `6d4ad1d9`, `e62e483e` | `main` |
 | 3 | 2026-09-19 | 归档庆祝修复：负空间检测 + 真机验证闭环 | `ffb0d21f`, `17208efa`, `6cd4111a` | `main` |

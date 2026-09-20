@@ -162,3 +162,24 @@ Settings 新增 Trellis tab：扫描多目录项目的 Trellis 安装/版本/平
 ### Status
 
 [OK] **Completed**
+
+
+## Session 6: Spec 收口：HUD 详情行契约复盘沉淀为跨层 Mistake 6
+
+**Date**: 2026-09-20
+**Task**: Spec 收口：HUD 详情行契约复盘沉淀为跨层 Mistake 6
+**Branch**: `main`
+
+### Summary
+
+break-loop 复盘 HUD trellis 详情行三连 bug（截断→runaway shrink→时序），提炼为跨层通用模式「测量值反喂被测布局」写入 cross-layer-thinking-guide.md Mistake 6（不可收缩元素/rAF 后测量+同步 fallback/亚像素阻尼三规则）+ After-implementation checklist 新勾选项；案例指针回链 trellis-panel-contract.md §4.1。创意池 v1 五提交链至此全部收口。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c28bbfca` | (see git log) |
+
+### Status
+
+[OK] **Completed**
