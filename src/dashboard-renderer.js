@@ -1,7 +1,11 @@
 "use strict";
 
 const { canOfferLocalFolder, focusUnavailableReasonKey } = globalThis.ClawdSessionFocusUnavailable;
-const { aggregateTrellisTasks, TRELLIS_PHASE_BADGE } = globalThis.ClawdDashboardTrellisPanel;
+const {
+  aggregateTrellisTasks,
+  groupTrellisTasks,
+  TRELLIS_PHASE_BADGE,
+} = globalThis.ClawdDashboardTrellisPanel;
 
 const AGENT_LABELS = {
   "claude-code": "Claude Code",
@@ -1097,11 +1101,35 @@ function renderQuotaSummary(snapshot) {
 const expandedTrellisTasks = new Set();
 let lastTrellisPanelSignature = null;
 
-function computeTrellisPanelSignature(tasks) {
+// Collapsed "Archived" section state (module-level, same lifetime policy as
+// expandedTrellisTasks): fetched once on demand when the header is first
+// expanded, refreshed only via the explicit button — never polled. cwdsKey
+// tracks which live projects the cached rows belong to; when the panel's
+// bound cwds change (different project mix), the cache is dropped so the
+// next expand refetches instead of showing another project's archive.
+const trellisArchive = {
+  expanded: false,
+  loading: false,
+  seq: 0,
+  loaded: false,
+  tasks: [],
+  error: false,
+  cwdsKey: "",
+};
+
+function computeTrellisPanelSignature(tasks, archiveCwdsKey) {
   return JSON.stringify({
     lang: (i18nPayload && i18nPayload.lang) || "en",
     tasks,
     expanded: [...expandedTrellisTasks].sort(),
+    archive: {
+      cwdsKey: archiveCwdsKey,
+      expanded: trellisArchive.expanded,
+      loading: trellisArchive.loading,
+      loaded: trellisArchive.loaded,
+      error: trellisArchive.error,
+      tasks: trellisArchive.tasks,
+    },
   });
 }
 
@@ -1127,9 +1155,12 @@ function createTrellisSessionChip(binding) {
   return chip;
 }
 
-function createTrellisTaskRow(task) {
+function createTrellisTaskRow(groupRow) {
+  const task = groupRow.task;
   const row = document.createElement("div");
   row.className = "trellis-task-row";
+  if (groupRow.depth > 0) row.classList.add("trellis-task-row-child");
+  if (groupRow.hasChildren) row.classList.add("trellis-task-row-group");
   row.title = trellisTaskRowTitle(task);
 
   const main = document.createElement("div");
@@ -1140,7 +1171,18 @@ function createTrellisTaskRow(task) {
   const phaseEl = createText("span", `trellis-phase-badge ${badge.cls}`, t(badge.labelKey));
   main.appendChild(phaseEl);
 
-  if (task.progress) {
+  // A parent row with live children shows the subtree summary instead of
+  // its own step count (the group is what the row now answers for);
+  // childless rows keep the plain task progress.
+  if (groupRow.childSummary) {
+    main.appendChild(createText(
+      "span",
+      "trellis-task-group-summary",
+      t("dashboardTrellisGroupProgress")
+        .replace("{done}", String(groupRow.childSummary.done))
+        .replace("{total}", String(groupRow.childSummary.total))
+    ));
+  } else if (task.progress) {
     main.appendChild(createText(
       "span",
       "trellis-task-progress",
@@ -1200,7 +1242,20 @@ function renderTrellisPanel() {
   if (!trellisPanelEl) return;
   const sessions = Array.isArray(snapshot && snapshot.sessions) ? snapshot.sessions : [];
   const tasks = aggregateTrellisTasks(sessions);
-  const signature = computeTrellisPanelSignature(tasks);
+  const archiveCwds = trellisArchiveCwds(tasks);
+  const archiveCwdsKey = [...archiveCwds].sort().join("\n");
+  // The cached archive rows belong to the previous project mix — drop them
+  // (and void any in-flight fetch) so the next expand reads the new roots.
+  if (archiveCwdsKey !== trellisArchive.cwdsKey) {
+    trellisArchive.cwdsKey = archiveCwdsKey;
+    trellisArchive.seq += 1;
+    trellisArchive.expanded = false;
+    trellisArchive.loading = false;
+    trellisArchive.loaded = false;
+    trellisArchive.tasks = [];
+    trellisArchive.error = false;
+  }
+  const signature = computeTrellisPanelSignature(tasks, archiveCwdsKey);
   if (signature === lastTrellisPanelSignature) return;
   lastTrellisPanelSignature = signature;
 
@@ -1218,9 +1273,196 @@ function renderTrellisPanel() {
 
   const fragment = document.createDocumentFragment();
   fragment.appendChild(createText("div", "trellis-panel-title", t("dashboardTrellisSectionTitle")));
-  for (const task of tasks) fragment.appendChild(createTrellisTaskRow(task));
+  for (const groupRow of groupTrellisTasks(tasks)) {
+    fragment.appendChild(createTrellisTaskRow(groupRow));
+  }
+  const archiveSection = buildTrellisArchiveSection(archiveCwds);
+  if (archiveSection) fragment.appendChild(archiveSection);
   trellisPanelEl.replaceChildren(fragment);
   trellisPanelEl.hidden = false;
+}
+
+// ── Trellis archived-tasks section ───────────────────────────────────────
+// Collapsed by default at the panel's bottom: the rows come from one
+// on-demand IPC read (first expand + explicit refresh, never a poll), each
+// row opens the same task-detail overlay as live tasks — taskPath already
+// points into tasks/archive/<month>/, which readTaskDetail answers.
+
+function trellisArchiveCwds(tasks) {
+  const set = new Set();
+  for (const task of tasks) {
+    for (const binding of task.sessions) {
+      if (binding && binding.cwd) set.add(binding.cwd);
+    }
+  }
+  // Cap at the IPC payload limit (16, mirrored in trellis-activity):
+  // beyond that the archive scan would be rejected as invalid anyway.
+  return [...set].slice(0, 16);
+}
+
+async function loadTrellisArchive(cwds) {
+  if (!cwds.length) return;
+  trellisArchive.loading = true;
+  trellisArchive.error = false;
+  trellisArchive.seq += 1;
+  const seq = trellisArchive.seq;
+  lastTrellisPanelSignature = null;
+  renderTrellisPanel();
+  let result = null;
+  try {
+    if (typeof window.dashboardAPI.getTrellisArchiveList !== "function") {
+      throw new Error("bridge-unavailable");
+    }
+    result = await window.dashboardAPI.getTrellisArchiveList({ cwds });
+  } catch {
+    result = null;
+  }
+  // Stale guard: a newer fetch (or a cwds reset) superseded this reply.
+  if (seq !== trellisArchive.seq) return;
+  trellisArchive.loading = false;
+  if (result && typeof result === "object" && result.status === "ok" && Array.isArray(result.tasks)) {
+    trellisArchive.tasks = result.tasks;
+    trellisArchive.loaded = true;
+    trellisArchive.error = false;
+  } else {
+    trellisArchive.error = true;
+  }
+  lastTrellisPanelSignature = null;
+  renderTrellisPanel();
+}
+
+function formatTrellisArchiveDuration(ms) {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms <= 0) return "—";
+  if (ms < 60 * 60 * 1000) {
+    return t("dashboardTrellisArchivedDurationMinutes")
+      .replace("{n}", String(Math.max(1, Math.round(ms / (60 * 1000)))));
+  }
+  if (ms < 24 * 60 * 60 * 1000) {
+    return t("dashboardTrellisArchivedDurationHours")
+      .replace("{n}", String(Math.max(1, Math.round(ms / (60 * 60 * 1000)))));
+  }
+  return t("dashboardTrellisArchivedDurationDays")
+    .replace("{n}", String(Math.ceil(ms / (24 * 60 * 60 * 1000))));
+}
+
+function trellisArchiveCompletedLabel(task) {
+  if (task.completedAt) return task.completedAt;
+  if (typeof task.completedAtMs === "number" && Number.isFinite(task.completedAtMs)) {
+    // App language, not the system locale — same rule as formatResetDate.
+    try {
+      return new Date(task.completedAtMs).toLocaleDateString((i18nPayload && i18nPayload.lang) || "en");
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
+function createTrellisArchiveRow(task) {
+  const row = document.createElement("div");
+  row.className = "trellis-archive-row";
+
+  const main = document.createElement("div");
+  main.className = "trellis-archive-main";
+  main.appendChild(createText("span", "trellis-archive-title", task.title || task.taskPath));
+
+  const meta = document.createElement("span");
+  meta.className = "trellis-archive-meta";
+  const completed = trellisArchiveCompletedLabel(task);
+  if (completed) {
+    meta.appendChild(createText(
+      "span",
+      "trellis-archive-date",
+      t("dashboardTrellisDetailCompleted").replace("{date}", completed)
+    ));
+  }
+  meta.appendChild(createText("span", "trellis-archive-duration", formatTrellisArchiveDuration(task.durationMs)));
+  main.appendChild(meta);
+  row.appendChild(main);
+
+  // Same detail overlay as a live task: no sessions ride along (the task
+  // is archived, nothing is bound to it anymore), but the row's own cwd
+  // resolves the detail read's .trellis root.
+  row.addEventListener("click", () => {
+    void openTrellisDetail({
+      taskPath: task.taskPath,
+      title: task.title || "",
+      cwd: task.cwd || "",
+      sessions: [],
+      progress: null,
+    });
+  });
+  return row;
+}
+
+function buildTrellisArchiveSection(cwds) {
+  // Loaded-and-empty archives keep the header hidden entirely; loading,
+  // error and populated states all stay visible.
+  if (trellisArchive.loaded && !trellisArchive.error && !trellisArchive.tasks.length) {
+    return null;
+  }
+
+  const section = document.createElement("div");
+  section.className = "trellis-archive-section";
+
+  const header = document.createElement("button");
+  header.type = "button";
+  header.className = "trellis-archive-header";
+  header.setAttribute("aria-expanded", trellisArchive.expanded ? "true" : "false");
+  const label = trellisArchive.tasks.length
+    ? `${t("dashboardTrellisArchived")} (${trellisArchive.tasks.length})`
+    : t("dashboardTrellisArchived");
+  header.appendChild(createText(
+    "span",
+    "trellis-archive-caret",
+    trellisArchive.expanded ? "▾" : "▸"
+  ));
+  header.appendChild(createText("span", "trellis-archive-label", label));
+  header.addEventListener("click", () => {
+    trellisArchive.expanded = !trellisArchive.expanded;
+    if (trellisArchive.expanded && !trellisArchive.loaded && !trellisArchive.loading) {
+      void loadTrellisArchive(cwds);
+      return;
+    }
+    lastTrellisPanelSignature = null;
+    renderTrellisPanel();
+  });
+  section.appendChild(header);
+
+  const refresh = document.createElement("button");
+  refresh.type = "button";
+  refresh.className = "trellis-archive-refresh";
+  refresh.textContent = "↻";
+  refresh.title = t("dashboardTrellisArchivedRefresh");
+  refresh.setAttribute("aria-label", t("dashboardTrellisArchivedRefresh"));
+  refresh.disabled = trellisArchive.loading || !cwds.length;
+  refresh.addEventListener("click", (event) => {
+    event.stopPropagation();
+    void loadTrellisArchive(cwds);
+  });
+  section.appendChild(refresh);
+
+  if (trellisArchive.expanded) {
+    const body = document.createElement("div");
+    body.className = "trellis-archive-list";
+    if (trellisArchive.loading) {
+      body.appendChild(createText("div", "trellis-archive-empty", t("dashboardTrellisDetailLoading")));
+    } else if (trellisArchive.error) {
+      body.appendChild(createText("div", "trellis-archive-empty", t("dashboardTrellisArchivedError")));
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "trellis-archive-retry";
+      retry.textContent = t("dashboardTrellisArchivedRetry");
+      retry.addEventListener("click", () => {
+        void loadTrellisArchive(cwds);
+      });
+      body.appendChild(retry);
+    } else {
+      for (const task of trellisArchive.tasks) body.appendChild(createTrellisArchiveRow(task));
+    }
+    section.appendChild(body);
+  }
+  return section;
 }
 
 // ── Trellis task detail overlay ────────────────────────────────────────────
@@ -1250,7 +1492,8 @@ function computeTrellisDetailSignature() {
 
 async function openTrellisDetail(task) {
   if (!trellisDetailOverlayEl || !task) return;
-  const cwdSource = task.sessions.find((binding) => binding && binding.cwd);
+  const sessions = Array.isArray(task.sessions) ? task.sessions : [];
+  const cwdSource = sessions.find((binding) => binding && binding.cwd);
   trellisDetail.open = true;
   trellisDetail.loading = true;
   trellisDetail.seq += 1;
@@ -1258,8 +1501,10 @@ async function openTrellisDetail(task) {
   trellisDetail.request = {
     taskPath: task.taskPath,
     title: task.title || "",
-    cwd: cwdSource ? cwdSource.cwd : "",
-    sessions: task.sessions.slice(),
+    // Archived rows carry the cwd their archive scan resolved (no live
+    // binding exists to donate one); live rows keep the first bound cwd.
+    cwd: task.cwd || (cwdSource ? cwdSource.cwd : ""),
+    sessions: sessions.slice(),
   };
   trellisDetail.result = null;
   lastTrellisDetailSignature = null;

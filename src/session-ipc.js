@@ -48,6 +48,10 @@ function registerSessionIpc(options = {}) {
     options.getTrellisTaskDetail,
     "getTrellisTaskDetail"
   );
+  const getTrellisArchiveList = requiredDependency(
+    options.getTrellisArchiveList,
+    "getTrellisArchiveList"
+  );
   const quickMode = options.quickMode || null;
   const disposers = [];
 
@@ -160,6 +164,31 @@ function registerSessionIpc(options = {}) {
       return { status: "invalid" };
     }
     return getTrellisTaskDetail(payload);
+  });
+
+  // One-shot on-demand scan of the archive folders behind the live trellis
+  // roots — same trusted-frame gate and strict payload shape as the detail
+  // read above. The renderer sends the cwds of the sessions currently bound
+  // to trellis tasks; each cwd is re-verified live in the owner, so a stale
+  // or forged list can never widen the scan beyond observed projects.
+  // 16 matches ARCHIVE_LIST_MAX_CWDS in src/trellis-activity.js.
+  handle("dashboard:trellis-archive-list", (event, payload) => {
+    const rejected = rejectUntrustedDashboardEvent(event);
+    if (rejected) return rejected;
+    const keys = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? Object.keys(payload).sort()
+      : [];
+    if (
+      keys.length !== 1
+      || keys[0] !== "cwds"
+      || !Array.isArray(payload.cwds)
+      || payload.cwds.length === 0
+      || payload.cwds.length > 16
+      || payload.cwds.some((cwd) => typeof cwd !== "string" || !cwd)
+    ) {
+      return { status: "invalid" };
+    }
+    return getTrellisArchiveList({ cwds: payload.cwds });
   });
 
   handle("dashboard:set-session-alias", (_event, payload) => setSessionAlias(payload));

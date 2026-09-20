@@ -15,6 +15,7 @@ const { describe, it } = require("node:test");
 const { i18n } = require("../src/i18n");
 const {
   aggregateTrellisTasks,
+  groupTrellisTasks,
   TRELLIS_PHASE_BADGE,
   normalizeProgress,
 } = require("../src/dashboard-trellis-panel");
@@ -145,6 +146,100 @@ describe("dashboard trellis panel aggregation (pure)", () => {
   });
 });
 
+describe("dashboard trellis panel grouping (pure)", () => {
+  function task(path, extra = {}) {
+    return { taskPath: path, title: path, phase: "execute", progress: null, sessions: [], ...extra };
+  }
+
+  it("groups children under a live parent and sums subtree progress", () => {
+    const rows = groupTrellisTasks([
+      task(".trellis/tasks/parent", { progress: { done: 1, total: 2 } }),
+      task(".trellis/tasks/kid-b", { parent: "parent", progress: { done: 2, total: 3 } }),
+      task(".trellis/tasks/kid-a", { parent: "parent", progress: null }),
+      task(".trellis/tasks/loner"),
+    ]);
+    assert.deepEqual(rows.map((r) => [r.task.taskPath, r.depth]), [
+      [".trellis/tasks/parent", 0],
+      [".trellis/tasks/kid-b", 1], // children keep their aggregate order
+      [".trellis/tasks/kid-a", 1],
+      [".trellis/tasks/loner", 0],
+    ]);
+    const parent = rows[0];
+    assert.equal(parent.hasChildren, true);
+    // Subtree sum counts children (and grandchildren), not the parent's own
+    // progress — the group summary replaces it on the row.
+    assert.deepEqual(parent.childSummary, { done: 2, total: 3 });
+    assert.equal(rows[1].hasChildren, false);
+    assert.equal(rows[1].childSummary, null);
+    assert.equal(rows[3].childSummary, null, "childless tasks keep no summary");
+  });
+
+  it("sums nested grandchildren into the top group summary", () => {
+    const rows = groupTrellisTasks([
+      task(".trellis/tasks/top"),
+      task(".trellis/tasks/mid", { parent: "top", progress: { done: 1, total: 4 } }),
+      task(".trellis/tasks/leaf", { parent: "mid", progress: { done: 2, total: 2 } }),
+    ]);
+    assert.deepEqual(rows.map((r) => [r.task.taskPath, r.depth]), [
+      [".trellis/tasks/top", 0],
+      [".trellis/tasks/mid", 1],
+      [".trellis/tasks/leaf", 2],
+    ]);
+    assert.deepEqual(rows[0].childSummary, { done: 3, total: 6 }, "subtree sum, not direct children only");
+    assert.deepEqual(rows[1].childSummary, { done: 2, total: 2 });
+    assert.equal(rows[2].hasChildren, false);
+  });
+
+  it("flattens orphans: missing, archived or cross-directory parents", () => {
+    const rows = groupTrellisTasks([
+      task(".trellis/tasks/orphan", { parent: "not-in-live-set" }),
+      task(".trellis/tasks/bad", { parent: 42 }),
+      task(".trellis/tasks/blank", { parent: "" }),
+      // Same task NAME but a different directory must NOT fuse trees.
+      task(".trellis/tasks/archive/2026-09/parent-dir/other"),
+    ]);
+    assert.deepEqual(rows.map((r) => [r.task.taskPath, r.depth]), [
+      [".trellis/tasks/orphan", 0],
+      [".trellis/tasks/bad", 0],
+      [".trellis/tasks/blank", 0],
+      [".trellis/tasks/archive/2026-09/parent-dir/other", 0],
+    ]);
+    for (const row of rows) assert.equal(row.hasChildren, false);
+  });
+
+  it("keeps parent cycles flat instead of looping or dropping rows", () => {
+    const rows = groupTrellisTasks([
+      task(".trellis/tasks/cyc-a", { parent: "cyc-b" }),
+      task(".trellis/tasks/cyc-b", { parent: "cyc-a", progress: { done: 1, total: 1 } }),
+      task(".trellis/tasks/self", { parent: "self" }),
+    ]);
+    assert.equal(rows.length, 3, "every task still renders exactly once");
+    assert.deepEqual(rows.map((r) => r.depth), [0, 1, 0]);
+  });
+
+  it("aggregates the first non-empty parent onto the deduped task", () => {
+    const tasks = aggregateTrellisTasks([
+      bindingSession("s1", {
+        taskPath: ".trellis/tasks/kid", phase: "execute", title: "Kid", parent: "",
+      }),
+      bindingSession("s2", {
+        taskPath: ".trellis/tasks/kid", phase: "execute", title: "Kid", parent: "real-parent",
+      }),
+    ]);
+    assert.equal(tasks[0].parent, "real-parent");
+    const solo = aggregateTrellisTasks([
+      bindingSession("s1", { taskPath: ".trellis/tasks/x", phase: "execute", parent: 7 }),
+    ]);
+    assert.equal(solo[0].parent, null);
+  });
+
+  it("tolerates junk input without throwing", () => {
+    assert.deepEqual(groupTrellisTasks([]), []);
+    assert.deepEqual(groupTrellisTasks(null), []);
+    assert.equal(groupTrellisTasks([null, { taskPath: "x" }, {}]).length, 1);
+  });
+});
+
 // ── Renderer-side harness ───────────────────────────────────────────────────
 
 class FakeClassList {
@@ -217,7 +312,13 @@ const flush = async () => {
   await new Promise((resolve) => setImmediate(resolve));
 };
 
-function loadDashboard({ sessions = [], detailResult = null, detailError = null } = {}) {
+function loadDashboard({
+  sessions = [],
+  detailResult = null,
+  detailError = null,
+  archiveResult = null,
+  archiveError = null,
+} = {}) {
   const elements = new Map(
     ["content", "title", "count", "quickBanner", "quotaSummary", "trellisPanel", "trellisDetailOverlay"]
       .map((id) => [id, new FakeElement("div")]),
@@ -239,6 +340,7 @@ function loadDashboard({ sessions = [], detailResult = null, detailError = null 
 
   const focusCalls = [];
   const detailCalls = [];
+  const archiveCalls = [];
   let snapshotListener = null;
   let renderInterval = null;
   const api = {
@@ -259,6 +361,11 @@ function loadDashboard({ sessions = [], detailResult = null, detailError = null 
       detailCalls.push(payload);
       if (detailError) throw detailError;
       return typeof detailResult === "function" ? detailResult(payload) : detailResult;
+    },
+    getTrellisArchiveList: async (payload) => {
+      archiveCalls.push(payload);
+      if (archiveError) throw archiveError;
+      return typeof archiveResult === "function" ? archiveResult(payload) : archiveResult;
     },
   };
 
@@ -285,6 +392,7 @@ function loadDashboard({ sessions = [], detailResult = null, detailError = null 
     overlay: elements.get("trellisDetailOverlay"),
     focusCalls,
     detailCalls,
+    archiveCalls,
     docListeners,
     pressKey: (key) => {
       for (const fn of docListeners.get("keydown") || []) {
@@ -567,5 +675,235 @@ describe("dashboard trellis task detail overlay", () => {
     app.tickRender();
     assert.equal(app.overlay.hidden, false, "the periodic rebuild must not close the card");
     assert.ok(textOf(app.overlay).includes("Title from disk"));
+  });
+});
+
+// ── Parent/child grouping + archived section (renderer harness) ────────
+
+function archivedTask(extra = {}) {
+  return {
+    taskPath: ".trellis/tasks/archive/2026-09/done-thing",
+    title: "Done thing",
+    createdAt: "2026-09-10",
+    completedAt: "2026-09-20",
+    completedAtMs: Date.parse("2026-09-20"),
+    durationMs: 10 * 24 * 60 * 60 * 1000,
+    cwd: "/proj/s1",
+    ...extra,
+  };
+}
+
+describe("dashboard trellis panel grouping (rendering)", () => {
+  it("renders a live parent as a group header with indented children", async () => {
+    const app = loadDashboard({
+      sessions: [
+        bindingSession("s1", {
+          taskPath: ".trellis/tasks/parent",
+          title: "Parent",
+          phase: "execute",
+          progress: { done: 1, total: 2 },
+        }),
+        bindingSession("s2", {
+          taskPath: ".trellis/tasks/kid",
+          title: "Kid",
+          phase: "plan",
+          progress: { done: 2, total: 3 },
+          parent: "parent",
+        }),
+        bindingSession("s3", {
+          taskPath: ".trellis/tasks/loner",
+          title: "Loner",
+          phase: "execute",
+        }),
+      ],
+    });
+    await flush();
+    const rows = byClass(app.panel, "trellis-task-row");
+    assert.equal(rows.length, 3);
+    assert.ok(rows[0].classList.contains("trellis-task-row-group"), "parent row gets the group class");
+    assert.ok(!rows[0].classList.contains("trellis-task-row-child"));
+    assert.ok(rows[1].classList.contains("trellis-task-row-child"), "kid row is indented");
+    assert.ok(!rows[2].classList.contains("trellis-task-row-child"), "loner stays flat");
+    // The parent row shows the subtree summary instead of its own 1/2.
+    assert.ok(textOf(app.panel).includes(
+      i18n.en.dashboardTrellisGroupProgress.replace("{done}", "2").replace("{total}", "3")
+    ));
+    assert.ok(!textOf(app.panel).includes("1/2"), "own progress yields to the group summary");
+  });
+});
+
+describe("dashboard trellis archived section", () => {
+  it("stays collapsed with no fetch, then loads once on first expand", async () => {
+    const app = loadDashboard({
+      sessions: [bindingSession("s1", {
+        taskPath: ".trellis/tasks/t1", title: "T", phase: "execute",
+      })],
+      archiveResult: { status: "ok", tasks: [archivedTask()] },
+    });
+    await flush();
+    const headers = byClass(app.panel, "trellis-archive-header");
+    assert.equal(headers.length, 1);
+    assert.equal(headers[0].attributes["aria-expanded"], "false");
+    assert.equal(byClass(app.panel, "trellis-archive-row").length, 0);
+    assert.deepEqual(app.archiveCalls, [], "collapsed → nothing is fetched");
+
+    await headers[0].dispatch("click");
+    await flush();
+    assert.deepEqual(app.archiveCalls, [{ cwds: ["/proj/s1"] }], "one on-demand read");
+    assert.equal(byClass(app.panel, "trellis-archive-row").length, 1);
+    const headerAfter = byClass(app.panel, "trellis-archive-header")[0];
+    assert.equal(headerAfter.attributes["aria-expanded"], "true");
+    assert.ok(textOf(app.panel).includes("Done thing"));
+    assert.ok(textOf(app.panel).includes(
+      i18n.en.dashboardTrellisDetailCompleted.replace("{date}", "2026-09-20")
+    ));
+    assert.ok(textOf(app.panel).includes(
+      i18n.en.dashboardTrellisArchivedDurationDays.replace("{n}", "10")
+    ));
+    assert.ok(textOf(app.panel).includes(
+      `${i18n.en.dashboardTrellisArchived} (1)`
+    ), "the header label carries the loaded count");
+
+    // Collapsing does not refetch; expanding again shows cached rows.
+    await byClass(app.panel, "trellis-archive-header")[0].dispatch("click");
+    assert.equal(byClass(app.panel, "trellis-archive-row").length, 0);
+    await byClass(app.panel, "trellis-archive-header")[0].dispatch("click");
+    assert.equal(byClass(app.panel, "trellis-archive-row").length, 1);
+    assert.deepEqual(app.archiveCalls, [{ cwds: ["/proj/s1"] }]);
+  });
+
+  it("opens the shared detail overlay from an archived row", async () => {
+    const app = loadDashboard({
+      sessions: [bindingSession("s1", {
+        taskPath: ".trellis/tasks/t1", title: "T", phase: "execute",
+      })],
+      archiveResult: { status: "ok", tasks: [archivedTask()] },
+      detailResult: detailOk({ archived: true, phase: "done", completedAt: "2026-09-20" }),
+    });
+    await flush();
+    await byClass(app.panel, "trellis-archive-header")[0].dispatch("click");
+    await flush();
+    await byClass(app.panel, "trellis-archive-row")[0].dispatch("click");
+    await flush();
+    assert.deepEqual(app.detailCalls, [{
+      taskPath: ".trellis/tasks/archive/2026-09/done-thing",
+      cwd: "/proj/s1",
+    }], "the archive row's taskPath and cwd feed the detail read");
+    assert.equal(app.overlay.hidden, false);
+    assert.ok(textOf(app.overlay).includes("Title from disk"),
+      "the on-disk title wins over the frozen row title, same as live rows");
+    assert.ok(textOf(app.overlay).includes(i18n.en.dashboardTrellisDetailArchived));
+    assert.equal(byClass(app.overlay, "trellis-session-chip").length, 0,
+      "archived tasks have no bound sessions");
+  });
+
+  it("hides the whole section when the archive read comes back empty", async () => {
+    const app = loadDashboard({
+      sessions: [bindingSession("s1", {
+        taskPath: ".trellis/tasks/t1", title: "T", phase: "execute",
+      })],
+      archiveResult: { status: "ok", tasks: [] },
+    });
+    await flush();
+    await byClass(app.panel, "trellis-archive-header")[0].dispatch("click");
+    await flush();
+    assert.equal(byClass(app.panel, "trellis-archive-header").length, 0,
+      "loaded-and-empty keeps the header hidden");
+    assert.deepEqual(app.archiveCalls.length, 1);
+  });
+
+  it("shows an error state with a retry button that refetches", async () => {
+    let failing = true;
+    const app = loadDashboard({
+      sessions: [bindingSession("s1", {
+        taskPath: ".trellis/tasks/t1", title: "T", phase: "execute",
+      })],
+      archiveResult: () => {
+        if (failing) throw new Error("boom");
+        return { status: "ok", tasks: [archivedTask()] };
+      },
+    });
+    await flush();
+    await byClass(app.panel, "trellis-archive-header")[0].dispatch("click");
+    await flush();
+    assert.ok(textOf(app.panel).includes(i18n.en.dashboardTrellisArchivedError));
+    const retry = byClass(app.panel, "trellis-archive-retry")[0];
+    assert.ok(retry);
+
+    failing = false;
+    await retry.dispatch("click");
+    await flush();
+    assert.equal(app.archiveCalls.length, 2);
+    assert.equal(byClass(app.panel, "trellis-archive-row").length, 1);
+  });
+
+  it("refresh button refetches without collapsing the section", async () => {
+    const app = loadDashboard({
+      sessions: [bindingSession("s1", {
+        taskPath: ".trellis/tasks/t1", title: "T", phase: "execute",
+      })],
+      archiveResult: { status: "ok", tasks: [archivedTask()] },
+    });
+    await flush();
+    await byClass(app.panel, "trellis-archive-header")[0].dispatch("click");
+    await flush();
+    await byClass(app.panel, "trellis-archive-refresh")[0].dispatch("click");
+    await flush();
+    assert.equal(app.archiveCalls.length, 2);
+    assert.equal(byClass(app.panel, "trellis-archive-row").length, 1,
+      "the refresh keeps the expanded rows");
+  });
+
+  it("drops the cached rows when the panel's bound cwds change", async () => {
+    const app = loadDashboard({
+      sessions: [bindingSession("s1", {
+        taskPath: ".trellis/tasks/t1", title: "T", phase: "execute",
+      })],
+      archiveResult: { status: "ok", tasks: [archivedTask()] },
+    });
+    await flush();
+    await byClass(app.panel, "trellis-archive-header")[0].dispatch("click");
+    await flush();
+    assert.equal(byClass(app.panel, "trellis-archive-row").length, 1);
+
+    // A different project's session takes over the panel: the cached rows
+    // belong to the old roots, so the section collapses back to unfetched.
+    app.pushSnapshot({ sessions: [bindingSession("s2", {
+      taskPath: ".trellis/tasks/other", title: "Other", phase: "execute",
+    }, { cwd: "/proj/s2" })], groups: [] });
+    await flush();
+    const header = byClass(app.panel, "trellis-archive-header")[0];
+    assert.equal(header.attributes["aria-expanded"], "false");
+    assert.equal(byClass(app.panel, "trellis-archive-row").length, 0);
+
+    await header.dispatch("click");
+    await flush();
+    assert.deepEqual(app.archiveCalls[app.archiveCalls.length - 1], { cwds: ["/proj/s2"] });
+  });
+
+  it("renders coarse minute/hour durations and — for zero durations", async () => {
+    const app = loadDashboard({
+      sessions: [bindingSession("s1", {
+        taskPath: ".trellis/tasks/t1", title: "T", phase: "execute",
+      })],
+      archiveResult: { status: "ok", tasks: [
+        archivedTask({ title: "Quick", durationMs: 20 * 60 * 1000 }),
+        archivedTask({ title: "Hours", durationMs: 3 * 60 * 60 * 1000 }),
+        archivedTask({ title: "SameDay", durationMs: 0 }),
+        archivedTask({ title: "Moved", completedAt: null }),
+      ] },
+    });
+    await flush();
+    await byClass(app.panel, "trellis-archive-header")[0].dispatch("click");
+    await flush();
+    const text = textOf(app.panel);
+    assert.ok(text.includes(i18n.en.dashboardTrellisArchivedDurationMinutes.replace("{n}", "20")));
+    assert.ok(text.includes(i18n.en.dashboardTrellisArchivedDurationHours.replace("{n}", "3")));
+    assert.ok(text.includes("—"));
+    // mtime fallback label when the stored completedAt is unusable —
+    // rendered in the app language (en here), never the system locale.
+    assert.ok(text.includes(
+      new Date(Date.parse("2026-09-20")).toLocaleDateString("en")
+    ), "mtime-completed tasks render a localized date");
   });
 });

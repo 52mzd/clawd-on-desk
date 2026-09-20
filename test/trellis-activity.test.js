@@ -128,8 +128,57 @@ function makeFakeFs() {
     appendFile(p) { writeOps.push(["appendFile", p]); throw new Error("read-only fs"); },
   };
 
+  // Synchronous twin (readdirSync withFileTypes / readFileSync /
+  // statSync) over the same in-memory files — the surface the shared
+  // archive traversal injects. mtimes default to 0 and are set per path.
+  const mtimes = new Map();
+  const statShape = (k) => ({
+    isDirectory: () => (files.has(k) ? false : isDir(k)),
+    get mtimeMs() { return mtimes.get(k) || 0; },
+  });
+  const syncApi = {
+    readdirSync(p, opts) {
+      if (!opts || opts.withFileTypes !== true) throw new Error("fake readdirSync needs withFileTypes");
+      const k = key(p);
+      if (!isDir(k)) throw enoent();
+      const names = new Set();
+      for (const f of files.keys()) {
+        const d = path.dirname(f);
+        if (d === k) {
+          names.add(path.basename(f));
+          continue;
+        }
+        let cur = d;
+        for (;;) {
+          const parent = path.dirname(cur);
+          if (parent === k) {
+            names.add(path.basename(cur));
+            break;
+          }
+          if (parent === cur) break;
+          cur = parent;
+        }
+      }
+      return [...names].map((name) => ({
+        name,
+        isDirectory: () => isDir(path.join(k, name)),
+      }));
+    },
+    readFileSync(p) {
+      const k = key(p);
+      if (!files.has(k)) throw enoent();
+      return files.get(k);
+    },
+    statSync(p) {
+      const k = key(p);
+      if (files.has(k) || isDir(k)) return statShape(k);
+      throw enoent();
+    },
+  };
+
   return {
     fsApi,
+    syncApi,
     files,
     writeOps,
     readOps,
@@ -139,6 +188,9 @@ function makeFakeFs() {
     },
     remove(p) {
       files.delete(key(p));
+    },
+    setMtime(p, ms) {
+      mtimes.set(key(p), ms);
     },
   };
 }
@@ -158,6 +210,7 @@ function makeHarness({ sessions = new Map(), getLiveSessions = null } = {}) {
     state: { sessions },
     ...(getLiveSessions ? { getLiveSessions } : {}),
     fs: fakeFs.fsApi,
+    syncFs: fakeFs.syncApi,
     now: () => clock.now,
     setTimeoutFn: timers.setTimeoutFn,
     clearTimeoutFn: timers.clearTimeoutFn,
@@ -1312,5 +1365,172 @@ describe("trellis-activity project aggregates", () => {
     assert.strictEqual(h.activity.getExecutingCount(), 0);
     assert.strictEqual(h.activity.hasPlanningBinding(), false);
     assert.strictEqual(h.aggregates.length, fanouts);
+  });
+});
+
+// ── archived-task list + parent link (Dashboard archive/group view) ──
+
+describe("trellis-activity readArchiveList", () => {
+  function makeArchiveHarness(sessions = new Map([["pi:arch", { agentId: "pi", cwd: CWD }]])) {
+    return makeHarness({ sessions });
+  }
+
+  function addArchived(fake, month, name, taskJson) {
+    const dir = path.join(PROJECT, ".trellis", "tasks", "archive", month, name);
+    fake.add(path.join(dir, "task.json"), JSON.stringify(taskJson));
+    return dir;
+  }
+
+  it("returns the newest archived tasks with detail-ready payloads", async () => {
+    const h = makeArchiveHarness();
+    addArchived(h.fakeFs, "2026-08", "older", {
+      title: "Older task", createdAt: "2026-08-01", completedAt: "2026-08-05",
+    });
+    addArchived(h.fakeFs, "2026-09", "newer", {
+      title: "Newer task", createdAt: "2026-09-18", completedAt: "2026-09-20",
+    });
+
+    const result = await h.activity.readArchiveList([CWD]);
+    assert.strictEqual(result.status, "ok");
+    assert.strictEqual(result.tasks.length, 2);
+    assert.deepStrictEqual(result.tasks[0], {
+      taskPath: ".trellis/tasks/archive/2026-09/newer",
+      title: "Newer task",
+      createdAt: "2026-09-18",
+      completedAt: "2026-09-20",
+      completedAtMs: Date.parse("2026-09-20"),
+      durationMs: 2 * 24 * 60 * 60 * 1000,
+      cwd: CWD,
+    });
+    assert.strictEqual(result.tasks[1].taskPath, ".trellis/tasks/archive/2026-08/older");
+    assert.strictEqual(result.tasks[1].durationMs, 4 * 24 * 60 * 60 * 1000);
+    assert.deepStrictEqual(h.fakeFs.writeOps, [], "archive reads stay read-only");
+  });
+
+  it("caps the list at 20 newest-first and nulls zero/negative durations", async () => {
+    const h = makeArchiveHarness();
+    for (let i = 0; i < 25; i++) {
+      const day = String((i % 28) + 1).padStart(2, "0");
+      addArchived(h.fakeFs, "2026-09", `t-${String(i).padStart(2, "0")}`, {
+        title: `Task ${i}`,
+        createdAt: `2026-09-${day}`,
+        completedAt: `2026-09-${day}`, // same-day completion → duration null
+      });
+    }
+    addArchived(h.fakeFs, "2026-09", "aaa-same-day", {
+      createdAt: "2026-09-01", completedAt: "2026-09-01",
+    });
+
+    const result = await h.activity.readArchiveList([CWD]);
+    assert.strictEqual(result.tasks.length, 20);
+    for (const task of result.tasks) {
+      assert.strictEqual(task.durationMs, null, "same-day created/completed renders as —");
+    }
+    // Lexical task-name order breaks ties inside one month deterministically;
+    // the newest month folder always wins over older ones.
+    assert.ok(result.tasks.every((task) => task.taskPath.includes("/2026-09/")));
+  });
+
+  it("ignores cwds that are not live trellis sessions and dedupes roots", async () => {
+    const h = makeArchiveHarness();
+    addArchived(h.fakeFs, "2026-09", "one", {
+      title: "One", createdAt: "2026-09-01", completedAt: "2026-09-02",
+    });
+
+    // Not a live session cwd → filtered before any root resolution.
+    const stranger = await h.activity.readArchiveList(["/somewhere/else"]);
+    assert.deepStrictEqual(stranger, { status: "ok", tasks: [] });
+
+    // Two cwds in the same project resolve one root → one entry, not two.
+    const nested = path.join(CWD, "sub");
+    h.sessions.set("pi:nested", { agentId: "pi", cwd: nested });
+    const result = await h.activity.readArchiveList([CWD, nested, "/somewhere/else"]);
+    assert.strictEqual(result.tasks.length, 1);
+    assert.strictEqual(result.tasks[0].title, "One");
+
+    // Malformed input degrades to an empty list, never an error.
+    assert.deepStrictEqual(await h.activity.readArchiveList(null), { status: "ok", tasks: [] });
+    assert.deepStrictEqual(await h.activity.readArchiveList([]), { status: "ok", tasks: [] });
+    assert.deepStrictEqual(
+      await h.activity.readArchiveList(new Array(17).fill(CWD)),
+      { status: "ok", tasks: [] },
+    );
+  });
+
+  it("falls back to the archive mtime for completion order and labels", async () => {
+    const h = makeArchiveHarness();
+    const noDate = addArchived(h.fakeFs, "2026-09", "manual-move", {
+      title: "Moved by hand", createdAt: "2026-09-10", completedAt: null,
+    });
+    h.fakeFs.setMtime(noDate, Date.parse("2026-09-22T10:00:00Z"));
+
+    const result = await h.activity.readArchiveList([CWD]);
+    assert.strictEqual(result.tasks.length, 1);
+    const task = result.tasks[0];
+    assert.strictEqual(task.completedAt, null);
+    assert.strictEqual(task.completedAtMs, Date.parse("2026-09-22T10:00:00Z"));
+    // createdAt is a UTC-midnight date string, the mtime fallback is an
+    // exact instant, so the coarse duration keeps the extra 10 hours.
+    assert.strictEqual(task.durationMs, 12 * 24 * 60 * 60 * 1000 + 10 * 60 * 60 * 1000);
+  });
+});
+
+describe("trellis-activity parent link", () => {
+  it("carries task.json parent onto the TrellisInfo for grouped rendering", async () => {
+    const h = makeHarness({
+      sessions: new Map([["pi:tree", { agentId: "pi", cwd: CWD }]]),
+    });
+    addTask(h.fakeFs, "09-20-parent", {
+      title: "Parent", status: "in_progress", subtasks: [],
+    }, { prd: true });
+    addTask(h.fakeFs, "09-20-child", {
+      title: "Child", status: "in_progress", parent: "09-20-parent", subtasks: [],
+    }, { prd: true });
+    addPointer(
+      h.fakeFs,
+      "pi_tree.json",
+      pointerPayload({
+        platform: "pi",
+        currentTask: ".trellis/tasks/09-20-child",
+        clockNow: h.clock.now,
+      })
+    );
+
+    h.activity.start();
+    await h.timers.runDue();
+
+    assert.deepStrictEqual(h.activity.getTrellisInfo("pi:tree"), {
+      taskPath: ".trellis/tasks/09-20-child",
+      title: "Child",
+      phase: "execute",
+      progress: null,
+      parallelCount: 2,
+      parent: "09-20-parent",
+    });
+  });
+
+  it("keeps the legacy TrellisInfo shape when parent is absent or blank", async () => {
+    const h = makeHarness({
+      sessions: new Map([["pi:plain", { agentId: "pi", cwd: CWD }]]),
+    });
+    addTask(h.fakeFs, "09-20-plain", {
+      title: "Plain", status: "in_progress", parent: "", subtasks: [],
+    }, { prd: true });
+    addPointer(
+      h.fakeFs,
+      "pi_plain.json",
+      pointerPayload({
+        platform: "pi",
+        currentTask: ".trellis/tasks/09-20-plain",
+        clockNow: h.clock.now,
+      })
+    );
+
+    h.activity.start();
+    await h.timers.runDue();
+
+    const info = h.activity.getTrellisInfo("pi:plain");
+    assert.ok(info);
+    assert.ok(!("parent" in info), "blank parent must not ride along");
   });
 });

@@ -78,6 +78,7 @@ contextBridge.exposeInMainWorld("dashboardAPI", {
   getSessionHistory: () => ipcRenderer.invoke("dashboard:get-session-history"),
   resumeSession: (payload) => ipcRenderer.invoke("dashboard:resume-session", payload),
   getTrellisTaskDetail: (payload) => ipcRenderer.invoke("dashboard:trellis-task-detail", payload),
+  getTrellisArchiveList: (payload) => ipcRenderer.invoke("dashboard:trellis-archive-list", payload),
   ackCompletion: (sessionId) => ipcRenderer.invoke("session:ack-completion", sessionId),
   onSessionSnapshot: (cb) => {
     if (typeof cb !== "function") return () => {};

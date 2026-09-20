@@ -371,7 +371,19 @@ Correct 渲染层实测 offsetHeight → IPC 回传 → main 重算
 
 **2. Signatures**：
 - `aggregateTrellisTasks(sessions)` → 按 `taskPath` 去重的任务数组；
-  phase 不在 `TRELLIS_PHASE_BADGE` 四相内、taskPath 空白的绑定直接丢弃
+  phase 不在 `TRELLIS_PHASE_BADGE` 四相内、taskPath 空白的绑定直接丢弃；
+  `parent`（task.json 同级任务名）首个非空值随任务携带，同 title 的
+  first-wins 策略
+- `groupTrellisTasks(tasks)` → 扁平渲染序列
+  `[{task, depth, hasChildren, childSummary:{done,total}|null}]`；
+  parent 是 **同目录 sibling 任务名**（`dirname(child.taskPath)+"/"+parent`
+  必须在聚合列表内才成组，同名跨项目任务不会误融合）；孤儿/坏
+  parent/环一律平铺到 depth 0，不报错
+- 分组防护：`summary()` 递归先预留 slot（环返回 null 不死循环）、
+  `emit()` 以 `emitted` Set 守卫，环成员由末尾补发循环平铺；
+  递归深度受任务数上限约束（emit 每任务至多一次）
+- 组头行显示 subtree 汇总 `dashboardTrellisGroupProgress`（替代自身
+  step 计数），无子行时保留自身 progress；child 行缩进 18px
 - `TRELLIS_PHASE_BADGE`：labelKey 复用 HUD 既有 `sessionHudTrellisPhase*`
   7 语言键（**不新开 dashboard 前缀阶段键**），cls 是 Dashboard 本地徽标类
 - 模块是 `session-focus-unavailable.js` 的 UMD twin：测试 require、
@@ -451,6 +463,61 @@ Wrong   taskPath.split("/") 后只拒 ".." 段        // win32 反斜杠段漏�
 Correct taskPath.slice(prefix).split(/[\\/]/) 后逐段拒绝
         cwd ∈ collectLiveSessions() 的 cwd 集合，否则 missing
         request 冻结于 open 瞬间，签名含 request/result 才重渲染
+```
+
+#### §4.4 归档任务列表（折叠区 + 共享遍历）
+
+**1. Scope/Trigger**：任何「读取 `.trellis/tasks/archive/` 并呈现」的
+代码。当前实现：`src/trellis-archive.js`（共享遍历）、
+`src/trellis-activity.js` 的 `readArchiveList`、`src/session-ipc.js` 的
+`dashboard:trellis-archive-list`、`src/dashboard-renderer.js` 的归档
+折叠区。recap（`src/recap-trellis.js`）与归档列表**共用同一遍历**，
+不得复制。
+
+**2. Signatures**（全链路，自渲染层起）：
+- `listArchivedTasks(fsApi, archiveBase, options?)`（`src/trellis-archive.js`，
+  注入同步 fs）→ 冻结条目数组
+  `{name, month, dir, title, createdAt, completedAt, completedAtMs}`；
+  `options.month`（"YYYY-MM"）限定单月目录（recap 语义，不多 readdir
+  archive 根），缺省读全部 YYYY-MM 目录。task.json 不可读/损坏 →
+  跳过；completedAt 无效时 fallback 目录 mtime（仅存 completedAtMs，
+  由消费方投影到自己的时区——recap 用 timeZoneId，dashboard 用
+  toLocaleDateString(app lang)）
+- renderer 首次展开折叠区 → 单次 `dashboardAPI.getTrellisArchiveList(
+  {cwds})`（cwds 来自面板行绑定的 live cwd，≤16；显式 ↻ 刷新，
+  永不轮询）
+- main `readArchiveList(cwds)` → `{status:"ok", tasks:[…20]}`，
+  newest-first（completedAtMs 降序，null 压尾）；条目
+  `{taskPath, title, createdAt, completedAt, completedAtMs, durationMs, cwd}`；
+  `durationMs ≤ 0` 或缺失 → null（渲染 "—"）
+
+**3. Contracts**：
+- **cwds 白名单双门禁**：IPC 层 payload 恰为 `{cwds}`（1–16 个非空
+  string，`Object.keys` 长度=1）；owner 层每个 cwd 必须命中
+  `collectLiveSessions()` 的 cwd 集合（同 readTaskDetail）——拉取瞬间
+  刚结束的会话：其 cwd 不在 live 集 → 跳过该 root（非整包 error），
+  下次展开拿新 cwds 自愈；超 16 → IPC `invalid` / owner 空包
+- **信任模型**：roots 永远来自会话不来自请求；taskPath 是
+  `.trellis/tasks/archive/<月>/<名>` posix 相对路径，直接走 readTaskDetail
+  既有归档回退（cwd 由条目携带，无额外信任面）
+- **缓存与竞态**：模块级 `trellisArchive` 状态（expanded/loading/
+  loaded/tasks/error/cwdsKey）；面板 cwdsKey（排序后拼接）变化 →
+  全量重置 + `seq+=1`（作废 in-flight 请求）；fetch 前后 `seq+=1`
+  守卫，旧响应回来 `seq !== current` 直接丢弃——两次快速展开/
+  cwds 变化都不会渲染错包
+- **隐藏语义**：loaded 且空 → 整个折叠区隐藏（header 也不显示）；
+  loading/error/非空保持可见
+- **locale**：mtime fallback 的完成日期用 `toLocaleDateString(app lang)`，
+  非 task.py 写入的原始 YYYY-MM-DD 字符串优先直接显示
+
+**4. Wrong vs Correct**：
+```text
+Wrong   toLocaleDateString()                    // 跟系统 locale，与 UI 语言不一致
+        cwds 直接 findTrellisRoot(cwd)            // 陌生目录探测 .trellis
+        fetch 回包无 seq 守卫                       // cwds 变后旧包渲染进新项目面板
+Correct cwd ∈ collectLiveSessions() 集合，否则跳过该 root
+        cwdsKey 变化 → seq+=1 + 状态重置；回包对 seq 后才落地
+        completedAt 原串优先；mtime fallback 日期跟 i18nPayload.lang
 ```
 
 ### 5. 失败模式

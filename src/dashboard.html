@@ -337,6 +337,152 @@ h1 {
   color: var(--text);
 }
 
+/* Parent/child grouping: a row with live children becomes a group header
+   (stronger border, muted fill); child rows indent under it. Depth beyond
+   the first level only indents further. */
+.trellis-task-row-group {
+  border-color: color-mix(in srgb, var(--accent, #2563eb) 35%, var(--row-border));
+  background: color-mix(in srgb, var(--accent, #2563eb) 5%, var(--surface));
+}
+
+.trellis-task-row-child {
+  margin-left: 18px;
+}
+
+.trellis-task-group-summary {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Collapsed "Archived" section at the panel's bottom: a header row with
+   caret, label and an explicit refresh button; expanded rows carry title +
+   completed date + duration and open the shared detail overlay. */
+.trellis-archive-section {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.trellis-archive-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.trellis-archive-header:hover {
+  color: var(--text);
+  background: var(--surface-alt);
+}
+
+.trellis-archive-caret {
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.trellis-archive-label {
+  line-height: 1;
+}
+
+.trellis-archive-refresh {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--subtle);
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.trellis-archive-refresh:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.12);
+  color: var(--text);
+}
+
+.trellis-archive-refresh:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.trellis-archive-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.trellis-archive-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 8px;
+  border: 1px solid var(--row-border);
+  border-radius: 8px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.trellis-archive-row:hover {
+  background: var(--surface-alt);
+}
+
+.trellis-archive-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.trellis-archive-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.trellis-archive-meta {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.trellis-archive-empty {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.trellis-archive-retry {
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-alt);
+  color: var(--text);
+  font-size: 11px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
 /* Task detail: a modal card inside the Dashboard window. Clicks on the
    dimmed backdrop (not the card) and ESC close it. Same palette as the
    panel above; the card scrolls independently of the page. */

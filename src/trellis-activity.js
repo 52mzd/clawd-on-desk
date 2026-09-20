@@ -33,6 +33,7 @@
 
 const path = require("path");
 const { parseImplementChecklist, truncateNextStep } = require("./trellis-checklist");
+const { listArchivedTasks } = require("./trellis-archive");
 const {
   sessionPointerKey,
   trellisPlatformFor,
@@ -58,6 +59,10 @@ function createTrellisActivity(options) {
   const opts = options || {};
   const state = opts.state || { sessions: new Map() };
   const fs = opts.fs || require("fs").promises;
+  // Synchronous fs surface for the shared archive traversal
+  // (src/trellis-archive.js): a one-shot on-demand read, injected separately
+  // so tests can fake it without touching the async polling fs.
+  const syncFs = opts.syncFs || require("fs");
   const nowFn = typeof opts.now === "function" ? opts.now : Date.now;
   const setTimeoutFn = opts.setTimeoutFn || setTimeout;
   const clearTimeoutFn = opts.clearTimeoutFn || clearTimeout;
@@ -390,6 +395,7 @@ function createTrellisActivity(options) {
       && (a.progress ? a.progress.done : null) === (b.progress ? b.progress.done : null)
       && (a.progress ? a.progress.total : null) === (b.progress ? b.progress.total : null)
       && (a.nextStep || null) === (b.nextStep || null)
+      && (a.parent || null) === (b.parent || null)
     );
   }
 
@@ -490,6 +496,7 @@ function createTrellisActivity(options) {
       parallelCount,
     };
     if (task.nextStep) info.nextStep = task.nextStep;
+    if (task.parent) info.parent = task.parent;
     return {
       info,
       // Transition history is keyed by the pointer's task ref, not by the
@@ -555,6 +562,12 @@ function createTrellisActivity(options) {
         phase,
         progress: deriveProgress(taskJson.value, checklist),
       };
+      // Parent link for the Dashboard's task-tree grouping: task.py writes
+      // it as a sibling task name (task.json "parent"). Absent/blank stays
+      // unset so the legacy TrellisInfo shape is byte-identical.
+      if (typeof taskJson.value.parent === "string" && taskJson.value.parent.trim()) {
+        info.parent = taskJson.value.parent;
+      }
       // Only attach nextStep when there is one, so tasks without a usable
       // checklist keep the exact TrellisInfo shape they had before.
       if (checklist.nextUncheckedText) {
@@ -717,6 +730,70 @@ function createTrellisActivity(options) {
     return typeof value === "string" && value.trim() ? value.trim() : null;
   }
 
+  // On-demand read of the most recently archived tasks for the Dashboard's
+  // collapsed "Archived" section: same trust model as readTaskDetail — the
+  // renderer only supplies cwds of live trellis-capable sessions, each one
+  // resolves (and de-duplicates) a .trellis root, and the shared archive
+  // traversal (src/trellis-archive.js, also the recap's) does the reading.
+  // Never scheduled, never cached: every call is a fresh one-shot scan.
+  //
+  // Returns { status: "ok", tasks } with at most 20 entries, newest
+  // completed first, each entry an IPC/JSON-safe object:
+  //   { taskPath, title, createdAt, completedAt, completedAtMs, durationMs, cwd }
+  // taskPath is the archive-relative posix path readTaskDetail accepts;
+  // cwd is a live session cwd that resolved the same root, so opening the
+  // detail card needs no extra trust surface.
+  const ARCHIVE_LIST_MAX = 20;
+  const ARCHIVE_LIST_MAX_CWDS = 16;
+
+  async function readArchiveList(cwds) {
+    if (!Array.isArray(cwds) || cwds.length === 0 || cwds.length > ARCHIVE_LIST_MAX_CWDS) {
+      return { status: "ok", tasks: [] };
+    }
+    // Same live-cwd whitelist as readTaskDetail: roots come from sessions,
+    // never from the request itself.
+    const liveCwds = new Set(collectLiveSessions().map((session) => session.cwd));
+    const rootToCwd = new Map();
+    for (const cwd of cwds) {
+      if (typeof cwd !== "string" || !cwd.trim()) continue;
+      if (!liveCwds.has(cwd)) continue;
+      const root = await findTrellisRoot(cwd);
+      if (root && !rootToCwd.has(root)) rootToCwd.set(root, cwd);
+    }
+
+    const merged = [];
+    for (const [root, cwd] of rootToCwd) {
+      for (const entry of listArchivedTasks(syncFs, path.join(root, "tasks", "archive"))) {
+        merged.push({ entry, cwd });
+      }
+    }
+    merged.sort((a, b) => {
+      const am = a.entry.completedAtMs;
+      const bm = b.entry.completedAtMs;
+      if (am === null && bm === null) return 0;
+      if (am === null) return 1;
+      if (bm === null) return -1;
+      return bm - am;
+    });
+
+    const tasks = merged.slice(0, ARCHIVE_LIST_MAX).map(({ entry, cwd }) => {
+      const createdAtMs = entry.createdAt !== null ? Date.parse(entry.createdAt) : NaN;
+      const diff = entry.completedAtMs !== null && Number.isFinite(createdAtMs)
+        ? entry.completedAtMs - createdAtMs
+        : NaN;
+      return {
+        taskPath: `.trellis/tasks/archive/${entry.month}/${entry.name}`,
+        title: entry.title || entry.name,
+        createdAt: entry.createdAt,
+        completedAt: entry.completedAt,
+        completedAtMs: entry.completedAtMs,
+        durationMs: Number.isFinite(diff) && diff > 0 ? diff : null,
+        cwd,
+      };
+    });
+    return { status: "ok", tasks };
+  }
+
   // Roots whose .trellis directory was resolved from a live session cwd
   // during this process. Positive lookups are cached forever (a cwd does not
   // move its .trellis root), so a project worked on earlier today still
@@ -751,6 +828,7 @@ function createTrellisActivity(options) {
     getExecutingCount,
     hasPlanningBinding,
     readTaskDetail,
+    readArchiveList,
   };
 }
 

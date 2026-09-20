@@ -30,6 +30,7 @@
 const fs = require("fs");
 const path = require("path");
 const { freezeLocalTime } = require("./recap-time");
+const { listArchivedTasks, listDirectories } = require("./trellis-archive");
 
 function isValidDateString(value) {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
@@ -39,16 +40,6 @@ function readTaskJsonQuiet(fsApi, filePath) {
   try {
     const value = JSON.parse(fsApi.readFileSync(filePath, "utf8"));
     return value && typeof value === "object" && !Array.isArray(value) ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-function listDirectories(fsApi, dirPath) {
-  try {
-    return fsApi.readdirSync(dirPath, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name);
   } catch {
     return null;
   }
@@ -84,21 +75,19 @@ function computeTrellisDailyCounts(options) {
       const taskJson = readTaskJsonQuiet(fsApi, path.join(tasksDir, name, "task.json"));
       if (taskJson && taskJson.createdAt === localDate) tasksCreated += 1;
     }
-    const archived = listDirectories(fsApi, path.join(tasksDir, "archive", month));
-    if (!archived) continue;
-    for (const name of archived) {
-      const taskDir = path.join(tasksDir, "archive", month, name);
-      const taskJson = readTaskJsonQuiet(fsApi, path.join(taskDir, "task.json"));
-      if (!taskJson) continue;
-      if (taskJson.createdAt === localDate) tasksCreated += 1;
-      if (isValidDateString(taskJson.completedAt)) {
-        if (taskJson.completedAt === localDate) tasksCompleted += 1;
+    // Archive scan shared with the Dashboard's archived-task list
+    // (src/trellis-archive.js): one traversal, recap keeps its single-month
+    // bound and its mtime-fallback projection into the queried time zone.
+    for (const entry of listArchivedTasks(fsApi, path.join(tasksDir, "archive"), { month })) {
+      if (entry.createdAt === localDate) tasksCreated += 1;
+      if (entry.completedAt !== null) {
+        if (entry.completedAt === localDate) tasksCompleted += 1;
         continue;
       }
-      try {
-        const stat = fsApi.statSync(taskDir);
-        if (freezeLocalTime(stat.mtimeMs, opts.timeZoneId).localDate === localDate) tasksCompleted += 1;
-      } catch {}
+      if (
+        entry.completedAtMs !== null
+        && freezeLocalTime(entry.completedAtMs, opts.timeZoneId).localDate === localDate
+      ) tasksCompleted += 1;
     }
   }
   if (projects === 0) return null;

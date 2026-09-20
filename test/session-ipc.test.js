@@ -127,6 +127,10 @@ function createHarness(overrides = {}) {
       calls.push(["getTrellisTaskDetail", payload]);
       return { status: "ok", task: { title: "T", phase: "execute" } };
     }),
+    getTrellisArchiveList: overrides.getTrellisArchiveList || ((payload) => {
+      calls.push(["getTrellisArchiveList", payload]);
+      return { status: "ok", tasks: [] };
+    }),
     getDashboardWebContents: overrides.getDashboardWebContents
       || (() => dashboardWebContents),
     quickMode: Object.prototype.hasOwnProperty.call(overrides, "quickMode")
@@ -175,6 +179,7 @@ test("session IPC registers owned channels and disposes them", () => {
     "dashboard:resume-session",
     "dashboard:set-session-alias",
     "dashboard:set-session-automation",
+    "dashboard:trellis-archive-list",
     "dashboard:trellis-task-detail",
     "session-hud:get-i18n",
     "session-hud:open-session-folder",
@@ -447,6 +452,54 @@ test("trellis task-detail IPC is a trusted-frame, strictly-shaped one-shot read"
   ]) {
     assert.deepStrictEqual(
       await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-task-detail", bad),
+      { status: "invalid" },
+      JSON.stringify(bad)
+    );
+  }
+  assert.deepStrictEqual(calls, [], "invalid payloads must never reach the fs-reading owner");
+});
+
+test("trellis archive-list IPC is a trusted-frame, strictly-shaped one-shot read", async () => {
+  const { ipcMain, calls, trustedDashboardEvent } = createHarness();
+
+  const payload = { cwds: ["/proj/app"] };
+  assert.deepStrictEqual(
+    await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-archive-list", payload),
+    { status: "ok", tasks: [] }
+  );
+  assert.deepStrictEqual(calls, [["getTrellisArchiveList", payload]]);
+
+  // Same near-miss sender gate as the detail read.
+  calls.length = 0;
+  for (const event of [
+    { sender: trustedDashboardEvent.sender },
+    { sender: {}, senderFrame: trustedDashboardEvent.senderFrame },
+    { sender: trustedDashboardEvent.sender, senderFrame: { ...trustedDashboardEvent.senderFrame } },
+  ]) {
+    assert.deepStrictEqual(
+      await ipcMain.invokeFrom(event, "dashboard:trellis-archive-list", payload),
+      { status: "error", reason: "untrusted-dashboard-sender" }
+    );
+  }
+  assert.deepStrictEqual(calls, []);
+
+  for (const bad of [
+    null,
+    undefined,
+    "x",
+    42,
+    [],
+    {},
+    { cwds: [] },
+    { cwds: "x" },
+    { cwds: [42] },
+    { cwds: [""] },
+    { cwds: new Array(17).fill("/proj/app") },
+    { cwds: ["/proj/app"], root: "/etc" },
+    { ["__proto__"]: "x", cwds: ["/proj/app"] },
+  ]) {
+    assert.deepStrictEqual(
+      await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-archive-list", bad),
       { status: "invalid" },
       JSON.stringify(bad)
     );

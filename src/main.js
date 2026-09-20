@@ -5265,6 +5265,12 @@ registerSessionIpc({
     }
     return _trellisActivity.readTaskDetail(payload.cwd, payload.taskPath);
   },
+  getTrellisArchiveList: (payload) => {
+    if (!_trellisActivity || typeof _trellisActivity.readArchiveList !== "function") {
+      return { status: "error", message: "trellis-activity-unavailable" };
+    }
+    return _trellisActivity.readArchiveList(payload.cwds);
+  },
   showDashboard: (options) => showDashboard(options),
   setSessionHudTrellisDetailHeight: (px) => {
     if (typeof _sessionHud.setTrellisDetailHeight === "function") {

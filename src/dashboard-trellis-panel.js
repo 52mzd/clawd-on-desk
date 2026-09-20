@@ -57,6 +57,7 @@
           title: "",
           phase: null,
           progress: null,
+          parent: null,
           sessions: [],
         };
         byPath.set(taskPath, entry);
@@ -64,6 +65,11 @@
       }
       if (!entry.title && typeof info.title === "string" && info.title.trim()) {
         entry.title = info.title;
+      }
+      // First non-empty parent wins (same policy as the title): the link is
+      // written once by task.py and never moves for a given task dir.
+      if (!entry.parent && typeof info.parent === "string" && info.parent.trim()) {
+        entry.parent = info.parent;
       }
       entry.phase = info.phase;
       entry.progress = normalizeProgress(info.progress) || entry.progress;
@@ -82,5 +88,85 @@
     return order;
   }
 
-  return { aggregateTrellisTasks, TRELLIS_PHASE_BADGE, normalizeProgress };
+  // Parent/child grouping for the panel's task list. `parent` in task.json
+  // is a sibling task NAME, so a child links to the parent only when a task
+  // with path dirname(child.taskPath) + "/" + parent is itself in the
+  // aggregated list — the same-directory rule keeps two same-named tasks in
+  // different projects from fusing into one tree. Output is a flat render
+  // sequence (depth-first, original aggregate order at every level):
+  //   { task, depth, hasChildren, childSummary: {done,total}|null }
+  // Orphans (parent missing from the live set), bad/blank parents and
+  // parent cycles all flatten to depth 0 instead of erroring.
+  function groupTrellisTasks(tasks) {
+    const list = Array.isArray(tasks) ? tasks.filter((task) => task && task.taskPath) : [];
+    const byPath = new Map();
+    for (const task of list) byPath.set(task.taskPath, task);
+
+    const childrenOf = new Map(); // parent taskPath → [task] (aggregate order)
+    const hasLiveParent = new Set();
+    for (const task of list) {
+      const parentName = typeof task.parent === "string" ? task.parent.trim() : "";
+      if (!parentName) continue;
+      const slash = task.taskPath.lastIndexOf("/");
+      if (slash < 0) continue;
+      const parentPath = `${task.taskPath.slice(0, slash)}/${parentName}`;
+      if (!byPath.has(parentPath)) continue; // orphan → flat
+      hasLiveParent.add(task.taskPath);
+      if (!childrenOf.has(parentPath)) childrenOf.set(parentPath, []);
+      childrenOf.get(parentPath).push(task);
+    }
+
+    const childSummaryOf = new Map();
+    function summary(taskPath) {
+      if (childSummaryOf.has(taskPath)) return childSummaryOf.get(taskPath);
+      // Reserve the slot before recursing so a parent cycle cannot loop.
+      childSummaryOf.set(taskPath, null);
+      let done = 0;
+      let total = 0;
+      let any = false;
+      for (const child of childrenOf.get(taskPath) || []) {
+        if (child.progress) {
+          done += child.progress.done;
+          total += child.progress.total;
+          any = true;
+        }
+        const sub = summary(child.taskPath);
+        if (sub) {
+          done += sub.done;
+          total += sub.total;
+          any = true;
+        }
+      }
+      const value = any ? { done, total } : null;
+      childSummaryOf.set(taskPath, value);
+      return value;
+    }
+
+    const rows = [];
+    const emitted = new Set();
+    function emit(task, depth) {
+      if (emitted.has(task.taskPath)) return; // cycle guard
+      emitted.add(task.taskPath);
+      rows.push({
+        task,
+        depth,
+        hasChildren: childrenOf.has(task.taskPath),
+        childSummary: summary(task.taskPath),
+      });
+      for (const child of childrenOf.get(task.taskPath) || []) emit(child, depth + 1);
+    }
+    for (const task of list) {
+      if (!hasLiveParent.has(task.taskPath)) emit(task, 0);
+    }
+    // Cycle members never surface at the top level (each one's parent is
+    // live), so append them flat in aggregate order instead of dropping.
+    for (const task of list) {
+      if (!emitted.has(task.taskPath)) {
+        emit(task, 0);
+      }
+    }
+    return rows;
+  }
+
+  return { aggregateTrellisTasks, groupTrellisTasks, TRELLIS_PHASE_BADGE, normalizeProgress };
 });
