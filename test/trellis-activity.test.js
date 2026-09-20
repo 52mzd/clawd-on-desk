@@ -168,10 +168,11 @@ function makeHarness({ sessions = new Map(), getLiveSessions = null } = {}) {
   return { fakeFs, timers, clock, updates, celebrations, aggregates, activity, sessions };
 }
 
-function addTask(fake, taskName, taskJson, { prd = false, root = PROJECT } = {}) {
+function addTask(fake, taskName, taskJson, { prd = false, implementMd = null, root = PROJECT } = {}) {
   const dir = path.join(root, ".trellis", "tasks", taskName);
   fake.add(path.join(dir, "task.json"), JSON.stringify(taskJson));
   if (prd) fake.add(path.join(dir, "prd.md"), "# prd\n");
+  if (implementMd) fake.add(path.join(dir, "implement.md"), implementMd);
   return dir;
 }
 
@@ -315,9 +316,10 @@ describe("trellis-activity pointer binding", () => {
     h.activity.start();
     await h.timers.runDue();
 
-    // 2 pointer reads + 1 binding read + 1 parallelCount read (the root
-    // scan does not dedupe against the per-round task cache).
-    assert.strictEqual(h.fakeFs.readOps.readFile, 4);
+    // 2 pointer reads + 1 binding read (task.json + prd stat + implement.md
+    // ENOENT) + 1 parallelCount read (the root scan does not dedupe against
+    // the per-round task cache).
+    assert.strictEqual(h.fakeFs.readOps.readFile, 5);
     assert.strictEqual(h.activity.getTrellisInfo("codex:aaa").taskPath, ".trellis/tasks/shared");
     assert.strictEqual(h.activity.getTrellisInfo("codex:bbb").taskPath, ".trellis/tasks/shared");
   });
@@ -430,6 +432,91 @@ describe("trellis-activity pointer binding", () => {
     // Archived tasks are outside tasks/<name>, so they do not inflate the
     // in_progress count.
     assert.strictEqual(info.parallelCount, 0);
+  });
+});
+
+describe("trellis-activity implement.md checklist", () => {
+  function checklistHarness(implementMd, taskJson) {
+    const h = makeHarness({
+      sessions: new Map([["pi:s1", { agentId: "pi", cwd: CWD }]]),
+    });
+    addTask(h.fakeFs, "task-a", taskJson || IN_PROGRESS_TASK, { prd: true, implementMd });
+    addPointer(
+      h.fakeFs,
+      "pi_s1.json",
+      pointerPayload({ platform: "pi", currentTask: ".trellis/tasks/task-a", clockNow: h.clock.now })
+    );
+    return h;
+  }
+
+  it("derives progress + nextStep from the first unchecked item", async () => {
+    const h = checklistHarness("# plan\n\n- [x] parse\n- [ ] **wire the bubble**\n- [ ] test\n");
+    h.activity.start();
+    await h.timers.runDue();
+
+    const info = h.activity.getTrellisInfo("pi:s1");
+    assert.strictEqual(info.phase, "execute");
+    assert.deepStrictEqual(info.progress, { done: 1, total: 3 });
+    assert.strictEqual(info.nextStep, "wire the bubble");
+  });
+
+  it("truncates a long next step to 40 code points", async () => {
+    const h = checklistHarness(`- [ ] ${"x".repeat(60)}`);
+    h.activity.start();
+    await h.timers.runDue();
+
+    const info = h.activity.getTrellisInfo("pi:s1");
+    assert.strictEqual(Array.from(info.nextStep).length, 41); // 40 + ellipsis
+    assert.ok(info.nextStep.endsWith("…"));
+  });
+
+  it("fully ticked checklist → check phase, no nextStep key", async () => {
+    const h = checklistHarness("- [x] a\n- [x] b");
+    h.activity.start();
+    await h.timers.runDue();
+
+    const info = h.activity.getTrellisInfo("pi:s1");
+    assert.strictEqual(info.phase, "check");
+    assert.deepStrictEqual(info.progress, { done: 2, total: 2 });
+    assert.strictEqual("nextStep" in info, false);
+  });
+
+  it("a task without implement.md keeps the exact legacy TrellisInfo shape", async () => {
+    const h = checklistHarness(null, {
+      title: "T",
+      status: "in_progress",
+      subtasks: [{ status: "completed" }, { status: "pending" }],
+    });
+    h.activity.start();
+    await h.timers.runDue();
+
+    assert.deepStrictEqual(h.activity.getTrellisInfo("pi:s1"), {
+      taskPath: ".trellis/tasks/task-a",
+      title: "T",
+      phase: "execute",
+      progress: { done: 1, total: 2 },
+      parallelCount: 1,
+    });
+  });
+
+  it("re-notifies when the next unchecked item changes", async () => {
+    const h = checklistHarness("- [x] a\n- [ ] second");
+    h.activity.start();
+    await h.timers.runDue();
+    assert.strictEqual(h.activity.getTrellisInfo("pi:s1").nextStep, "second");
+
+    // Tick the second item and add a third: the next step changes — the
+    // diff must fan out an update.
+    h.fakeFs.add(
+      path.join(PROJECT, ".trellis", "tasks", "task-a", "implement.md"),
+      "- [x] a\n- [x] second\n- [ ] third"
+    );
+    h.timers.runDue();
+    await h.timers.runDue();
+
+    const info = h.activity.getTrellisInfo("pi:s1");
+    assert.strictEqual(info.nextStep, "third");
+    assert.deepStrictEqual(h.updates.at(-1), ["pi:s1"]);
   });
 });
 

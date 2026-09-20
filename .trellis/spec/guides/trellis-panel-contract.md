@@ -210,8 +210,22 @@ activity.getKnownRoots()              // → string[]（本进程正向缓存的
 `.trellis/tasks/<name>` 相对路径：①轮询观察到 →finish/done 跃迁；
 ②归档完成（绑定消失 + `tasks/archive/<月>/<同名>` 出现）。
 
-`TrellisInfo = { taskPath, title, phase: plan|execute|finish|done,
-                 progress: {done,total}|null, parallelCount }`
+`TrellisInfo = { taskPath, title, phase: plan|execute|check|finish|done,
+                 progress: {done,total}|null, parallelCount,
+                 nextStep?: string }`
+
+`check` 是推导相而非真信号：task.json 的 status 只有
+planning / in_progress / completed，`check` = **in_progress 且
+implement.md checklist 全勾**（`total > 0 && done === total`）。
+已知语义：全勾到实际跑 check 之间有一段「预标 check」窗口，文案
+（“正在跑测试检查…”）是引导而非事实断言——与 finish 相
+（completed → “归档以收尾”）同一启发式模式；反向误标不可能
+（check 前必然全勾），中途补新未勾项自然回退 execute。
+`progress` 口径：**implement.md checklist（有勾选项时）优先于
+task.json subtasks**（task.py 从不同步后者）；`nextStep` 仅在
+存在未勾项时附键（无 implement.md 的任务 TrellisInfo 键集合
+逐字节不变，R4），值经 `truncateNextStep` 截到 40 code points
+（surrogate-pair 安全，组合字符边界是可接受的视觉瑕疵）。
 
 ### 3. 会话绑定的双源真相（关键契约）
 
@@ -248,7 +262,10 @@ entry.id 直接当外部工具记录 id 用的代码都会静默失配（HUD 徽
 - **null 语义三态**：`phase` 为 null（未知 status）→ 不渲染；
   `upgradable` 类比同理——未知绝不渲染成「已最新」。
 - **轮询骨架**：自调度 setTimeout 链 + lifecycleToken（禁 setInterval），
-  空闲退避 15s / 活跃 5s；无可绑定会话时当轮零 IO。
+  空闲退避 15s / 活跃 5s；无可绑定会话时当轮零 IO。每个已绑定任务的
+  implement.md 读取（存在或 ENOENT）与 task.json 同轮共享 per-round
+  `taskReads` 缓存（同任务去重，+1 readFile/轮）；无 .trellis 根时
+  零新增 IO；parallelCount 的 30s root summary **不**读 implement.md。
 - **跃迁庆祝**：→ finish/done 才播，同 task <10s 抑制；DND / petHidden /
   mini 模式不播；主题缺 reactions.double 资产静默跳过（可选能力降级，
   不改 REQUIRED_STATES）。触发源两路：轮询可见的相位跃迁，以及归档
@@ -256,7 +273,10 @@ entry.id 直接当外部工具记录 id 用的代码都会静默失配（HUD 徽
   靠「绑定消失 + 归档副本存在」负空间检测；无副本的消失静默）。
 - **idle 任务气泡**（trellis-bubble）：agent-idle（无 working 会话）+
   绑定任务 → 桌宠旁 thought-bubble 显示任务名 + `deriveNextStepHint`
-  引导行（plan/execute/finish 三档，done/null 不弹）；同 task 每会话
+  引导行（plan/execute/check/finish 四档，done/null 不弹；execute 且
+  有 nextStep 时升级为 `trellisHintExecuteNext` 三插槽文案，nextStep
+  在 formatHint 里**最后**替换，防止步骤文本内的 `{done}` 字面量被
+  二次解释）；同 task 每会话
   一次；4s 自动隐藏；DND/petHidden/mini 同门槛；定位复用 update-bubble
   的 `__test.computeUpdateBubbleBounds`（permission stack + HUD 避让）。
   两个语义坑：①「idle」是 agent-idle 不是鼠标 idle 渲染态（用户在场

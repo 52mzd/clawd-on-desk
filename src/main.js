@@ -2526,7 +2526,8 @@ _trellisBubble = createTrellisBubble({
     if (params) {
       text = text
         .replace("{done}", String(params.done))
-        .replace("{total}", String(params.total));
+        .replace("{total}", String(params.total))
+        .replace("{nextStep}", params.nextStep == null ? "" : String(params.nextStep));
     }
     return text;
   },

@@ -23,13 +23,16 @@
 //     of .runtime/sessions and (only with exactly one same-platform
 //     candidate filename) 1 more readFile — the fallback path
 //   - per bound task (deduped across sessions via a per-round read cache):
-//     1 stat on the task dir, 1 task.json readFile, 1 stat on prd.md; an
-//     archived task adds 1 readdir of tasks/archive + ≤ months stats
+//     1 stat on the task dir, 1 task.json readFile, 1 stat on prd.md and
+//     1 implement.md readFile (checklist progress / next-step hint; a
+//     missing file is one ENOENT read, never an error); an archived task
+//     adds 1 readdir of tasks/archive + ≤ months stats
 //   - parallelCount is cached per .trellis root for 30s; a refresh costs
 //     1 readdir of tasks/ + 1 small task.json readFile per non-archived
 //     task (typically a handful of files)
 
 const path = require("path");
+const { parseImplementChecklist, truncateNextStep } = require("./trellis-checklist");
 const {
   sessionPointerKey,
   trellisPlatformFor,
@@ -195,6 +198,16 @@ function createTrellisActivity(options) {
     try {
       const entries = await fs.readdir(p);
       return Array.isArray(entries) ? entries : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Read a utf-8 text file, or null when unreadable/missing — implement.md
+  // is optional per task, so absence is a normal outcome.
+  async function readTextQuiet(p) {
+    try {
+      return await fs.readFile(p, "utf8");
     } catch {
       return null;
     }
@@ -376,6 +389,7 @@ function createTrellisActivity(options) {
       && a.parallelCount === b.parallelCount
       && (a.progress ? a.progress.done : null) === (b.progress ? b.progress.done : null)
       && (a.progress ? a.progress.total : null) === (b.progress ? b.progress.total : null)
+      && (a.nextStep || null) === (b.nextStep || null)
     );
   }
 
@@ -468,14 +482,16 @@ function createTrellisActivity(options) {
     if (!task) return null;
 
     const parallelCount = (await getRootSummary(root)).count;
+    const info = {
+      taskPath: toPosix(path.relative(projectRoot, task.dir)),
+      title: task.title,
+      phase: task.phase,
+      progress: task.progress,
+      parallelCount,
+    };
+    if (task.nextStep) info.nextStep = task.nextStep;
     return {
-      info: {
-        taskPath: toPosix(path.relative(projectRoot, task.dir)),
-        title: task.title,
-        phase: task.phase,
-        progress: task.progress,
-        parallelCount,
-      },
+      info,
       // Transition history is keyed by the pointer's task ref, not by the
       // resolved dir: an archive move relocates the actual dir (task.dir →
       // tasks/archive/<month>/…) while the pointer keeps referencing the
@@ -511,24 +527,40 @@ function createTrellisActivity(options) {
     return pointer;
   }
 
+  // Checklist facts from the task's implement.md, or an empty checklist
+  // when the file is absent — same read-only round as task.json/prd.md,
+  // no extra polling (the file rides the existing per-round task cache).
+  async function readChecklist(absTaskDir) {
+    const md = await readTextQuiet(path.join(absTaskDir, "implement.md"));
+    return parseImplementChecklist(md);
+  }
+
   async function readTaskInfo(root, absTaskDir) {
     const st = await statQuiet(absTaskDir);
     if (st && st.isDirectory()) {
       const taskJson = await readJsonObject(path.join(absTaskDir, "task.json"));
       if (!taskJson.ok) return null;
       const hasPrd = Boolean(await statQuiet(path.join(absTaskDir, "prd.md")));
+      const checklist = await readChecklist(absTaskDir);
       const phase = derivePhase({
         status: taskJson.value.status,
         hasPrd,
         isArchived: false,
+        implementChecklist: checklist,
       });
       if (!phase) return null;
-      return {
+      const info = {
         dir: absTaskDir,
         title: pickTitle(taskJson.value, absTaskDir),
         phase,
-        progress: deriveProgress(taskJson.value),
+        progress: deriveProgress(taskJson.value, checklist),
       };
+      // Only attach nextStep when there is one, so tasks without a usable
+      // checklist keep the exact TrellisInfo shape they had before.
+      if (checklist.nextUncheckedText) {
+        info.nextStep = truncateNextStep(checklist.nextUncheckedText);
+      }
+      return info;
     }
     // Task dir gone → maybe archived (tasks/archive/<month>/<name>).
     const archivedDir = await findArchivedTaskDir(path.join(root, "tasks", "archive"), path.basename(absTaskDir));
@@ -539,7 +571,7 @@ function createTrellisActivity(options) {
       dir: archivedDir,
       title: pickTitle(value, archivedDir),
       phase: "done",
-      progress: deriveProgress(value),
+      progress: deriveProgress(value, await readChecklist(archivedDir)),
     };
   }
 
@@ -567,7 +599,10 @@ function createTrellisActivity(options) {
   // of the count scan and rides the same 30s cache entry. An active task's
   // phase needs no hasPrd stat: in_progress → execute and planning → plan
   // unambiguously (derivePhase's other inputs only matter for completed or
-  // archived tasks, which are not active).
+  // archived tasks, which are not active). implement.md is deliberately
+  // not read here either: the digest is a coarse per-project summary, so
+  // an in-progress task stays "execute" rather than doubling this scan's
+  // file reads to split out the check sub-phase.
   async function getRootSummary(root) {
     const nowMs = nowFn();
     const cached = parallelCache.get(root);

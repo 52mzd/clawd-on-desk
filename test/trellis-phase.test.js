@@ -212,6 +212,19 @@ describe("trellis-phase derivePhase (design D2 table)", () => {
     assert.strictEqual(derivePhase({}), null);
     assert.strictEqual(derivePhase(), null);
   });
+
+  it("refines in_progress → check when the implement.md checklist is fully ticked", () => {
+    const complete = { done: 3, total: 3 };
+    assert.strictEqual(derivePhase({ status: "in_progress", implementChecklist: complete }), "check");
+    // Partially ticked, empty or missing checklists keep the legacy execute.
+    assert.strictEqual(derivePhase({ status: "in_progress", implementChecklist: { done: 1, total: 3 } }), "execute");
+    assert.strictEqual(derivePhase({ status: "in_progress", implementChecklist: { done: 0, total: 0 } }), "execute");
+    assert.strictEqual(derivePhase({ status: "in_progress", implementChecklist: null }), "execute");
+    // The refinement never leaks into other statuses.
+    assert.strictEqual(derivePhase({ status: "planning", implementChecklist: complete }), "plan");
+    assert.strictEqual(derivePhase({ status: "completed", implementChecklist: complete }), "finish");
+    assert.strictEqual(derivePhase({ status: "in_progress", isArchived: true, implementChecklist: complete }), "done");
+  });
 });
 
 describe("trellis-phase deriveProgress (subtask counting, never 0/0)", () => {
@@ -254,6 +267,22 @@ describe("trellis-phase deriveProgress (subtask counting, never 0/0)", () => {
       { done: 1, total: 3 }
     );
   });
+
+  it("prefers the implement.md checklist over task.json subtasks", () => {
+    const taskJson = { subtasks: [{ status: "completed" }] };
+    assert.deepStrictEqual(
+      deriveProgress(taskJson, { done: 4, total: 7 }),
+      { done: 4, total: 7 }
+    );
+    // Empty/missing checklist falls back to the legacy subtask path.
+    assert.deepStrictEqual(
+      deriveProgress(taskJson, { done: 0, total: 0 }),
+      { done: 1, total: 1 }
+    );
+    assert.deepStrictEqual(deriveProgress(taskJson, null), { done: 1, total: 1 });
+    // Checklist present but no subtasks still yields real numbers.
+    assert.deepStrictEqual(deriveProgress({ subtasks: [] }, { done: 2, total: 5 }), { done: 2, total: 5 });
+  });
 });
 
 describe("deriveNextStepHint", () => {
@@ -284,6 +313,32 @@ describe("deriveNextStepHint", () => {
 
   it("maps finish → trellisHintFinish", () => {
     assert.deepStrictEqual(deriveNextStepHint({ phase: "finish" }), { key: "trellisHintFinish" });
+  });
+
+  it("maps execute + nextStep → trellisHintExecuteNext with all three params", () => {
+    assert.deepStrictEqual(
+      deriveNextStepHint({ phase: "execute", progress: { done: 2, total: 5 }, nextStep: "wire the bubble" }),
+      { key: "trellisHintExecuteNext", params: { done: 2, total: 5, nextStep: "wire the bubble" } }
+    );
+    // An empty/blank nextStep is no next step — legacy wording stays.
+    assert.deepStrictEqual(
+      deriveNextStepHint({ phase: "execute", progress: { done: 1, total: 2 }, nextStep: "" }),
+      { key: "trellisHintExecute", params: { done: 1, total: 2 } }
+    );
+    // nextStep without progress still degrades to 0/0 alongside it.
+    assert.deepStrictEqual(
+      deriveNextStepHint({ phase: "execute", nextStep: "step" }),
+      { key: "trellisHintExecuteNext", params: { done: 0, total: 0, nextStep: "step" } }
+    );
+    // Non-string nextStep is ignored.
+    assert.deepStrictEqual(
+      deriveNextStepHint({ phase: "execute", progress: { done: 1, total: 1 }, nextStep: 7 }),
+      { key: "trellisHintExecute", params: { done: 1, total: 1 } }
+    );
+  });
+
+  it("maps check → trellisHintCheck without params", () => {
+    assert.deepStrictEqual(deriveNextStepHint({ phase: "check" }), { key: "trellisHintCheck" });
   });
 
   it("returns null for done / unknown phase / null input (no nagging)", () => {

@@ -20,6 +20,7 @@
   const TRELLIS_PHASE_BADGE = {
     plan: { labelKey: "sessionHudTrellisPhasePlan", cls: "phase-plan" },
     execute: { labelKey: "sessionHudTrellisPhaseExecute", cls: "phase-execute" },
+    check: { labelKey: "sessionHudTrellisPhaseCheck", cls: "phase-check" },
     finish: { labelKey: "sessionHudTrellisPhaseFinish", cls: "phase-finish" },
     done: { labelKey: "sessionHudTrellisPhaseDone", cls: "phase-done" },
   };

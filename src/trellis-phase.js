@@ -99,17 +99,37 @@ function sessionPointerKey(agentId, sessionId) {
 // badge. hasPrd does not split the badge for v1 — design D2 keeps both
 // planning rows on "plan" — but stays in the signature so a future 1.x
 // sub-phase ("1.1 PRD") has a stable call site.
-function derivePhase({ status, hasPrd, isArchived } = {}) {
+// implementChecklist (from implement.md, see trellis-checklist.js) is an
+// optional refinement: an in_progress task whose checklist is fully ticked
+// has left the implement phase for the check phase (workflow Phase 3 runs
+// quality checks before archive), so it reports "check" instead. Callers
+// that do not read implement.md simply omit it and get the legacy mapping.
+function derivePhase({ status, hasPrd, isArchived, implementChecklist } = {}) {
   if (isArchived) return "done";
   if (status === "completed") return "finish";
-  if (status === "in_progress") return "execute";
+  if (status === "in_progress") {
+    if (
+      implementChecklist
+      && implementChecklist.total > 0
+      && implementChecklist.done === implementChecklist.total
+    ) {
+      return "check";
+    }
+    return "execute";
+  }
   if (status === "planning") return "plan";
   return null;
 }
 
-// Count completed subtasks: {done, total} or null. Never invents a 0/0 —
-// a task without subtasks (or with an empty list) shows no progress.
-function deriveProgress(taskJson) {
+// Count completed steps: {done, total} or null. Never invents a 0/0 —
+// a task without progress signal shows no progress. implement.md's
+// checklist (when the file exists and has checkboxes) is the primary
+// source — task.py never syncs subtasks from the checkboxes agents
+// actually tick — with task.json subtasks kept as the legacy fallback.
+function deriveProgress(taskJson, implementChecklist) {
+  if (implementChecklist && implementChecklist.total > 0) {
+    return { done: implementChecklist.done, total: implementChecklist.total };
+  }
   if (!taskJson || typeof taskJson !== "object") return null;
   const subtasks = taskJson.subtasks;
   if (!Array.isArray(subtasks) || subtasks.length === 0) return null;
@@ -131,14 +151,19 @@ function deriveNextStepHint(trellisInfo) {
     const progress = trellisInfo.progress;
     const done = Number(progress && progress.done);
     const total = Number(progress && progress.total);
-    return {
-      key: "trellisHintExecute",
-      params: {
-        done: Number.isFinite(done) ? Math.max(0, Math.trunc(done)) : 0,
-        total: Number.isFinite(total) ? Math.max(0, Math.trunc(total)) : 0,
-      },
+    const params = {
+      done: Number.isFinite(done) ? Math.max(0, Math.trunc(done)) : 0,
+      total: Number.isFinite(total) ? Math.max(0, Math.trunc(total)) : 0,
     };
+    // A live next step (first unchecked implement.md item) upgrades the
+    // generic n/m line into the concrete one; without it the legacy
+    // done/total wording stays byte-for-byte identical.
+    if (typeof trellisInfo.nextStep === "string" && trellisInfo.nextStep) {
+      return { key: "trellisHintExecuteNext", params: { ...params, nextStep: trellisInfo.nextStep } };
+    }
+    return { key: "trellisHintExecute", params };
   }
+  if (phase === "check") return { key: "trellisHintCheck" };
   if (phase === "finish") return { key: "trellisHintFinish" };
   return null;
 }

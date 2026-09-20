@@ -236,6 +236,7 @@ function usageChipInfo(session) {
 const TRELLIS_PHASE_CHIP = {
   plan: { key: "sessionHudTrellisPhasePlan", cls: "trellis-plan", hintKey: "trellisHintPlan" },
   execute: { key: "sessionHudTrellisPhaseExecute", cls: "trellis-execute", hintKey: "trellisHintExecute" },
+  check: { key: "sessionHudTrellisPhaseCheck", cls: "trellis-check", hintKey: "trellisHintCheck" },
   finish: { key: "sessionHudTrellisPhaseFinish", cls: "trellis-finish", hintKey: "trellisHintFinish" },
   done: { key: "sessionHudTrellisPhaseDone", cls: "trellis-done" },
 };
