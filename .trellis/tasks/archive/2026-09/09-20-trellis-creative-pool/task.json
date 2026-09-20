@@ -1,0 +1,30 @@
+{
+  "id": "trellis-creative-pool",
+  "name": "trellis-creative-pool",
+  "title": "创意池 v1：阶段化身 + Dashboard 任务页 + 日报",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "clawd",
+  "assignee": "clawd",
+  "createdAt": "2026-09-20",
+  "completedAt": "2026-09-20",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-20-avatar-animations",
+    "09-20-dashboard-page",
+    "09-20-recap-report"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
