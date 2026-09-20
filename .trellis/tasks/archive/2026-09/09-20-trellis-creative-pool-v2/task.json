@@ -1,0 +1,31 @@
+{
+  "id": "trellis-creative-pool-v2",
+  "name": "trellis-creative-pool-v2",
+  "title": "创意池 v2：气泡具体化 + 等待态 + 详情视图 + 归档分组",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "clawd",
+  "assignee": "clawd",
+  "createdAt": "2026-09-20",
+  "completedAt": "2026-09-21",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-20-bubble-next-step",
+    "09-20-waiting-auth-state",
+    "09-20-task-detail-view",
+    "09-20-archive-group-view"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
