@@ -183,3 +183,22 @@ break-loop 复盘 HUD trellis 详情行三连 bug（截断→runaway shrink→�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 7: 创意池 v2 四件全落地：气泡具体化 + 等待态 + 详情视图 + 归档分组
+
+**Date**: 2026-09-21
+**Task**: 创意池 v2 四件全落地：气泡具体化 + 等待态 + 详情视图 + 归档分组
+**Branch**: `main`
+
+### Summary
+
+trellis-card 对照后的 v2 收口（每件独立 implement→check→commit→archive）：① bubble-next-step：parseImplementChecklist 纯函数解析 implement.md checkbox（进度真相源，task.py 从不写 subtasks），气泡显示下一未勾步（code-point 安全截断 40），check 阶段推导态（全勾+in_progress）+ 7 语言 3 键；② waiting-auth-state：pending permission>0 时 working/thinking 显示层升级 waiting optional 态（优先于 juggling；主题 hasOwnVisualFiles 门禁，calico 无素材保持 inert；state-priority/REQUIRED_STATES 零改动）；③ task-detail-view：readTaskDetail 按需单读 + dashboard:trellis-task-detail 通道（双分隔符路径遏制 + live-cwd 白名单 + __proto__ own-key 拒绝）+ ⓘ overlay 卡片（冻结聚合快照防每秒重建打扰）；④ archive-group-view：trellis-archive.js 共享归档遍历（recap 消费、语义逐字保持）+ 父子分组纯函数（环/孤儿平铺）+ 折叠归档区（首展单拉 + seq 竞态守卫）+ 日期跟随 app 语言。全量 npm test 失败集四件均与基线 diff=0。
+
+### Git Commits
+
+e3efedf8,cac74c1b,d33747e3,c1bde2ed
+
+### Status
+
+[OK] **Completed**
