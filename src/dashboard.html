@@ -94,6 +94,41 @@ h1 {
   font-weight: 600;
 }
 
+/* View switch (Sessions / Trellis) in the header: quiet segmented
+   controls, not primary CTAs — the page's primary actions stay in the
+   content area. */
+.view-switch {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: auto;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-alt);
+}
+
+.view-switch-tab {
+  min-width: 0;
+  height: 24px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.view-switch-tab:hover:not(.is-active) {
+  color: var(--text);
+}
+
+.view-switch-tab.is-active {
+  background: var(--surface);
+  color: var(--text);
+}
+
 /* The manual Kimi refresh lives inside the Kimi quota section header, next to
    the data it reloads - a quiet ghost icon button, not a header-level CTA. */
 .quota-section-titlebar {
@@ -418,15 +453,109 @@ h1 {
 }
 
 .trellis-archive-list {
-  /* The panel lives in the header (outside the page scroll area), so the
-     expanded archive list must scroll inside a fixed-height box instead of
-     stretching the header past the window. */
-  max-height: 200px;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 4px;
   width: 100%;
+}
+
+/* Independent Trellis view: a second scrolling main under the same header.
+   The sessions main keeps its id; both share .content styles. */
+.trellis-view[hidden] {
+  display: none;
+}
+
+.trellis-view-section {
+  margin: 0 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.trellis-view-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Root rows: path + tail remove button; quiet like the archive rows. */
+.trellis-root-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--row-border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.trellis-root-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.trellis-root-remove {
+  min-width: 0;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-alt);
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.trellis-root-remove:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.trellis-view-empty {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.trellis-view-add-root {
+  align-self: flex-start;
+  min-width: 0;
+  height: 26px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.trellis-view-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--interrupted);
+  font-size: 11px;
+}
+
+.trellis-view-retry {
+  min-width: 0;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-alt);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
 }
 
 .trellis-archive-month {
@@ -1319,12 +1448,19 @@ button:disabled {
       <div class="title-row">
         <h1 id="title">Sessions</h1>
         <span id="count" class="count"></span>
+        <div id="viewSwitch" class="view-switch" role="tablist">
+          <button type="button" id="viewSessionsTab" class="view-switch-tab is-active" role="tab" aria-selected="true">Sessions</button>
+          <button type="button" id="viewTrellisTab" class="view-switch-tab" role="tab" aria-selected="false">Trellis</button>
+        </div>
       </div>
       <div id="quickBanner" class="quick-banner" role="status" aria-live="polite" hidden></div>
-      <div id="quotaSummary" class="quota-summary" hidden></div>
-      <div id="trellisPanel" class="trellis-panel" hidden></div>
+      <div id="sessionsHeaderExtras">
+        <div id="quotaSummary" class="quota-summary" hidden></div>
+        <div id="trellisPanel" class="trellis-panel" hidden></div>
+      </div>
     </header>
     <main id="content" class="content" aria-live="polite"></main>
+    <main id="trellisView" class="content trellis-view" hidden></main>
   </div>
   <div id="trellisDetailOverlay" class="trellis-detail-overlay" role="dialog" hidden></div>
   <script src="./session-focus-unavailable.js"></script>

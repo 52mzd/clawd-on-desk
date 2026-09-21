@@ -30,6 +30,8 @@ it("keeps the hidden attribute stronger than .trellis-panel's display: flex", ()
     "dashboard.html must ship .trellis-panel[hidden] { display: none } next to display: flex");
   assert.match(html, /\.trellis-detail-overlay\[hidden\]\s*\{\s*display:\s*none;/,
     "dashboard.html must ship .trellis-detail-overlay[hidden] { display: none } next to display: flex");
+  assert.match(html, /\.trellis-view\[hidden\]\s*\{\s*display:\s*none;/,
+    "dashboard.html must ship .trellis-view[hidden] { display: none } so the hidden second main can never leak");
 });
 
 function bindingSession(id, trellis, extra = {}) {
@@ -318,11 +320,22 @@ function loadDashboard({
   detailError = null,
   archiveResult = null,
   archiveError = null,
+  activeResult = null,
+  activeError = null,
+  rootsResult = null,
+  rootsError = null,
+  addResult = null,
+  removeResult = null,
 } = {}) {
   const elements = new Map(
-    ["content", "title", "count", "quickBanner", "quotaSummary", "trellisPanel", "trellisDetailOverlay"]
-      .map((id) => [id, new FakeElement("div")]),
+    [
+      "content", "title", "count", "quickBanner", "quotaSummary", "trellisPanel",
+      "trellisDetailOverlay", "trellisView", "viewSessionsTab", "viewTrellisTab",
+      "sessionsHeaderExtras",
+    ].map((id) => [id, new FakeElement("div")]),
   );
+  // The real page starts with <main id="trellisView" hidden>; mirror that.
+  elements.get("trellisView").hidden = true;
   const docListeners = new Map();
   const document = {
     title: "",
@@ -341,8 +354,23 @@ function loadDashboard({
   const focusCalls = [];
   const detailCalls = [];
   const archiveCalls = [];
+  const activeCalls = [];
+  const rootsCalls = [];
+  const addRootCalls = [];
+  const removeRootCalls = [];
   let snapshotListener = null;
   let renderInterval = null;
+  let quickIntentListener = null;
+  // Minimal quick-mode surface: initQuickMode's platform gate keys off
+  // quickEnter's presence, and a "refused" enter keeps the round inert so
+  // the test only observes the view switch beginQuickRound makes.
+  const quickApi = {
+    quickEnter: async () => ({ status: "refused" }),
+    quickPending: async () => ({ status: "ok" }),
+    onQuickIntent: (cb) => { quickIntentListener = cb; },
+    onQuickEntries: () => {},
+    onQuickDismissed: () => {},
+  };
   const api = {
     getI18n: async () => ({ lang: "en", translations: { ...i18n.en } }),
     getSnapshot: async () => ({ sessions, groups: [] }),
@@ -362,15 +390,37 @@ function loadDashboard({
       if (detailError) throw detailError;
       return typeof detailResult === "function" ? detailResult(payload) : detailResult;
     },
-    getTrellisArchiveList: async (payload) => {
-      archiveCalls.push(payload);
+    getTrellisArchiveList: async () => {
+      archiveCalls.push(null);
       if (archiveError) throw archiveError;
-      return typeof archiveResult === "function" ? archiveResult(payload) : archiveResult;
+      return typeof archiveResult === "function" ? archiveResult() : archiveResult;
     },
+    getTrellisActiveList: async () => {
+      activeCalls.push(null);
+      if (activeError) throw activeError;
+      return typeof activeResult === "function" ? activeResult() : activeResult;
+    },
+    listTrellisRoots: async () => {
+      rootsCalls.push(null);
+      if (rootsError) throw rootsError;
+      return typeof rootsResult === "function" ? rootsResult() : rootsResult;
+    },
+    addTrellisRoot: async () => {
+      addRootCalls.push(null);
+      return addResult || { status: "cancelled" };
+    },
+    removeTrellisRoot: async (root) => {
+      removeRootCalls.push(root);
+      return removeResult || { status: "ok", roots: [] };
+    },
+    ...quickApi,
   };
 
   const context = vm.createContext({
-    window: { dashboardAPI: api }, document, console, Intl, Date,
+    window: {
+      dashboardAPI: api,
+      addEventListener: () => {},
+    }, document, console, Intl, Date,
     setInterval: (cb) => { renderInterval = cb; return 1; },
     requestAnimationFrame: (cb) => cb(),
   });
@@ -390,9 +440,19 @@ function loadDashboard({
   return {
     panel: elements.get("trellisPanel"),
     overlay: elements.get("trellisDetailOverlay"),
+    view: elements.get("trellisView"),
+    content: elements.get("content"),
+    titleEl: elements.get("title"),
+    trellisTab: elements.get("viewTrellisTab"),
+    sessionsTab: elements.get("viewSessionsTab"),
+    headerExtras: elements.get("sessionsHeaderExtras"),
     focusCalls,
     detailCalls,
     archiveCalls,
+    activeCalls,
+    rootsCalls,
+    addRootCalls,
+    removeRootCalls,
     docListeners,
     pressKey: (key) => {
       for (const fn of docListeners.get("keydown") || []) {
@@ -401,6 +461,7 @@ function loadDashboard({
     },
     pushSnapshot: (next) => snapshotListener && snapshotListener(next),
     tickRender: () => { if (renderInterval) renderInterval(); },
+    quickIntent: (revision) => quickIntentListener && quickIntentListener({ revision }),
   };
 }
 
@@ -430,7 +491,7 @@ describe("dashboard trellis panel rendering", () => {
     assert.equal(app.panel.children.length, 0);
   });
 
-  it("keeps a minimal panel (archive entry) when a live cwd exists without bindings", async () => {
+  it("hides the panel entirely when no session carries a binding", async () => {
     const plainSession = {
       id: "s9",
       agent: "pi",
@@ -439,12 +500,9 @@ describe("dashboard trellis panel rendering", () => {
     };
     const app = loadDashboard({ sessions: [plainSession], groups: [] });
     await flush();
-    assert.equal(app.panel.hidden, false, "live cwd keeps the archive entry reachable");
-    assert.equal(
-      app.panel.children.filter((c) => String(c.className || "").includes("trellis-task-row") || String(c.className || "").includes("trellis-group-row")).length,
-      0,
-      "no task rows without bindings"
-    );
+    assert.equal(app.panel.hidden, true,
+      "the archive browser lives in the independent view, so a cwd-only panel hides");
+    assert.equal(app.panel.children.length, 0);
   });
 
   it("focuses the single bound session when the row is clicked", async () => {
@@ -749,160 +807,251 @@ describe("dashboard trellis panel grouping (rendering)", () => {
   });
 });
 
-describe("dashboard trellis archived section", () => {
-  it("stays collapsed with no fetch, then loads once on first expand", async () => {
+describe("dashboard trellis independent view", () => {
+  async function switchToTrellis(app) {
+    await app.trellisTab.dispatch("click");
+    await flush();
+  }
+
+  it("switches views on the tab and loads roots, active tasks and archive in one round", async () => {
     const app = loadDashboard({
-      sessions: [bindingSession("s1", {
-        taskPath: ".trellis/tasks/t1", title: "T", phase: "execute",
-      })],
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/s1"] },
+      activeResult: {
+        status: "ok",
+        tasks: [{
+          taskPath: ".trellis/tasks/t1",
+          title: "Disk task",
+          phase: "execute",
+          progress: { done: 1, total: 2 },
+          parent: null,
+          cwd: "/proj/s1",
+        }],
+      },
       archiveResult: { status: "ok", tasks: [archivedTask()] },
     });
     await flush();
-    const headers = byClass(app.panel, "trellis-archive-header");
-    assert.equal(headers.length, 1);
-    assert.equal(headers[0].attributes["aria-expanded"], "false");
-    assert.equal(byClass(app.panel, "trellis-archive-row").length, 0);
-    assert.deepEqual(app.archiveCalls, [], "collapsed → nothing is fetched");
+    assert.equal(app.view.hidden, true, "starts on the sessions view");
+    assert.equal(app.headerExtras.hidden, false);
+    assert.equal(app.archiveCalls.length, 0, "nothing is fetched before the switch");
 
-    await headers[0].dispatch("click");
-    await flush();
-    assert.deepEqual(app.archiveCalls, [{ cwds: ["/proj/s1"] }], "one on-demand read");
-    assert.equal(byClass(app.panel, "trellis-archive-row").length, 1);
-    const headerAfter = byClass(app.panel, "trellis-archive-header")[0];
-    assert.equal(headerAfter.attributes["aria-expanded"], "true");
-    assert.ok(textOf(app.panel).includes("Done thing"));
-    assert.ok(textOf(app.panel).includes(
-      i18n.en.dashboardTrellisDetailCompleted.replace("{date}", "2026-09-20")
-    ));
-    assert.ok(textOf(app.panel).includes(
+    await switchToTrellis(app);
+    assert.equal(app.view.hidden, false);
+    assert.equal(app.content.classList.contains("hidden"), true);
+    assert.equal(app.headerExtras.hidden, true, "session-only header extras hide");
+    assert.equal(app.titleEl.textContent, i18n.en.dashboardViewTrellis);
+
+    assert.equal(app.rootsCalls.length, 1);
+    const rows = byClass(app.view, "trellis-root-row");
+    assert.equal(rows.length, 1);
+    assert.ok(textOf(rows[0]).includes("/proj/s1"));
+
+    const activeRows = byClass(app.view, "trellis-task-row");
+    assert.equal(activeRows.length, 1);
+    assert.ok(textOf(app.view).includes("Disk task"));
+    assert.ok(textOf(app.view).includes("1/2"));
+
+    assert.ok(textOf(app.view).includes(
+      `${i18n.en.dashboardTrellisArchiveTitle} (1)`
+    ), "the archive section header carries the loaded count");
+    assert.equal(byClass(app.view, "trellis-archive-row").length, 1,
+      "the newest month is open by default");
+    assert.ok(textOf(app.view).includes("Done thing"));
+    assert.ok(textOf(app.view).includes(
       i18n.en.dashboardTrellisArchivedDurationDays.replace("{n}", "10")
     ));
-    assert.ok(textOf(app.panel).includes(
-      `${i18n.en.dashboardTrellisArchived} (1)`
-    ), "the header label carries the loaded count");
 
-    // Collapsing does not refetch; expanding again shows cached rows.
-    await byClass(app.panel, "trellis-archive-header")[0].dispatch("click");
-    assert.equal(byClass(app.panel, "trellis-archive-row").length, 0);
-    await byClass(app.panel, "trellis-archive-header")[0].dispatch("click");
-    assert.equal(byClass(app.panel, "trellis-archive-row").length, 1);
-    assert.deepEqual(app.archiveCalls, [{ cwds: ["/proj/s1"] }]);
+    // Switching back restores the sessions chrome without refetching.
+    await app.sessionsTab.dispatch("click");
+    await flush();
+    assert.equal(app.view.hidden, true);
+    assert.equal(app.content.classList.contains("hidden"), false);
+    assert.equal(app.headerExtras.hidden, false);
+    assert.equal(app.titleEl.textContent, i18n.en.dashboardWindowTitle);
+  });
+
+  it("switches back to sessions when a quick round starts on the trellis view", async () => {
+    // The numbered skeleton renders inside the sessions content area, so
+    // every quick entry point (intent, pending round) must leave the
+    // trellis view before painting digits.
+    const app = loadDashboard({
+      sessions: [],
+      rootsResult: { status: "ok", roots: [] },
+      activeResult: { status: "ok", tasks: [] },
+      archiveResult: { status: "ok", tasks: [] },
+    });
+    await flush();
+    await switchToTrellis(app);
+    assert.equal(app.view.hidden, false);
+
+    app.quickIntent(1);
+    await flush();
+    assert.equal(app.view.hidden, true, "a quick round must land on the sessions view");
+    assert.equal(app.content.classList.contains("hidden"), false);
+    assert.equal(app.headerExtras.hidden, false);
+  });
+
+  it("shows the empty-state guide when no root is registered", async () => {
+    const app = loadDashboard({
+      sessions: [],
+      rootsResult: { status: "ok", roots: [] },
+      activeResult: { status: "ok", tasks: [] },
+      archiveResult: { status: "ok", tasks: [] },
+    });
+    await flush();
+    await switchToTrellis(app);
+    assert.equal(byClass(app.view, "trellis-root-row").length, 0);
+    assert.ok(textOf(app.view).includes(i18n.en.dashboardTrellisRootsEmptyHint));
+    assert.ok(textOf(app.view).includes(i18n.en.dashboardTrellisActiveEmpty));
+    assert.ok(textOf(app.view).includes(i18n.en.dashboardTrellisArchivedEmpty));
+    assert.ok(byClass(app.view, "trellis-view-add-root").length,
+      "the add-root button stays reachable in the empty state");
+  });
+
+  it("add uses the picker channel and remove passes the exact registered root", async () => {
+    let registered = ["/proj/s1"];
+    const app = loadDashboard({
+      sessions: [],
+      rootsResult: () => ({ status: "ok", roots: registered }),
+      activeResult: { status: "ok", tasks: [] },
+      archiveResult: { status: "ok", tasks: [] },
+      addResult: { status: "ok", roots: ["/proj/s1", "/proj/two"] },
+      removeResult: { status: "ok", roots: [] },
+    });
+    await flush();
+    await switchToTrellis(app);
+
+    await byClass(app.view, "trellis-view-add-root")[0].dispatch("click");
+    registered = ["/proj/s1", "/proj/two"];
+    await flush();
+    assert.equal(app.addRootCalls.length, 1, "add never carries a path from the renderer");
+    assert.equal(app.rootsCalls.length, 2, "a successful add refreshes the roots list");
+
+    await byClass(app.view, "trellis-root-remove")[0].dispatch("click");
+    await flush();
+    assert.deepEqual(app.removeRootCalls, ["/proj/s1"],
+      "remove passes the row's exact registered root string");
   });
 
   it("opens the shared detail overlay from an archived row", async () => {
     const app = loadDashboard({
-      sessions: [bindingSession("s1", {
-        taskPath: ".trellis/tasks/t1", title: "T", phase: "execute",
-      })],
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/s1"] },
+      activeResult: { status: "ok", tasks: [] },
       archiveResult: { status: "ok", tasks: [archivedTask()] },
       detailResult: detailOk({ archived: true, phase: "done", completedAt: "2026-09-20" }),
     });
     await flush();
-    await byClass(app.panel, "trellis-archive-header")[0].dispatch("click");
-    await flush();
-    await byClass(app.panel, "trellis-archive-row")[0].dispatch("click");
+    await switchToTrellis(app);
+    await byClass(app.view, "trellis-archive-row")[0].dispatch("click");
     await flush();
     assert.deepEqual(app.detailCalls, [{
       taskPath: ".trellis/tasks/archive/2026-09/done-thing",
       cwd: "/proj/s1",
     }], "the archive row's taskPath and cwd feed the detail read");
     assert.equal(app.overlay.hidden, false);
-    assert.ok(textOf(app.overlay).includes("Title from disk"),
-      "the on-disk title wins over the frozen row title, same as live rows");
-    assert.ok(textOf(app.overlay).includes(i18n.en.dashboardTrellisDetailArchived));
+    assert.ok(textOf(app.overlay).includes("Title from disk"));
     assert.equal(byClass(app.overlay, "trellis-session-chip").length, 0,
       "archived tasks have no bound sessions");
   });
 
-  it("hides the whole section when the archive read comes back empty", async () => {
+  it("opens the detail overlay from an active row without session chips", async () => {
     const app = loadDashboard({
-      sessions: [bindingSession("s1", {
-        taskPath: ".trellis/tasks/t1", title: "T", phase: "execute",
-      })],
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/s1"] },
+      activeResult: {
+        status: "ok",
+        tasks: [{
+          taskPath: ".trellis/tasks/t1",
+          title: "Disk task",
+          phase: "plan",
+          progress: null,
+          parent: null,
+          cwd: "/proj/s1",
+        }],
+      },
       archiveResult: { status: "ok", tasks: [] },
+      detailResult: detailOk(),
     });
     await flush();
-    await byClass(app.panel, "trellis-archive-header")[0].dispatch("click");
+    await switchToTrellis(app);
+    await byClass(app.view, "trellis-task-detail-btn")[0].dispatch("click");
     await flush();
-    assert.equal(byClass(app.panel, "trellis-archive-header").length, 0,
-      "loaded-and-empty keeps the header hidden");
-    assert.deepEqual(app.archiveCalls.length, 1);
+    assert.deepEqual(app.detailCalls, [{ taskPath: ".trellis/tasks/t1", cwd: "/proj/s1" }]);
+    assert.equal(app.overlay.hidden, false);
   });
 
-  it("shows an error state with a retry button that refetches", async () => {
-    let failing = true;
+  it("shows archive and active error states with retry buttons that refetch", async () => {
+    let archiveFailing = true;
+    let activeFailing = true;
     const app = loadDashboard({
-      sessions: [bindingSession("s1", {
-        taskPath: ".trellis/tasks/t1", title: "T", phase: "execute",
-      })],
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/s1"] },
+      activeResult: () => {
+        if (activeFailing) throw new Error("boom");
+        return { status: "ok", tasks: [] };
+      },
       archiveResult: () => {
-        if (failing) throw new Error("boom");
+        if (archiveFailing) throw new Error("boom");
         return { status: "ok", tasks: [archivedTask()] };
       },
     });
     await flush();
-    await byClass(app.panel, "trellis-archive-header")[0].dispatch("click");
-    await flush();
-    assert.ok(textOf(app.panel).includes(i18n.en.dashboardTrellisArchivedError));
-    const retry = byClass(app.panel, "trellis-archive-retry")[0];
+    await switchToTrellis(app);
+    assert.ok(textOf(app.view).includes(i18n.en.dashboardTrellisActiveError));
+    assert.ok(textOf(app.view).includes(i18n.en.dashboardTrellisArchivedError));
+    const retry = byClass(app.view, "trellis-archive-retry")[0];
     assert.ok(retry);
 
-    failing = false;
+    archiveFailing = false;
+    activeFailing = false;
     await retry.dispatch("click");
     await flush();
     assert.equal(app.archiveCalls.length, 2);
-    assert.equal(byClass(app.panel, "trellis-archive-row").length, 1);
+    assert.equal(byClass(app.view, "trellis-archive-row").length, 1);
+    // The archive retry only heals the archive section; the active section
+    // has its own refresh behind the same ↻ affordance.
+    await byClass(app.view, "trellis-active-refresh")[0].dispatch("click");
+    await flush();
+    assert.ok(!textOf(app.view).includes(i18n.en.dashboardTrellisActiveError));
   });
 
-  it("refresh button refetches without collapsing the section", async () => {
+  it("collapses and re-expands month groups, and the refresh button refetches", async () => {
     const app = loadDashboard({
-      sessions: [bindingSession("s1", {
-        taskPath: ".trellis/tasks/t1", title: "T", phase: "execute",
-      })],
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/s1"] },
+      activeResult: { status: "ok", tasks: [] },
       archiveResult: { status: "ok", tasks: [archivedTask()] },
     });
     await flush();
-    await byClass(app.panel, "trellis-archive-header")[0].dispatch("click");
-    await flush();
-    await byClass(app.panel, "trellis-archive-refresh")[0].dispatch("click");
+    await switchToTrellis(app);
+    const month = byClass(app.view, "trellis-archive-month")[0];
+    assert.equal(month.attributes["aria-expanded"], "true", "newest month starts open");
+
+    await month.dispatch("click");
+    assert.equal(byClass(app.view, "trellis-archive-row").length, 0,
+      "collapsing the month hides its rows");
+    await byClass(app.view, "trellis-archive-month")[0].dispatch("click");
+    assert.equal(byClass(app.view, "trellis-archive-row").length, 1);
+
+    // The active section's ↻ and the archive section's ↻ are distinct
+    // buttons; pick the archive one via its extra distinguishing class.
+    const archiveRefresh = descendants(app.view).find(
+      (el) => el.classList && el.classList.contains("trellis-archive-refresh")
+        && !el.classList.contains("trellis-active-refresh")
+    );
+    await archiveRefresh.dispatch("click");
     await flush();
     assert.equal(app.archiveCalls.length, 2);
-    assert.equal(byClass(app.panel, "trellis-archive-row").length, 1,
-      "the refresh keeps the expanded rows");
-  });
-
-  it("drops the cached rows when the panel's bound cwds change", async () => {
-    const app = loadDashboard({
-      sessions: [bindingSession("s1", {
-        taskPath: ".trellis/tasks/t1", title: "T", phase: "execute",
-      })],
-      archiveResult: { status: "ok", tasks: [archivedTask()] },
-    });
-    await flush();
-    await byClass(app.panel, "trellis-archive-header")[0].dispatch("click");
-    await flush();
-    assert.equal(byClass(app.panel, "trellis-archive-row").length, 1);
-
-    // A different project's session takes over the panel: the cached rows
-    // belong to the old roots, so the section collapses back to unfetched.
-    app.pushSnapshot({ sessions: [bindingSession("s2", {
-      taskPath: ".trellis/tasks/other", title: "Other", phase: "execute",
-    }, { cwd: "/proj/s2" })], groups: [] });
-    await flush();
-    const header = byClass(app.panel, "trellis-archive-header")[0];
-    assert.equal(header.attributes["aria-expanded"], "false");
-    assert.equal(byClass(app.panel, "trellis-archive-row").length, 0);
-
-    await header.dispatch("click");
-    await flush();
-    assert.deepEqual(app.archiveCalls[app.archiveCalls.length - 1], { cwds: ["/proj/s2"] });
+    assert.equal(byClass(app.view, "trellis-archive-row").length, 1,
+      "the refresh keeps the month open");
   });
 
   it("renders coarse minute/hour durations and — for zero durations", async () => {
     const app = loadDashboard({
-      sessions: [bindingSession("s1", {
-        taskPath: ".trellis/tasks/t1", title: "T", phase: "execute",
-      })],
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/s1"] },
+      activeResult: { status: "ok", tasks: [] },
       archiveResult: { status: "ok", tasks: [
         archivedTask({ title: "Quick", durationMs: 20 * 60 * 1000 }),
         archivedTask({ title: "Hours", durationMs: 3 * 60 * 60 * 1000 }),
@@ -911,9 +1060,8 @@ describe("dashboard trellis archived section", () => {
       ] },
     });
     await flush();
-    await byClass(app.panel, "trellis-archive-header")[0].dispatch("click");
-    await flush();
-    const text = textOf(app.panel);
+    await switchToTrellis(app);
+    const text = textOf(app.view);
     assert.ok(text.includes(i18n.en.dashboardTrellisArchivedDurationMinutes.replace("{n}", "20")));
     assert.ok(text.includes(i18n.en.dashboardTrellisArchivedDurationHours.replace("{n}", "3")));
     assert.ok(text.includes("—"));

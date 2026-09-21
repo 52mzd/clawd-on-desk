@@ -434,9 +434,7 @@ Correct 聚合入 dashboard-trellis-panel.js UMD；阶段文案复用 sessionHud
 - **trusted-frame 门禁**：与 session history 同一道
   `isTrustedDashboardEvent`（sender===owner contents && mainFrame &&
   精确页面 URL），不依赖 webFrameId
-- **cwd 白名单**：cwd 必须命中 `collectLiveSessions()` 的 cwd 集合
-  （面板行本身就来自这些会话）；陌生 cwd 直接 missing，即使磁盘上
-  root 可达也不读——根永远来自会话，不来自请求
+- **cwd 三源信任面**：cwd 必须过 `isTrustedTrellisCwd()` —— live 会话 cwd ∪ 本进程正向解析过 .trellis root 的 cwd（rootCache 正向条目） ∪ 已注册项目根（persistedRoots，经 `normalizeRootPath` 规范化后比对）；陌生 cwd 直接 missing，即使磁盘上 root 可达也不读——根永远来自会话或用户显式注册，不来自请求
 - **路径遏制（双分隔符）**：taskPath 必须以 `.trellis/tasks/` 开头，且
   按 `/[\\/]/` 拆分后每段非空、非 `.`、非 `..`。**win32 的 `path.join`
   会把反斜杠段也 normalize**：`"/"`-only 拆分放行
@@ -465,7 +463,7 @@ Correct taskPath.slice(prefix).split(/[\\/]/) 后逐段拒绝
         request 冻结于 open 瞬间，签名含 request/result 才重渲染
 ```
 
-#### §4.4 归档任务列表（折叠区 + 共享遍历）
+#### §4.4 归档任务列表（独立视图 + 共享遍历）
 
 **1. Scope/Trigger**：任何「读取 `.trellis/tasks/archive/` 并呈现」的
 代码。当前实现：`src/trellis-archive.js`（共享遍历）、
@@ -483,42 +481,127 @@ Correct taskPath.slice(prefix).split(/[\\/]/) 后逐段拒绝
   跳过；completedAt 无效时 fallback 目录 mtime（仅存 completedAtMs，
   由消费方投影到自己的时区——recap 用 timeZoneId，dashboard 用
   toLocaleDateString(app lang)）
-- renderer 首次展开折叠区 → 单次 `dashboardAPI.getTrellisArchiveList(
-  {cwds})`（cwds 来自面板行绑定的 live cwd，≤16；显式 ↻ 刷新，
-  永不轮询）
-- main `readArchiveList(cwds)` → `{status:"ok", tasks:[…20]}`，
+- renderer 首次切到独立 Trellis 视图 / 显式 ↻ 刷新 → 单次
+  `dashboardAPI.getTrellisArchiveList()`（**无 payload**；根集完全
+  来自 owner，无活跃会话也能列出，永不轮询）
+- main `readArchiveList()` → `{status:"ok", tasks:[…200]}`，
   newest-first（completedAtMs 降序，null 压尾）；条目
   `{taskPath, title, createdAt, completedAt, completedAtMs, durationMs, cwd}`；
   `durationMs ≤ 0` 或缺失 → null（渲染 "—"）
 
 **3. Contracts**：
-- **cwds 白名单双门禁**：IPC 层 payload 恰为 `{cwds}`（1–16 个非空
-  string，`Object.keys` 长度=1）；owner 层每个 cwd 必须命中
-  `collectLiveSessions()` 的 cwd 集合（同 readTaskDetail）——拉取瞬间
-  刚结束的会话：其 cwd 不在 live 集 → 跳过该 root（非整包 error），
-  下次展开拿新 cwds 自愈；超 16 → IPC `invalid` / owner 空包
-- **信任模型**：roots 永远来自会话不来自请求；taskPath 是
+- **根集来自 owner（无 payload 通道）**：IPC 层无 payload（多余字段被
+  忽略，root 集不来自请求）；owner 层用 `collectKnownRootCwds()` ——
+  已注册 roots 优先 + 本进程正向解析过 root 的 cwd（cap 32），每个
+  root 经 `rootToCwd` Map 去重后只扫一次（注册根与子目录会话解析
+  同一 root 时不会双扫）。注册 root 直接 `path.join(root, ".trellis")`
+  解析——不向上搜索、不落负缓存；缺失 .trellis 的注册目录安全地
+  返回空列表
+- **信任模型**：roots 永远来自会话或用户显式注册（§4.5），不来自
+  请求；taskPath 是
   `.trellis/tasks/archive/<月>/<名>` posix 相对路径，直接走 readTaskDetail
   既有归档回退（cwd 由条目携带，无额外信任面）
-- **缓存与竞态**：模块级 `trellisArchive` 状态（expanded/loading/
-  loaded/tasks/error/cwdsKey）；面板 cwdsKey（排序后拼接）变化 →
-  全量重置 + `seq+=1`（作废 in-flight 请求）；fetch 前后 `seq+=1`
-  守卫，旧响应回来 `seq !== current` 直接丢弃——两次快速展开/
-  cwds 变化都不会渲染错包
-- **隐藏语义**：loaded 且空 → 整个折叠区隐藏（header 也不显示）；
-  loading/error/非空保持可见
+- **缓存与竞态**：模块级 `trellisView.archive` 状态（loading/
+  loaded/tasks/error/openMonths）；fetch 前后 `seq+=1`
+  守卫，旧响应回来 `seq !== current` 直接丢弃
+- **隐藏语义**：loaded 且空 → 空态文案（独立视图内仍显示区块
+  头）；loading/error/非空保持可见
 - **locale**：mtime fallback 的完成日期用 `toLocaleDateString(app lang)`，
   非 task.py 写入的原始 YYYY-MM-DD 字符串优先直接显示
 
 **4. Wrong vs Correct**：
 ```text
 Wrong   toLocaleDateString()                    // 跟系统 locale，与 UI 语言不一致
-        cwds 直接 findTrellisRoot(cwd)            // 陌生目录探测 .trellis
-        fetch 回包无 seq 守卫                       // cwds 变后旧包渲染进新项目面板
-Correct cwd ∈ collectLiveSessions() 集合，否则跳过该 root
-        cwdsKey 变化 → seq+=1 + 状态重置；回包对 seq 后才落地
+        readArchiveList(payload.cwds)              // 渲染层供 cwd → 任意目录探测 .trellis
+        fetch 回包无 seq 守卫                       // 旧包渲染进新项目视图
+Correct readArchiveList() 无参；根集来自 collectKnownRootCwds()
+        root 去重后才扫；回包对 seq 后才落地
         completedAt 原串优先；mtime fallback 日期跟 i18nPayload.lang
 ```
+
+#### §4.5 注册项目根（trellis-roots 持久化 store）
+
+**1. Scope/Trigger**：任何「让用户登记/移除一个 Trellis 项目根并跨
+重启保留」的代码。当前实现：`src/trellis-roots.js`、`src/main.js` 的
+`pickAndRegisterTrellisRoot` / `removeRegisteredTrellisRoot`、
+`src/session-ipc.js` 的 `dashboard:trellis-roots-{list,add,remove}`。
+
+**2. Signatures**：
+- `createTrellisRootsStore({ fs?, filePath?, warn? })` →
+  `{ load(), list(), add(root), remove(root) }`；默认文件
+  `~/.clawd/trellis-roots.json`，极简 JSON 字符串数组（**不足 prefs**，
+  与 roam-area.json 同层，settings schema/controller 零接触）
+- `add`/`remove` 返回 `{status: ok|duplicate|limit|invalid|not-found,
+  roots?}`；cap 64（`TRELLIS_ROOTS_MAX`）
+- `normalizeRootPath(p)`：`path.normalize` + 去尾分隔符（**不做
+  case folding**）；持久化集合的 canonical 形式
+
+**3. Contracts**：
+- **路径来源只有目录 picker**：add 通道无 payload（renderer 仅触发），
+  main 侧 `electronDialog.showOpenDialog` 选目录后经
+  `resolveProjectRoot`（向上找最近 .trellis，一次用户动作一次搜索、
+  永不缓存）解析到项目根；无 .trellis 的目录也照注册（空列表直到
+  trellis init），用户选择永不静默丢弃
+- **remove 是白名单成员删除**：store 内 `indexOf(normalized)` 命中
+  才写盘；“曾注册但已删”的路径 → `not-found` 零写盘。IPC payload
+  严格恰为 `{root: 非空 string}`（`Object.keys` 长度=1，`__proto__`
+  own-property 也会被拦）
+- **原子写**：tmp 文件（同目录 `.<name>.<pid>.tmp`，同卷）+
+  `renameSync`；仅在集合真变化时写（add 命中 duplicate / remove
+  命中 not-found 均零写盘）
+- **load 容错不回写**：损坏/非数组内容 → warn 一次、内存 roots=[]，
+  **保留原文件**；已有注册永远不会被空文件意外清掉（写路径只在
+  显式 add/remove；load 失败不触发 persist）。并发写：Electron 单
+  main 进程内 store 操作同步串行，无跨进程锁需求
+- **信任面同步**：main 每次 add/remove 成功后调
+  `activity.setPersistedRoots(store.list())`；boot 时 load 后同步一次。
+  `persistedRoots` 在 activity 内**穿越 stop()**（镜像 caller 拥有的
+  文件，不是本模块自有的缓存）
+
+**4. Tests Required**（`test/trellis-roots.test.js`）：
+- 加载规范化（尾分隔符/非字符串/重复去重）；缺失文件零写盘
+- 损坏/非数组 → 空集 + warn 一次 + 原文件保留
+- add 的 tmp+rename 原子形状；duplicate 零写盘
+- remove 已注册成员持久化；未注册零写盘；cap 64
+
+#### §4.6 独立 Trellis 视图（双视图切换 + readActiveList）
+
+**1. Scope/Trigger**：Dashboard 页内任何「与 Sessions 平级的 Trellis
+视图」代码。当前实现：`src/dashboard.html` 的 view-switch /
+`#trellisView` / `#sessionsHeaderExtras`、`src/dashboard-renderer.js` 的
+`switchDashboardView` / `renderTrellisView` / trellisView 状态、
+`src/trellis-activity.js` 的 `readActiveList`、`src/session-ipc.js` 的
+`dashboard:trellis-active-list`。
+
+**2. Signatures**：
+- `switchDashboardView("sessions"|"trellis")`：纯显示翻转（两个滚动
+  main + sessions 专属 header extras），内存态不持久化；切入 trellis
+  时一次性 `refreshTrellisView()`（roots/active/archive 三路并发拉取）
+- `readActiveList()` → `{status:"ok", tasks:[…200]}`，条目
+  `{taskPath, title, phase, progress, parent, cwd, nextStep?}`；
+  taskPath 是 snapshot 相对 posix 路径（readTaskDetail 接受）；
+  与 readArchiveList 同根集（§4.4）且同鲜 `seenRoots` 去重
+
+**3. Contracts**：
+- **quick round 强制切回**：`beginQuickRound`（所有 quick 入口：
+  onQuickIntent / quickPending）在 await 之前同步
+  `switchDashboardView("sessions")`——数字骨架渲染在 sessions 内容
+  区，任何 quick 入口都不许在 trellis 视图上画数字
+- **hidden 双守卫**：`.trellis-view[hidden] { display:none }` 静态
+  断言；sessions 侧用 `.hidden` 类（`display:none !important`）。
+  `#sessionsHeaderExtras`（quota + 会话内嵌面板）在 trellis 视图下
+  隐藏，但 `renderTrellisPanel()` 照常执行（签名防抖挡住无谓重建）
+- **每秒 render() 与视图**：`renderTrellisView()` 开头
+  `activeView !== "trellis"` 直接 return；视图签名 =
+  `{lang, roots, active, archive}` 全量 JSON（含 openMonths）
+- **会话内嵌面板保留**：活跃绑定视角（entry.trellis 聚合）仍是
+  §4.2 面板；归档浏览只在独立视图——双入口不得回潮
+
+**4. Tests Required**（`test/dashboard-trellis-panel.test.js`）：
+- 视图切换：tab 点击、header extras/content 隐藏、切回不重拉
+- quick round 在 trellis 视图上启动 → 切回 sessions（全部入口收口
+  beginQuickRound，一例即可覆盖）
+- `.trellis-view[hidden]` 静态 CSS 守卫
 
 ### 5. 失败模式
 
@@ -531,7 +614,8 @@ Correct cwd ∈ collectLiveSessions() 集合，否则跳过该 root
 | 展开后 HUD 越缩越小 | detail 行可 flex-shrink，实测回传的是被压缩值，反馈成 runaway loop | `.trellis-detail { flex: 0 0 auto }`；实测值与压缩值必须区分 |
 | Dashboard 面板隐藏后仍留空白间距 | `.trellis-panel { display:flex }` 覆盖了 UA `[hidden]` 规则 | `.trellis-panel[hidden] { display:none }` + 静态测试断言（见 §4.2） |
 | 详情卡读出 root 外文件（win32） | taskPath 只按 `/` 拆分，`a\..\..\x` 单段过检，`path.join` normalize 后越界 | 双分隔符拆分 + 逐段拒绝（见 §4.3）；两平台都要有用例 |
-| 陌生 cwd 能探测任意 .trellis | readTaskDetail 直接 findTrellisRoot(renderer 的 cwd) | cwd 必须命中 live 会话集合（见 §4.3） |
+| 陌生 cwd 能探测任意 .trellis | readTaskDetail 直接 findTrellisRoot(renderer 的 cwd) | cwd 必须过 isTrustedTrellisCwd 三源（见 §4.3）；两平台都要有用例 |
+| 独立视图活跃任务每条出现两次 | 注册根与子目录会话解析同一 root，readActiveList 无 root 去重 | seenRoots/rootToCwd 按 root 去重（§4.4/§4.6）+ 双源共享 root 回归用例 |
 
 ### 6. 测试断言点（review 必查）
 

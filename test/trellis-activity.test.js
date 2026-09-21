@@ -1371,7 +1371,7 @@ describe("trellis-activity project aggregates", () => {
 // ── archived-task list + parent link (Dashboard archive/group view) ──
 
 describe("trellis-activity readArchiveList", () => {
-  function makeArchiveHarness(sessions = new Map([["pi:arch", { agentId: "pi", cwd: CWD }]])) {
+  function makeArchiveHarness(sessions = new Map()) {
     return makeHarness({ sessions });
   }
 
@@ -1389,8 +1389,10 @@ describe("trellis-activity readArchiveList", () => {
     addArchived(h.fakeFs, "2026-09", "newer", {
       title: "Newer task", createdAt: "2026-09-18", completedAt: "2026-09-20",
     });
+    // Registered root, zero live sessions — the PRD's core browsing case.
+    h.activity.setPersistedRoots([PROJECT]);
 
-    const result = await h.activity.readArchiveList([CWD]);
+    const result = await h.activity.readArchiveList();
     assert.strictEqual(result.status, "ok");
     assert.strictEqual(result.tasks.length, 2);
     assert.deepStrictEqual(result.tasks[0], {
@@ -1400,7 +1402,7 @@ describe("trellis-activity readArchiveList", () => {
       completedAt: "2026-09-20",
       completedAtMs: Date.parse("2026-09-20"),
       durationMs: 2 * 24 * 60 * 60 * 1000,
-      cwd: CWD,
+      cwd: PROJECT,
     });
     assert.strictEqual(result.tasks[1].taskPath, ".trellis/tasks/archive/2026-08/older");
     assert.strictEqual(result.tasks[1].durationMs, 4 * 24 * 60 * 60 * 1000);
@@ -1420,41 +1422,33 @@ describe("trellis-activity readArchiveList", () => {
     addArchived(h.fakeFs, "2026-09", "aaa-same-day", {
       createdAt: "2026-09-01", completedAt: "2026-09-01",
     });
+    h.activity.setPersistedRoots([PROJECT]);
 
-    const result = await h.activity.readArchiveList([CWD]);
+    const result = await h.activity.readArchiveList();
     assert.strictEqual(result.tasks.length, 200);
     for (const task of result.tasks) {
       assert.strictEqual(task.durationMs, null, "same-day created/completed renders as —");
     }
-    // Lexical task-name order breaks ties inside one month deterministically;
-    // the newest month folder always wins over older ones.
     assert.ok(result.tasks.every((task) => task.taskPath.includes("/2026-09/")));
   });
 
-  it("ignores cwds that are not live trellis sessions and dedupes roots", async () => {
-    const h = makeArchiveHarness();
+  it("ignores unregistered paths and dedupes roots across sources", async () => {
+    const h = makeArchiveHarness(new Map([["pi:live", { agentId: "pi", cwd: CWD }]]));
     addArchived(h.fakeFs, "2026-09", "one", {
       title: "One", createdAt: "2026-09-01", completedAt: "2026-09-02",
     });
 
-    // Not a live session cwd → filtered before any root resolution.
-    const stranger = await h.activity.readArchiveList(["/somewhere/else"]);
-    assert.deepStrictEqual(stranger, { status: "ok", tasks: [] });
+    // No registration and no resolved root yet → nothing to scan.
+    assert.deepStrictEqual(await h.activity.readArchiveList(), { status: "ok", tasks: [] });
 
-    // Two cwds in the same project resolve one root → one entry, not two.
-    const nested = path.join(CWD, "sub");
-    h.sessions.set("pi:nested", { agentId: "pi", cwd: nested });
-    const result = await h.activity.readArchiveList([CWD, nested, "/somewhere/else"]);
+    // A polling round resolves the live session's cwd into the same root a
+    // registration would name — both sources dedupe into one entry.
+    h.activity.setPersistedRoots([PROJECT]);
+    h.activity.start();
+    await h.timers.runDue();
+    const result = await h.activity.readArchiveList();
     assert.strictEqual(result.tasks.length, 1);
     assert.strictEqual(result.tasks[0].title, "One");
-
-    // Malformed input degrades to an empty list, never an error.
-    assert.deepStrictEqual(await h.activity.readArchiveList(null), { status: "ok", tasks: [] });
-    assert.deepStrictEqual(await h.activity.readArchiveList([]), { status: "ok", tasks: [] });
-    assert.deepStrictEqual(
-      await h.activity.readArchiveList(new Array(17).fill(CWD)),
-      { status: "ok", tasks: [] },
-    );
   });
 
   it("falls back to the archive mtime for completion order and labels", async () => {
@@ -1463,8 +1457,9 @@ describe("trellis-activity readArchiveList", () => {
       title: "Moved by hand", createdAt: "2026-09-10", completedAt: null,
     });
     h.fakeFs.setMtime(noDate, Date.parse("2026-09-22T10:00:00Z"));
+    h.activity.setPersistedRoots([PROJECT]);
 
-    const result = await h.activity.readArchiveList([CWD]);
+    const result = await h.activity.readArchiveList();
     assert.strictEqual(result.tasks.length, 1);
     const task = result.tasks[0];
     assert.strictEqual(task.completedAt, null);
@@ -1472,6 +1467,132 @@ describe("trellis-activity readArchiveList", () => {
     // createdAt is a UTC-midnight date string, the mtime fallback is an
     // exact instant, so the coarse duration keeps the extra 10 hours.
     assert.strictEqual(task.durationMs, 12 * 24 * 60 * 60 * 1000 + 10 * 60 * 60 * 1000);
+  });
+});
+
+describe("trellis-activity persisted-root trust surface", () => {
+  it("readTaskDetail serves a registered root with no live session and rejects strangers", async () => {
+    const h = makeHarness();
+    addTask(h.fakeFs, "09-21-reg", {
+      title: "Registered", status: "in_progress", subtasks: [],
+    }, { prd: true });
+    h.activity.setPersistedRoots([CWD]);
+
+    const ok = await h.activity.readTaskDetail(CWD, ".trellis/tasks/09-21-reg");
+    assert.strictEqual(ok.status, "ok");
+    assert.strictEqual(ok.task.title, "Registered");
+
+    const stranger = await h.activity.readTaskDetail("/somewhere/else", ".trellis/tasks/09-21-reg");
+    assert.deepStrictEqual(stranger, { status: "missing" });
+  });
+
+  it("readTaskDetail keeps serving a cwd after its session ended (positive root cache)", async () => {
+    const h = makeHarness({
+      sessions: new Map([["pi:gone", { agentId: "pi", cwd: CWD }]]),
+    });
+    addTask(h.fakeFs, "09-21-gone", {
+      title: "Gone", status: "in_progress", subtasks: [],
+    }, { prd: true });
+    h.activity.start();
+    await h.timers.runDue();
+    h.sessions.clear(); // the session ended; the positive root cache remains
+
+    const result = await h.activity.readTaskDetail(CWD, ".trellis/tasks/09-21-gone");
+    assert.strictEqual(result.status, "ok");
+    assert.strictEqual(result.task.title, "Gone");
+  });
+
+  it("setPersistedRoots accepts only string entries", () => {
+    const h = makeHarness();
+    h.activity.setPersistedRoots([CWD, 42, null, "", " / "]);
+    // 42/null/"" are skipped; " / " trims to "/" (a valid normalized path).
+    return h.activity.readArchiveList().then((result) => {
+      assert.strictEqual(result.status, "ok");
+    });
+  });
+});
+
+describe("trellis-activity readActiveList", () => {
+  it("lists non-archived tasks of registered roots without any live session", async () => {
+    const h = makeHarness();
+    addTask(h.fakeFs, "09-21-plan", {
+      title: "Planning", status: "planning", subtasks: [],
+    }, { prd: true });
+    addTask(h.fakeFs, "09-21-run", {
+      title: "Running", status: "in_progress", parent: "09-21-plan", subtasks: [
+        { status: "completed" },
+        { status: "pending" },
+      ],
+    }, { implementMd: "- [x] one\n- [ ] two\n" });
+    addTask(h.fakeFs, "09-21-done", {
+      title: "Finished", status: "completed", subtasks: [],
+    }, { prd: true });
+    // No task.json → skipped; the archive dir is not a task.
+    h.fakeFs.add(path.join(PROJECT, ".trellis", "tasks", "archive", "2026-09", "x", "keep"), "");
+    h.activity.setPersistedRoots([PROJECT]);
+
+    const result = await h.activity.readActiveList();
+    assert.strictEqual(result.status, "ok");
+    assert.strictEqual(result.tasks.length, 3);
+    const byName = new Map(result.tasks.map((task) => [task.title, task]));
+    assert.deepStrictEqual(byName.get("Planning"), {
+      taskPath: ".trellis/tasks/09-21-plan",
+      title: "Planning",
+      phase: "plan",
+      progress: null,
+      parent: null,
+      cwd: PROJECT,
+    });
+    const running = byName.get("Running");
+    assert.strictEqual(running.phase, "execute");
+    assert.deepStrictEqual(running.progress, { done: 1, total: 2 });
+    assert.strictEqual(running.parent, "09-21-plan");
+    assert.strictEqual(byName.get("Finished").phase, "finish");
+    assert.deepStrictEqual(h.fakeFs.writeOps, [], "active reads stay read-only");
+  });
+
+  it("includes session-resolved roots and stays empty without any root", async () => {
+    const h = makeHarness({
+      sessions: new Map([["pi:live", { agentId: "pi", cwd: CWD }]]),
+    });
+    addTask(h.fakeFs, "09-21-live", {
+      title: "Live", status: "in_progress", subtasks: [],
+    }, { prd: true });
+
+    // No registration, no polling yet → nothing to scan.
+    assert.deepStrictEqual(await h.activity.readActiveList(), { status: "ok", tasks: [] });
+
+    h.activity.start();
+    await h.timers.runDue(); // resolves the live cwd into the positive root cache
+    const result = await h.activity.readActiveList();
+    assert.strictEqual(result.tasks.length, 1);
+    assert.strictEqual(result.tasks[0].title, "Live");
+  });
+
+  it("lists a root's tasks once when a registration and a sub-directory session share it", async () => {
+    // Session works in a deep sub-directory, the user registers the project
+    // root itself: both sources resolve the same root, and the list must not
+    // double every task (readArchiveList's rootToCwd dedupe, active twin).
+    const h = makeHarness({
+      sessions: new Map([[
+        "pi:sub",
+        { agentId: "pi", cwd: path.join(CWD, "packages", "x") },
+      ]]),
+    });
+    addTask(h.fakeFs, "09-21-sub", {
+      title: "Sub", status: "in_progress", subtasks: [],
+    }, { prd: true });
+
+    h.activity.start();
+    await h.timers.runDue(); // warms rootCache[sub-cwd] → PROJECT/.trellis
+    h.activity.setPersistedRoots([PROJECT]);
+
+    const result = await h.activity.readActiveList();
+    assert.strictEqual(result.tasks.length, 1);
+    assert.strictEqual(result.tasks[0].title, "Sub");
+    assert.strictEqual(result.tasks[0].cwd, PROJECT,
+      "the registered root wins the representative cwd");
+    assert.deepStrictEqual(h.fakeFs.writeOps, []);
   });
 });
 

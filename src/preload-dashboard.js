@@ -78,7 +78,11 @@ contextBridge.exposeInMainWorld("dashboardAPI", {
   getSessionHistory: () => ipcRenderer.invoke("dashboard:get-session-history"),
   resumeSession: (payload) => ipcRenderer.invoke("dashboard:resume-session", payload),
   getTrellisTaskDetail: (payload) => ipcRenderer.invoke("dashboard:trellis-task-detail", payload),
-  getTrellisArchiveList: (payload) => ipcRenderer.invoke("dashboard:trellis-archive-list", payload),
+  getTrellisArchiveList: () => ipcRenderer.invoke("dashboard:trellis-archive-list"),
+  getTrellisActiveList: () => ipcRenderer.invoke("dashboard:trellis-active-list"),
+  listTrellisRoots: () => ipcRenderer.invoke("dashboard:trellis-roots-list"),
+  addTrellisRoot: () => ipcRenderer.invoke("dashboard:trellis-roots-add"),
+  removeTrellisRoot: (root) => ipcRenderer.invoke("dashboard:trellis-roots-remove", { root }),
   ackCompletion: (sessionId) => ipcRenderer.invoke("session:ack-completion", sessionId),
   onSessionSnapshot: (cb) => {
     if (typeof cb !== "function") return () => {};

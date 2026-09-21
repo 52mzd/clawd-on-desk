@@ -34,6 +34,7 @@
 const path = require("path");
 const { parseImplementChecklist, truncateNextStep } = require("./trellis-checklist");
 const { listArchivedTasks } = require("./trellis-archive");
+const { normalizeRootPath } = require("./trellis-roots");
 const {
   sessionPointerKey,
   trellisPlatformFor,
@@ -93,6 +94,11 @@ function createTrellisActivity(options) {
   // Absolute .trellis root → { count, activeTasks, computedAt } (per-root
   // summary cache: parallelCount + the Settings active-task digest).
   const parallelCache = new Map();
+  // User-registered project roots (Dashboard Trellis view → directory
+  // picker), normalized project-root paths — NOT `.trellis` dirs. They join
+  // the trust surface of readTaskDetail / readArchiveList / readActiveList
+  // so registered projects stay browsable with no live session at all.
+  const persistedRoots = new Set();
   // Project aggregates for the pet visual (avatar R3/R3.1): total executing
   // tasks across roots that still have a bound live session, and whether any
   // bound task is in the planning phase. Both are rewritten from the same
@@ -146,6 +152,8 @@ function createTrellisActivity(options) {
     parallelCache.clear();
     executingCount = 0;
     planningActive = false;
+    // persistedRoots survives stop(): it mirrors a file the caller owns,
+    // not a cache this module owns.
     return wasStarted;
   }
 
@@ -238,6 +246,73 @@ function createTrellisActivity(options) {
     } catch {
       return { corrupt: true };
     }
+  }
+
+  // ── trust surface + known-root collection ──
+
+  // Replace the user-registered root set (main calls this after loading or
+  // mutating the roots store). Normalized project roots; a cwd equal to a
+  // registered project root (or one that positively resolved a .trellis
+  // root earlier in this process) is trusted for the on-demand reads.
+  function setPersistedRoots(cwds) {
+    persistedRoots.clear();
+    for (const cwd of Array.isArray(cwds) ? cwds : []) {
+      if (typeof cwd === "string" && cwd.trim()) {
+        persistedRoots.add(normalizeRootPath(cwd));
+      }
+    }
+  }
+
+  // Trusted cwd for the on-demand reads (PRD: roots come from "a session
+  // resolved it" ∪ "persisted registration"). Live cwds keep the panel's
+  // current behavior; a positively-resolved historical cwd keeps archived
+  // rows openable after their session ended; persisted roots cover projects
+  // no session ever touched.
+  function isTrustedTrellisCwd(cwd) {
+    if (typeof cwd !== "string" || !cwd.trim()) return false;
+    for (const session of collectLiveSessions()) {
+      if (session.cwd === cwd) return true;
+    }
+    if (persistedRoots.has(normalizeRootPath(cwd))) return true;
+    const cached = rootCache.get(cwd);
+    return Boolean(cached && cached.root);
+  }
+
+  // Registered roots first, then cwds that positively resolved a .trellis
+  // root this process, capped so a one-shot scan stays bounded.
+  const KNOWN_ROOTS_MAX = 32;
+
+  function collectKnownRootCwds() {
+    const out = [...persistedRoots];
+    for (const [cwd, entry] of rootCache) {
+      if (entry && entry.root && !out.includes(cwd)) out.push(cwd);
+    }
+    return out.slice(0, KNOWN_ROOTS_MAX);
+  }
+
+  // A registered project root resolves directly — no upward search, no
+  // negative-TTL cache: the user picked this exact directory, and a missing
+  // .trellis simply answers empty lists (harmless) until they init one.
+  function persistedRootDir(cwd) {
+    return path.join(normalizeRootPath(cwd), ".trellis");
+  }
+
+  // Upward .trellis search for the add-root flow: returns the project root
+  // (parent of the .trellis dir) nearest to `dir`, or null when the picked
+  // directory has no .trellis at or above it. Mirrors findTrellisRoot's
+  // climb but is never cached — it runs once per explicit user action.
+  async function resolveProjectRoot(dir) {
+    if (typeof dir !== "string" || !dir.trim()) return null;
+    let cur = path.normalize(dir);
+    for (let depth = 0; depth < ROOT_SEARCH_MAX_DEPTH; depth++) {
+      const candidate = path.join(cur, ".trellis");
+      const st = await statQuiet(candidate);
+      if (st && st.isDirectory()) return cur;
+      const parent = path.dirname(cur);
+      if (parent === cur) break;
+      cur = parent;
+    }
+    return null;
   }
 
   // ── per-round pipeline ──
@@ -662,12 +737,12 @@ function createTrellisActivity(options) {
     if (typeof taskPath !== "string" || !taskPath.startsWith(TASK_DETAIL_PREFIX)) {
       return { status: "missing" };
     }
-    // Only a cwd that a live trellis-capable session is actually working in
-    // may resolve a root. Panel rows are built from exactly those sessions,
-    // so a compromised renderer cannot probe .trellis trees no session ever
-    // touched (roots come from sessions, never from the request itself).
-    const liveCwds = new Set(collectLiveSessions().map((session) => session.cwd));
-    if (!liveCwds.has(cwd)) return { status: "missing" };
+    // Only a cwd a live trellis-capable session is working in, one that
+    // resolved a .trellis root earlier in this process, or a registered
+    // project root may resolve a root. Rows are built from exactly those
+    // sources, so a compromised renderer cannot probe .trellis trees no
+    // session ever touched and no user ever registered.
+    if (!isTrustedTrellisCwd(cwd)) return { status: "missing" };
     // Split on BOTH separators before validating: on win32 path.join
     // normalizes backslash segments too, so a "/"-only split would let
     // ".trellis/tasks/a\..\..\x" join outside the root.
@@ -731,33 +806,28 @@ function createTrellisActivity(options) {
   }
 
   // On-demand read of the most recently archived tasks for the Dashboard's
-  // collapsed "Archived" section: same trust model as readTaskDetail — the
-  // renderer only supplies cwds of live trellis-capable sessions, each one
-  // resolves (and de-duplicates) a .trellis root, and the shared archive
-  // traversal (src/trellis-archive.js, also the recap's) does the reading.
-  // Never scheduled, never cached: every call is a fresh one-shot scan.
+  // independent Trellis view. The data source is the known-root set
+  // (registered roots + cwds that positively resolved a .trellis root this
+  // process), so browsing works with no live session at all. Never
+  // scheduled, never cached: every call is a fresh one-shot scan.
   //
   // Returns { status: "ok", tasks } newest completed first (capped for the
-  // month-grouped browser view; recap already scans the same dirs in full),
-  // each entry an IPC/JSON-safe object:
+  // month-grouped browser view), each entry an IPC/JSON-safe object:
   //   { taskPath, title, createdAt, completedAt, completedAtMs, durationMs, cwd }
   // taskPath is the archive-relative posix path readTaskDetail accepts;
-  // cwd is a live session cwd that resolved the same root, so opening the
-  // detail card needs no extra trust surface.
+  // cwd is a trusted cwd (registered root or session-resolved cwd) that
+  // resolved the same root, so opening the detail card needs no extra
+  // trust surface.
   const ARCHIVE_LIST_MAX = 200;
-  const ARCHIVE_LIST_MAX_CWDS = 16;
 
-  async function readArchiveList(cwds) {
-    if (!Array.isArray(cwds) || cwds.length === 0 || cwds.length > ARCHIVE_LIST_MAX_CWDS) {
-      return { status: "ok", tasks: [] };
-    }
-    // Same live-cwd whitelist as readTaskDetail: roots come from sessions,
-    // never from the request itself.
-    const liveCwds = new Set(collectLiveSessions().map((session) => session.cwd));
+  async function readArchiveList() {
     const rootToCwd = new Map();
-    for (const cwd of cwds) {
-      if (typeof cwd !== "string" || !cwd.trim()) continue;
-      if (!liveCwds.has(cwd)) continue;
+    for (const cwd of collectKnownRootCwds()) {
+      if (persistedRoots.has(normalizeRootPath(cwd))) {
+        const root = persistedRootDir(cwd);
+        if (!rootToCwd.has(root)) rootToCwd.set(root, cwd);
+        continue;
+      }
       const root = await findTrellisRoot(cwd);
       if (root && !rootToCwd.has(root)) rootToCwd.set(root, cwd);
     }
@@ -795,6 +865,53 @@ function createTrellisActivity(options) {
     return { status: "ok", tasks };
   }
 
+  // On-demand read of the non-archived tasks under every known root for
+  // the Dashboard's independent Trellis view: a project-centric list that
+  // (unlike the session panel) includes tasks no live session is bound to.
+  // Same trust model as readArchiveList — the root set comes from this
+  // module, never from the request. One shot per call, never cached.
+  //
+  // Returns { status: "ok", tasks }, each entry IPC/JSON-safe:
+  //   { taskPath, title, phase, progress: {done,total}|null, parent: string|null, cwd }
+  // taskPath is the snapshot-relative posix path readTaskDetail accepts;
+  // cwd is the trusted cwd that owns the task's root.
+  const ACTIVE_LIST_MAX = 200;
+
+  async function readActiveList() {
+    const tasks = [];
+    // One cwd per root: a registered project root and a session cwd deep
+    // inside it both resolve the same root — without this guard each task
+    // would be listed once per source (readArchiveList's rootToCwd twin).
+    const seenRoots = new Set();
+    for (const cwd of collectKnownRootCwds()) {
+      const isPersisted = persistedRoots.has(normalizeRootPath(cwd));
+      const root = isPersisted ? persistedRootDir(cwd) : await findTrellisRoot(cwd);
+      if (!root) continue;
+      if (seenRoots.has(root)) continue;
+      seenRoots.add(root);
+      const projectRoot = path.dirname(root);
+      const entries = await readdirQuiet(path.join(root, "tasks"));
+      if (!entries) continue;
+      for (const entry of entries) {
+        if (entry === "archive") continue;
+        const info = await readTaskInfo(root, path.join(root, "tasks", entry));
+        if (!info) continue;
+        const task = {
+          taskPath: toPosix(path.relative(projectRoot, info.dir)),
+          title: info.title,
+          phase: info.phase,
+          progress: info.progress,
+          parent: typeof info.parent === "string" ? info.parent : null,
+          cwd,
+        };
+        if (info.nextStep) task.nextStep = info.nextStep;
+        tasks.push(task);
+      }
+      if (tasks.length >= ACTIVE_LIST_MAX) break;
+    }
+    return { status: "ok", tasks: tasks.slice(0, ACTIVE_LIST_MAX) };
+  }
+
   // Roots whose .trellis directory was resolved from a live session cwd
   // during this process. Positive lookups are cached forever (a cwd does not
   // move its .trellis root), so a project worked on earlier today still
@@ -828,8 +945,11 @@ function createTrellisActivity(options) {
     getKnownRoots,
     getExecutingCount,
     hasPlanningBinding,
+    setPersistedRoots,
+    resolveProjectRoot,
     readTaskDetail,
     readArchiveList,
+    readActiveList,
   };
 }
 

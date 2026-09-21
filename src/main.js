@@ -94,6 +94,7 @@ const createSettingsEffectRouter = require("./settings-effect-router");
 const { createRecapRuntime } = require("./recap-runtime");
 const { computeTrellisDailyCounts } = require("./recap-trellis");
 const { createTrellisActivity } = require("./trellis-activity");
+const { createTrellisRootsStore } = require("./trellis-roots");
 const { createTrellisCelebration } = require("./trellis-celebration");
 const { createTrellisBubble, TRELLIS_BUBBLE_DIMENSIONS } = require("./trellis-bubble");
 const { createKimiQuotaClient } = require("./kimi-quota-client");
@@ -2606,6 +2607,65 @@ _trellisActivity = createTrellisActivity({
   }),
 });
 _trellisActivity.start();
+
+// Registered Trellis project roots (Dashboard Trellis view): a tiny file
+// store under ~/.clawd, deliberately outside prefs. Loaded once at boot;
+// every add/remove keeps the activity's trust surface in sync.
+const _trellisRootsStore = createTrellisRootsStore({ warn: (message) => console.warn(message) });
+_trellisRootsStore.load();
+
+function syncTrellisPersistedRoots() {
+  if (_trellisActivity && typeof _trellisActivity.setPersistedRoots === "function") {
+    _trellisActivity.setPersistedRoots(_trellisRootsStore.list());
+  }
+}
+syncTrellisPersistedRoots();
+
+// Directory picker for the Trellis view's "Add project root": the path is
+// chosen in a native dialog and resolved towards the nearest .trellis here
+// in main — the renderer only ever triggers, never supplies a path.
+async function pickAndRegisterTrellisRoot() {
+  const parent = _dashboard && typeof _dashboard.getWindow === "function"
+    ? _dashboard.getWindow()
+    : null;
+  let picked;
+  try {
+    const result = await electronDialog.showOpenDialog(
+      parent && typeof parent.isDestroyed === "function" && !parent.isDestroyed() ? parent : null,
+      { properties: ["openDirectory"] }
+    );
+    picked = result && !result.canceled && Array.isArray(result.filePaths) && result.filePaths.length
+      ? result.filePaths[0]
+      : null;
+  } catch {
+    picked = null;
+  }
+  if (typeof picked !== "string" || !picked.trim()) return { status: "cancelled" };
+  // A sub-directory pick resolves to the project that owns the nearest
+  // .trellis; a directory without one registers as-is (empty until trellis
+  // init) so the user's explicit choice is never silently dropped.
+  let projectRoot = null;
+  try {
+    projectRoot = await _trellisActivity.resolveProjectRoot(picked);
+  } catch {
+    projectRoot = null;
+  }
+  const outcome = _trellisRootsStore.add(projectRoot || picked);
+  if (outcome.status !== "ok" && outcome.status !== "duplicate") {
+    return { status: outcome.status };
+  }
+  syncTrellisPersistedRoots();
+  return { status: "ok", roots: _trellisRootsStore.list() };
+}
+
+function removeRegisteredTrellisRoot(root) {
+  // Only an already-registered member may be removed — a renderer-supplied
+  // string that never matched a registration is simply invalid.
+  const outcome = _trellisRootsStore.remove(root);
+  if (outcome.status !== "ok") return { status: outcome.status };
+  syncTrellisPersistedRoots();
+  return { status: "ok", roots: _trellisRootsStore.list() };
+}
 
 displayedVisualProjection = createDisplayedVisualProjection({
   projectActualFile: ({ actualFile, requested }) => {
@@ -5265,11 +5325,20 @@ registerSessionIpc({
     }
     return _trellisActivity.readTaskDetail(payload.cwd, payload.taskPath);
   },
-  getTrellisArchiveList: (payload) => {
+  getTrellisArchiveList: () => {
     if (!_trellisActivity || typeof _trellisActivity.readArchiveList !== "function") {
       return { status: "error", message: "trellis-activity-unavailable" };
     }
-    return _trellisActivity.readArchiveList(payload.cwds);
+    return _trellisActivity.readArchiveList();
+  },
+  listTrellisRoots: () => ({ status: "ok", roots: _trellisRootsStore.list() }),
+  addTrellisRoot: () => pickAndRegisterTrellisRoot(),
+  removeTrellisRoot: (root) => removeRegisteredTrellisRoot(root),
+  getTrellisActiveList: () => {
+    if (!_trellisActivity || typeof _trellisActivity.readActiveList !== "function") {
+      return { status: "error", message: "trellis-activity-unavailable" };
+    }
+    return _trellisActivity.readActiveList();
   },
   showDashboard: (options) => showDashboard(options),
   setSessionHudTrellisDetailHeight: (px) => {

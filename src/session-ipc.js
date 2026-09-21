@@ -52,6 +52,16 @@ function registerSessionIpc(options = {}) {
     options.getTrellisArchiveList,
     "getTrellisArchiveList"
   );
+  const listTrellisRoots = requiredDependency(options.listTrellisRoots, "listTrellisRoots");
+  const addTrellisRoot = requiredDependency(options.addTrellisRoot, "addTrellisRoot");
+  const removeTrellisRoot = requiredDependency(
+    options.removeTrellisRoot,
+    "removeTrellisRoot"
+  );
+  const getTrellisActiveList = requiredDependency(
+    options.getTrellisActiveList,
+    "getTrellisActiveList"
+  );
   const quickMode = options.quickMode || null;
   const disposers = [];
 
@@ -166,13 +176,30 @@ function registerSessionIpc(options = {}) {
     return getTrellisTaskDetail(payload);
   });
 
-  // One-shot on-demand scan of the archive folders behind the live trellis
-  // roots — same trusted-frame gate and strict payload shape as the detail
-  // read above. The renderer sends the cwds of the sessions currently bound
-  // to trellis tasks; each cwd is re-verified live in the owner, so a stale
-  // or forged list can never widen the scan beyond observed projects.
-  // 16 matches ARCHIVE_LIST_MAX_CWDS in src/trellis-activity.js.
-  handle("dashboard:trellis-archive-list", (event, payload) => {
+  // One-shot on-demand scan of the archive folders behind the known
+  // trellis roots (registered roots + session-resolved roots) — same
+  // trusted-frame gate as the detail read. No payload: the root set comes
+  // from the owner, never from the renderer, so browsing works with no
+  // live session at all.
+  handle("dashboard:trellis-archive-list", (event) => {
+    const rejected = rejectUntrustedDashboardEvent(event);
+    return rejected || getTrellisArchiveList();
+  });
+
+  // Registered project roots for the Dashboard's independent Trellis view.
+  // list is a pure memory read; add opens the main-side directory picker
+  // (the renderer never supplies a path); remove only accepts a string that
+  // is already a registered member — all three restricted to the trusted
+  // Dashboard frame.
+  handle("dashboard:trellis-roots-list", (event) => {
+    const rejected = rejectUntrustedDashboardEvent(event);
+    return rejected || listTrellisRoots();
+  });
+  handle("dashboard:trellis-roots-add", (event) => {
+    const rejected = rejectUntrustedDashboardEvent(event);
+    return rejected || addTrellisRoot(event);
+  });
+  handle("dashboard:trellis-roots-remove", (event, payload) => {
     const rejected = rejectUntrustedDashboardEvent(event);
     if (rejected) return rejected;
     const keys = payload && typeof payload === "object" && !Array.isArray(payload)
@@ -180,15 +207,21 @@ function registerSessionIpc(options = {}) {
       : [];
     if (
       keys.length !== 1
-      || keys[0] !== "cwds"
-      || !Array.isArray(payload.cwds)
-      || payload.cwds.length === 0
-      || payload.cwds.length > 16
-      || payload.cwds.some((cwd) => typeof cwd !== "string" || !cwd)
+      || keys[0] !== "root"
+      || typeof payload.root !== "string"
+      || !payload.root
     ) {
       return { status: "invalid" };
     }
-    return getTrellisArchiveList({ cwds: payload.cwds });
+    return removeTrellisRoot(payload.root);
+  });
+
+  // One-shot on-demand read of the non-archived tasks under the known
+  // trellis roots — same trusted-frame gate; the root set lives in the
+  // owner, so this channel takes no payload either.
+  handle("dashboard:trellis-active-list", (event) => {
+    const rejected = rejectUntrustedDashboardEvent(event);
+    return rejected || getTrellisActiveList();
   });
 
   handle("dashboard:set-session-alias", (_event, payload) => setSessionAlias(payload));
