@@ -14,8 +14,8 @@ body:
     id: clawd-version
     attributes:
       label: "Clawd on Desk version"
-      description: "For example: v0.16.0, or the commit SHA when running from source."
-      placeholder: "v0.16.0"
+      description: "Provide the installed version, or the commit SHA when running from source."
+      placeholder: "Version or commit SHA"
     validations:
       required: true
 
@@ -25,6 +25,18 @@ body:
       label: "Operating system and architecture"
       description: "Include the OS version and architecture when known."
       placeholder: "Windows 11 24H2 x64 / macOS 15 arm64 / Ubuntu 24.04 x64"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: run-mode
+    attributes:
+      label: "Installation / run mode"
+      options:
+        - "Packaged release"
+        - "From source"
+        - "Other"
+        - "Not sure"
     validations:
       required: true
 
@@ -55,6 +67,12 @@ body:
       description: "What should have happened instead?"
     validations:
       required: true
+
+  - type: input
+    id: last-known-working
+    attributes:
+      label: "Last known working version"
+      description: "Optional. If this is a regression, provide the last Clawd version or commit where it worked."
 
   - type: textarea
     id: evidence

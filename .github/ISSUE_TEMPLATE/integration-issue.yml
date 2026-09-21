@@ -23,15 +23,17 @@ body:
     id: integration-version
     attributes:
       label: "Agent / integration version"
-      description: "Provide the exact version when available."
-      placeholder: "0.123.0"
+      description: "Provide the exact version when available. Enter \"unknown\" if you cannot determine it."
+      placeholder: "Exact version or unknown"
+    validations:
+      required: true
 
   - type: input
     id: clawd-version
     attributes:
       label: "Clawd on Desk version"
-      description: "For example: v0.16.0, or the commit SHA when running from source."
-      placeholder: "v0.16.0"
+      description: "Provide the installed version, or the commit SHA when running from source."
+      placeholder: "Version or commit SHA"
     validations:
       required: true
 
@@ -67,7 +69,6 @@ body:
         - "Session identity or lifecycle"
         - "Notifications / completion"
         - "Terminal or editor focus"
-        - "Remote SSH / WSL"
         - "Other"
     validations:
       required: true
@@ -98,6 +99,12 @@ body:
       label: "Expected behavior"
     validations:
       required: true
+
+  - type: input
+    id: last-known-working
+    attributes:
+      label: "Last known working version"
+      description: "Optional. If this is a regression, provide the last Clawd or integration version where it worked."
 
   - type: textarea
     id: evidence

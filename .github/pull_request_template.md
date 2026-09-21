@@ -15,7 +15,7 @@ verification, and scope rather than merely adding more headings.
 
 ## Summary
 
-<!-- What problem or goal does this PR address, and what is the resulting behavior? -->
+<!-- What problem or goal does this PR address, and what is the resulting behavior? Link relevant issues when applicable: Closes #123 / Related to #123. -->
 
 ## What changed
 
@@ -23,7 +23,7 @@ verification, and scope rather than merely adding more headings.
 
 ## Validation
 
-<!-- List checks actually performed and their results. Call out material limitations, manual/environment-specific verification, and anything not tested. -->
+<!-- List checks actually performed and their results. Call out material limitations, manual/environment-specific verification, and anything not tested. For user-visible UI changes, include screenshots or a short recording when useful. -->
 
 ## Scope control
 
