@@ -4,6 +4,7 @@ const { canOfferLocalFolder, focusUnavailableReasonKey } = globalThis.ClawdSessi
 const {
   aggregateTrellisTasks,
   groupTrellisTasks,
+  groupTrellisArchiveByMonth,
   TRELLIS_PHASE_BADGE,
 } = globalThis.ClawdDashboardTrellisPanel;
 
@@ -1115,6 +1116,8 @@ const trellisArchive = {
   tasks: [],
   error: false,
   cwdsKey: "",
+  // null = all month groups collapsed; a Set of open month keys otherwise.
+  openMonths: null,
 };
 
 function computeTrellisPanelSignature(tasks, archiveCwdsKey) {
@@ -1128,6 +1131,7 @@ function computeTrellisPanelSignature(tasks, archiveCwdsKey) {
       loading: trellisArchive.loading,
       loaded: trellisArchive.loaded,
       error: trellisArchive.error,
+      openMonths: trellisArchive.openMonths ? [...trellisArchive.openMonths].sort() : null,
       tasks: trellisArchive.tasks,
     },
   });
@@ -1254,6 +1258,7 @@ function renderTrellisPanel() {
     trellisArchive.loaded = false;
     trellisArchive.tasks = [];
     trellisArchive.error = false;
+    trellisArchive.openMonths = null;
   }
   const signature = computeTrellisPanelSignature(tasks, archiveCwdsKey);
   if (signature === lastTrellisPanelSignature) return;
@@ -1335,6 +1340,12 @@ async function loadTrellisArchive(cwds) {
     trellisArchive.tasks = result.tasks;
     trellisArchive.loaded = true;
     trellisArchive.error = false;
+    // First successful load: open the newest month by default so rows are
+    // immediately visible; older months stay collapsed behind their headers.
+    if (trellisArchive.openMonths === null && trellisArchive.tasks.length) {
+      const groups = groupTrellisArchiveByMonth(trellisArchive.tasks);
+      if (groups.length) trellisArchive.openMonths = new Set([groups[0].month]);
+    }
   } else {
     trellisArchive.error = true;
   }
@@ -1469,7 +1480,42 @@ function buildTrellisArchiveSection(cwds) {
       });
       body.appendChild(retry);
     } else {
-      for (const task of trellisArchive.tasks) body.appendChild(createTrellisArchiveRow(task));
+      // Month-grouped browser: collapsed groups show just the header
+      // ("2026-09 · 12"), expanding reveals that month's rows. This keeps
+      // a 200-task archive navigable without an unbounded flat list.
+      const groups = groupTrellisArchiveByMonth(trellisArchive.tasks);
+      for (const group of groups) {
+        const monthKey = group.month || "";
+        const isOpen = trellisArchive.openMonths !== null && trellisArchive.openMonths.has(monthKey);
+        const monthHeader = document.createElement("button");
+        monthHeader.type = "button";
+        monthHeader.className = "trellis-archive-month";
+        monthHeader.setAttribute("aria-expanded", isOpen ? "true" : "false");
+        monthHeader.appendChild(createText(
+          "span",
+          "trellis-archive-caret",
+          isOpen ? "▾" : "▸"
+        ));
+        monthHeader.appendChild(createText(
+          "span",
+          "trellis-archive-month-label",
+          `${monthKey || t("dashboardTrellisArchivedUnknownMonth")} · ${group.tasks.length}`
+        ));
+        monthHeader.addEventListener("click", () => {
+          if (trellisArchive.openMonths === null) trellisArchive.openMonths = new Set();
+          if (trellisArchive.openMonths.has(monthKey)) {
+            trellisArchive.openMonths.delete(monthKey);
+          } else {
+            trellisArchive.openMonths.add(monthKey);
+          }
+          lastTrellisPanelSignature = null;
+          renderTrellisPanel();
+        });
+        body.appendChild(monthHeader);
+        if (isOpen) {
+          for (const task of group.tasks) body.appendChild(createTrellisArchiveRow(task));
+        }
+      }
     }
     section.appendChild(body);
   }

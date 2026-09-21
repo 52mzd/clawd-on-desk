@@ -168,5 +168,23 @@
     return rows;
   }
 
-  return { aggregateTrellisTasks, groupTrellisTasks, TRELLIS_PHASE_BADGE, normalizeProgress };
+  // Archive rows come back newest-completed-first (readArchiveList order).
+  // Group them by the month segment of taskPath ("2026-09/<name>"), months
+  // sorted descending (string compare matches YYYY-MM), preserving the
+  // incoming order inside each month. Unknown shapes (no slash / empty
+  // month) collect under "" and render after real months.
+  function groupTrellisArchiveByMonth(tasks) {
+    const list = Array.isArray(tasks) ? tasks.filter((task) => task && typeof task.taskPath === "string") : [];
+    const byMonth = new Map();
+    for (const task of list) {
+      const slash = task.taskPath.indexOf("/");
+      const month = slash > 0 ? task.taskPath.slice(0, slash) : "";
+      if (!byMonth.has(month)) byMonth.set(month, []);
+      byMonth.get(month).push(task);
+    }
+    const months = [...byMonth.keys()].sort((a, b) => (a === b ? 0 : a < b ? 1 : -1));
+    return months.map((month) => ({ month, tasks: byMonth.get(month) }));
+  }
+
+  return { aggregateTrellisTasks, groupTrellisTasks, groupTrellisArchiveByMonth, TRELLIS_PHASE_BADGE, normalizeProgress };
 });

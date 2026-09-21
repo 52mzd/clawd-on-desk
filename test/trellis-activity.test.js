@@ -1407,9 +1407,9 @@ describe("trellis-activity readArchiveList", () => {
     assert.deepStrictEqual(h.fakeFs.writeOps, [], "archive reads stay read-only");
   });
 
-  it("caps the list at 20 newest-first and nulls zero/negative durations", async () => {
+  it("caps the list at 200 newest-first and nulls zero/negative durations", async () => {
     const h = makeArchiveHarness();
-    for (let i = 0; i < 25; i++) {
+    for (let i = 0; i < 205; i++) {
       const day = String((i % 28) + 1).padStart(2, "0");
       addArchived(h.fakeFs, "2026-09", `t-${String(i).padStart(2, "0")}`, {
         title: `Task ${i}`,
@@ -1422,7 +1422,7 @@ describe("trellis-activity readArchiveList", () => {
     });
 
     const result = await h.activity.readArchiveList([CWD]);
-    assert.strictEqual(result.tasks.length, 20);
+    assert.strictEqual(result.tasks.length, 200);
     for (const task of result.tasks) {
       assert.strictEqual(task.durationMs, null, "same-day created/completed renders as —");
     }

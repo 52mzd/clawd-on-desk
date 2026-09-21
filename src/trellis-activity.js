@@ -737,13 +737,14 @@ function createTrellisActivity(options) {
   // traversal (src/trellis-archive.js, also the recap's) does the reading.
   // Never scheduled, never cached: every call is a fresh one-shot scan.
   //
-  // Returns { status: "ok", tasks } with at most 20 entries, newest
-  // completed first, each entry an IPC/JSON-safe object:
+  // Returns { status: "ok", tasks } newest completed first (capped for the
+  // month-grouped browser view; recap already scans the same dirs in full),
+  // each entry an IPC/JSON-safe object:
   //   { taskPath, title, createdAt, completedAt, completedAtMs, durationMs, cwd }
   // taskPath is the archive-relative posix path readTaskDetail accepts;
   // cwd is a live session cwd that resolved the same root, so opening the
   // detail card needs no extra trust surface.
-  const ARCHIVE_LIST_MAX = 20;
+  const ARCHIVE_LIST_MAX = 200;
   const ARCHIVE_LIST_MAX_CWDS = 16;
 
   async function readArchiveList(cwds) {
