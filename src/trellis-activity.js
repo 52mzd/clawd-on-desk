@@ -46,6 +46,7 @@ const {
 const ACTIVE_POLL_MS = 5000;
 const IDLE_POLL_MS = 15000;
 const ROOT_SEARCH_MAX_DEPTH = 8;
+const CHILD_PROJECT_MAX = 32;
 const ROOT_NEGATIVE_TTL_MS = 60 * 1000;
 const FALLBACK_MAX_AGE_MS = 30 * 60 * 1000;
 const CELEBRATION_MIN_INTERVAL_MS = 10 * 1000;
@@ -315,6 +316,34 @@ function createTrellisActivity(options) {
       cur = parent;
     }
     return null;
+  }
+
+  // Direct children of `dir` that contain a .trellis — used when the user
+  // picks a parent folder holding several projects. Shallow by design (one
+  // readdir + one stat per child); capped so a giant home directory cannot
+  // fan out into hundreds of registrations.
+  async function listChildProjectRoots(dir) {
+    if (typeof dir !== "string" || !dir.trim()) return [];
+    let names;
+    try {
+      names = await fs.readdir(path.normalize(dir), { withFileTypes: true });
+    } catch {
+      return [];
+    }
+    const roots = [];
+    for (const entry of names) {
+      // withFileTypes gives Dirents in the real fs, but injected test fakes
+      // may return plain strings — normalize both before the dot check.
+      const name = typeof entry === "string" ? entry : entry && entry.name;
+      if (typeof name !== "string" || !name || name.startsWith(".")) continue;
+      const isDirEntry = typeof entry === "string" ? true : entry.isDirectory();
+      if (!isDirEntry) continue;
+      const child = path.join(path.normalize(dir), entry.name);
+      const st = await statQuiet(path.join(child, ".trellis"));
+      if (st && st.isDirectory()) roots.push(child);
+      if (roots.length >= CHILD_PROJECT_MAX) break;
+    }
+    return roots;
   }
 
   // ── per-round pipeline ──
@@ -1051,6 +1080,7 @@ function createTrellisActivity(options) {
     hasPlanningBinding,
     setPersistedRoots,
     resolveProjectRoot,
+    listChildProjectRoots,
     readTaskDetail,
     readTaskDoc,
     readArchiveList,

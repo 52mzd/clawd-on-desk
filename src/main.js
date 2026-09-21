@@ -2676,6 +2676,24 @@ async function pickAndRegisterTrellisRoot() {
   } catch {
     projectRoot = null;
   }
+  if (!projectRoot) {
+    // The picked folder itself is not a trellis project — the common case is
+    // a parent folder holding several projects (e.g. ~/Downloads/codes).
+    // Register each child project directly so the view lands on real
+    // project roots instead of the inert parent.
+    const children = await _trellisActivity.listChildProjectRoots(picked);
+    if (children.length) {
+      let added = 0;
+      for (const child of children) {
+        const childOutcome = _trellisRootsStore.add(child);
+        if (childOutcome.status === "ok" || childOutcome.status === "duplicate") added += 1;
+      }
+      if (added > 0) {
+        syncTrellisPersistedRoots();
+        return { status: "ok", roots: _trellisRootsStore.list() };
+      }
+    }
+  }
   const outcome = _trellisRootsStore.add(projectRoot || picked);
   if (outcome.status !== "ok" && outcome.status !== "duplicate") {
     return { status: outcome.status };
