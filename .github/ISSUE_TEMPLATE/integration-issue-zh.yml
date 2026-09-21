@@ -1,5 +1,6 @@
 name: "🔌 Agent / 集成问题（中文）"
 description: "报告 AI Agent、Hook、权限、Session、焦点、WSL 或 Remote SSH 集成问题"
+title: "[Integration] "
 labels:
   - bug
 body:

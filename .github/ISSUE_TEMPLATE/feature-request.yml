@@ -1,5 +1,6 @@
 name: "🎁 Feature request (English)"
 description: "Propose a new capability or improvement for Clawd on Desk"
+title: "[Feature] "
 labels:
   - enhancement
 body:
