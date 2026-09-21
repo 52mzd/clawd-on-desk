@@ -424,10 +424,27 @@ describe("dashboard trellis panel rendering", () => {
     assert.ok(!text.includes(i18n.en.dashboardTrellisBoundSessions.replace("{n}", "1")),
       "a single binding does not need a session count");
 
-    app.pushSnapshot({ sessions: [bindingSession("s1", null)], groups: [] });
+    app.pushSnapshot({ sessions: [bindingSession("s1", null, { cwd: null })], groups: [] });
     await flush();
-    assert.equal(app.panel.hidden, true, "no live binding → the whole panel disappears");
+    assert.equal(app.panel.hidden, true, "no live binding and no live cwd → the whole panel disappears");
     assert.equal(app.panel.children.length, 0);
+  });
+
+  it("keeps a minimal panel (archive entry) when a live cwd exists without bindings", async () => {
+    const plainSession = {
+      id: "s9",
+      agent: "pi",
+      state: "working",
+      cwd: "/repo/alpha",
+    };
+    const app = loadDashboard({ sessions: [plainSession], groups: [] });
+    await flush();
+    assert.equal(app.panel.hidden, false, "live cwd keeps the archive entry reachable");
+    assert.equal(
+      app.panel.children.filter((c) => String(c.className || "").includes("trellis-task-row") || String(c.className || "").includes("trellis-group-row")).length,
+      0,
+      "no task rows without bindings"
+    );
   });
 
   it("focuses the single bound session when the row is clicked", async () => {

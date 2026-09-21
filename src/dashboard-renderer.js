@@ -1242,7 +1242,7 @@ function renderTrellisPanel() {
   if (!trellisPanelEl) return;
   const sessions = Array.isArray(snapshot && snapshot.sessions) ? snapshot.sessions : [];
   const tasks = aggregateTrellisTasks(sessions);
-  const archiveCwds = trellisArchiveCwds(tasks);
+  const archiveCwds = trellisArchiveCwds(tasks, sessions);
   const archiveCwdsKey = [...archiveCwds].sort().join("\n");
   // The cached archive rows belong to the previous project mix — drop them
   // (and void any in-flight fetch) so the next expand reads the new roots.
@@ -1259,12 +1259,15 @@ function renderTrellisPanel() {
   if (signature === lastTrellisPanelSignature) return;
   lastTrellisPanelSignature = signature;
 
-  if (!tasks.length) {
+  if (!tasks.length && !archiveCwds.length) {
     expandedTrellisTasks.clear();
     trellisPanelEl.hidden = true;
     trellisPanelEl.replaceChildren();
     return;
   }
+  // No bound tasks but live cwds exist: keep a minimal panel (title +
+  // collapsed archive section) so the user can still open the archive
+  // browser on demand — a fully hidden panel would make it unreachable.
 
   const livePaths = new Set(tasks.map((task) => task.taskPath));
   for (const taskPath of expandedTrellisTasks) {
@@ -1288,11 +1291,19 @@ function renderTrellisPanel() {
 // row opens the same task-detail overlay as live tasks — taskPath already
 // points into tasks/archive/<month>/, which readTaskDetail answers.
 
-function trellisArchiveCwds(tasks) {
+function trellisArchiveCwds(tasks, sessions) {
   const set = new Set();
   for (const task of tasks) {
     for (const binding of task.sessions) {
       if (binding && binding.cwd) set.add(binding.cwd);
+    }
+  }
+  // Live session cwds keep the archive entry reachable when no session is
+  // currently bound to a trellis task (main-side readArchiveList
+  // whitelists live cwds anyway).
+  if (Array.isArray(sessions)) {
+    for (const session of sessions) {
+      if (session && session.cwd) set.add(session.cwd);
     }
   }
   // Cap at the IPC payload limit (16, mirrored in trellis-activity):
