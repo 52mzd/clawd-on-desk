@@ -690,6 +690,52 @@ Correct readArchiveList() 无参；根集来自 collectKnownRootCwds()
   `.trellis-task-row / .trellis-archive-row`（曾写成 .trellis-tree-row
   匹配空）。
 
+#### §4.6b 通道契约：dashboard:trellis-pick-remove（7 段式）
+
+**1. Scope/Trigger**：跨层 IPC——renderer 撤销一次 pick（连带其注册的
+全部根）。同类通道族：trellis-roots-{list,add,remove}。
+
+**2. Signatures**：
+- preload：`removeTrellisPick(picked: string) → invoke("dashboard:trellis-pick-remove", { picked })`
+- session-ipc handler：trusted Dashboard main-frame only；payload 键集
+  恰为 `["picked"]` 且为非空 string，否则 `{status:"invalid"}`
+- main：`removeTrellisPick(picked)` → 查 `_trellisRootsPicks`（normalize
+  后匹配）→ 无则 `{status:"not-found"}`；有则删 Map 项 + 逐根
+  `_trellisRootsStore.remove()` + `syncTrellisPersistedRoots()` →
+  `{status:"ok", roots, removed:[...]}`
+- 依赖注入：`removeTrellisPick` 是 session-ipc 的 required dep（缺失即
+  throw，测试基座必须补 noop）
+
+**3. Contracts**：
+- request：`{picked: string}`（严格单键；`__proto__` 等 own-key 变体拒）
+- response：`{status: "ok"|"invalid"|"not-found"|"error", roots?: string[], removed?: string[]}`
+- roots 数组同时是 pick-remove 后的 UI 真相（renderer 直接刷列表）
+
+**4. Validation & Error Matrix**：
+| 条件 | 行为 |
+| --- | --- |
+| 非 trusted frame / 多余键 / picked 非字符串/空 | `{status:"invalid"}` |
+| picked 未在簿记 Map（含 normalize 差异） | `{status:"not-found"}`（不动 store） |
+| pick 存在但某根已被单独 remove | 仍 ok——remove 幂等，removed 列实际删掉的 |
+| store.remove 抛错 | 不吞：`{status:"error"}`，簿记已删但 store 可能半删（下次 add 同目录会重建簿记） |
+
+**5. Good/Base/Bad**：
+- Good：pick codes（5 根）→ remove("…/codes") → 5 根全消失、roots 刷新
+- Base：pick 单项目 → remove → 该根消失，行为与 roots-remove 等价
+- Bad：renderer 传子项目路径（非 pick 目录）→ not-found，绝不部分删
+
+**6. Tests Required**：session-ipc.test.js——通道白名单成员 + noop 依赖
+基座 + payload 形状拒（多键/空串/__proto__）；main 侧 not-found /
+幂等 / removed 回包（当前由 trellis-activity/panel 套件间接覆盖，
+renderer 的 removeTrellisPickFromRow 错误路径置 rootsError）。
+
+**7. Wrong vs Correct**：
+```text
+Wrong   removeTrellisRoot(childRoot)     // 对每个子根单独调——UI 碎片化
+        removeTrellisPick(子项目路径)     // not-found：簿记键是 pick 目录
+Correct removeTrellisPick(pick 目录)      // 一次撤销整组
+```
+
 #### §4.7 多项目筛选（独立视图 chip 行，纯渲染层）
 
 **1. Scope/Trigger**：任何「在独立 Trellis 视图内按项目根切分/合并
