@@ -253,6 +253,13 @@ h1 {
 }
 
 .trellis-task-row {
+  border-radius: 8px;
+  transition: background-color 0.12s ease, transform 0.12s ease;
+}
+.trellis-task-row:hover, .trellis-archive-row:hover {
+  background: color-mix(in srgb, #7aa2f7 8%, transparent);
+  transform: translateX(2px);
+}
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -265,6 +272,7 @@ h1 {
 
 .trellis-task-row:hover {
   background: var(--surface-alt);
+  transform: translateX(2px);
 }
 
 .trellis-task-main {
@@ -703,14 +711,56 @@ h1 {
 /* Task tree (independent view): rows nest inside .trellis-tree-children
    containers whose left border doubles as the connector line — pure CSS
    indent, no tree component. The caret column stays a fixed width so
-   branch and leaf rows align. */
+   branch and leaf rows align. Connectors use a gradient + glow accent so
+   depth reads at a glance; deeper levels shift hue slightly. */
 .trellis-tree-children {
   margin-left: 14px;
-  padding-left: 10px;
+  padding-left: 12px;
+  position: relative;
   border-left: 1px solid color-mix(in srgb, var(--muted, #6b7280) 35%, transparent);
   display: flex;
   flex-direction: column;
   gap: 4px;
+  transition: border-color 0.15s ease;
+}
+.trellis-tree-children::before {
+  /* Soft glow bead at the top of each connector, fading downward —
+     visual depth cue without adding DOM. */
+  content: "";
+  position: absolute;
+  left: -2.5px;
+  top: 0;
+  width: 4px;
+  height: 26px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, #7aa2f7 45%, transparent),
+    transparent
+  );
+  pointer-events: none;
+}
+
+.trellis-tree-row {
+  border-radius: 8px;
+  transition: background-color 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
+}
+.trellis-tree-row:hover {
+  background: color-mix(in srgb, #7aa2f7 8%, transparent);
+  transform: translateX(2px);
+}
+.trellis-tree-row[data-depth="1"] { box-shadow: inset 2px 0 0 -1px color-mix(in srgb, #7aa2f7 30%, transparent); }
+.trellis-tree-row[data-depth="2"] { box-shadow: inset 2px 0 0 -1px color-mix(in srgb, #9d7cd8 30%, transparent); }
+.trellis-tree-row[data-depth="3"] { box-shadow: inset 2px 0 0 -1px color-mix(in srgb, #e0af68 30%, transparent); }
+.trellis-tree-row[data-depth="4"] { box-shadow: inset 2px 0 0 -1px color-mix(in srgb, #e78a4e 30%, transparent); }
+.trellis-tree-row[data-depth="5"] { box-shadow: inset 2px 0 0 -1px color-mix(in srgb, #d4576e 30%, transparent); }
+
+.trellis-tree-children {
+  animation: trellis-tree-unfold 0.16s ease;
+}
+@keyframes trellis-tree-unfold {
+  from { opacity: 0.35; transform: translateY(-2px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .trellis-tree-caret {
@@ -723,10 +773,16 @@ h1 {
   line-height: 1;
   padding: 2px 0;
   cursor: pointer;
+  transition: color 0.12s ease, transform 0.12s ease;
 }
 
 .trellis-tree-caret:hover {
-  color: var(--text);
+  color: #7aa2f7;
+  transform: scale(1.25);
+}
+
+.trellis-tree-caret[data-open="true"] {
+  color: #7aa2f7;
 }
 
 .trellis-tree-caret-spacer {

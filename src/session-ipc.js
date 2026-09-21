@@ -62,6 +62,10 @@ function registerSessionIpc(options = {}) {
     options.removeTrellisRoot,
     "removeTrellisRoot"
   );
+  const removeTrellisPick = requiredDependency(
+    options.removeTrellisPick,
+    "removeTrellisPick"
+  );
   const getTrellisActiveList = requiredDependency(
     options.getTrellisActiveList,
     "getTrellisActiveList"
@@ -245,6 +249,23 @@ function registerSessionIpc(options = {}) {
       return { status: "invalid" };
     }
     return removeTrellisRoot(payload.root);
+  });
+
+  handle("dashboard:trellis-pick-remove", (event, payload) => {
+    const rejected = rejectUntrustedDashboardEvent(event);
+    if (rejected) return rejected;
+    const keys = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? Object.keys(payload).sort()
+      : [];
+    if (
+      keys.length !== 1
+      || keys[0] !== "picked"
+      || typeof payload.picked !== "string"
+      || !payload.picked
+    ) {
+      return { status: "invalid" };
+    }
+    return removeTrellisPick(payload.picked);
   });
 
   // One-shot on-demand read of the non-archived tasks under the known

@@ -151,6 +151,10 @@ function createHarness(overrides = {}) {
       calls.push(["removeTrellisRoot", root]);
       return { status: "ok", roots: [] };
     }),
+    removeTrellisPick: overrides.removeTrellisPick || ((picked) => {
+      calls.push(["removeTrellisPick", picked]);
+      return { status: "ok", roots: [] };
+    }),
     getDashboardWebContents: overrides.getDashboardWebContents
       || (() => dashboardWebContents),
     quickMode: Object.prototype.hasOwnProperty.call(overrides, "quickMode")
@@ -201,6 +205,7 @@ test("session IPC registers owned channels and disposes them", () => {
     "dashboard:set-session-automation",
     "dashboard:trellis-active-list",
     "dashboard:trellis-archive-list",
+    "dashboard:trellis-pick-remove",
     "dashboard:trellis-roots-add",
     "dashboard:trellis-roots-list",
     "dashboard:trellis-roots-remove",
@@ -612,6 +617,7 @@ test("trellis roots IPC is trusted-frame; add takes no path, remove is strictly 
     "dashboard:trellis-roots-list",
     "dashboard:trellis-roots-add",
     "dashboard:trellis-roots-remove",
+    "dashboard:trellis-pick-remove",
   ]) {
     assert.deepStrictEqual(
       await ipcMain.invoke(channel, { root: "/proj/app" }),

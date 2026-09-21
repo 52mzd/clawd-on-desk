@@ -1129,6 +1129,7 @@ let activeView = "sessions";
 let lastTrellisViewSignature = null;
 const trellisView = {
   roots: [],
+  picks: [],
   rootsLoaded: false,
   rootsError: false,
   // One-shot hint after picking a folder that contains no trellis
@@ -1301,6 +1302,9 @@ async function refreshTrellisViewRoots() {
   }
   if (result && typeof result === "object" && result.status === "ok" && Array.isArray(result.roots)) {
     trellisView.roots = result.roots.filter((root) => typeof root === "string" && root);
+    trellisView.picks = Array.isArray(result.picks)
+      ? result.picks.filter((p) => p && typeof p === "object" && typeof p.picked === "string" && Array.isArray(p.roots))
+      : [];
     trellisView.rootsLoaded = true;
     trellisView.rootsError = false;
     trellisView.noProjectsHint = false;
@@ -1435,6 +1439,25 @@ async function removeTrellisRootFromRow(root) {
   }
 }
 
+async function removeTrellisPickFromRow(picked) {
+  let result = null;
+  try {
+    if (typeof window.dashboardAPI.removeTrellisPick !== "function") {
+      throw new Error("bridge-unavailable");
+    }
+    result = await window.dashboardAPI.removeTrellisPick(picked);
+  } catch {
+    result = null;
+  }
+  if (result && typeof result === "object" && result.status === "ok") {
+    refreshTrellisView();
+  } else {
+    trellisView.rootsError = true;
+    lastTrellisViewSignature = null;
+    renderTrellisView();
+  }
+}
+
 // ── Trellis task tree (independent view) ───────────────────────────────
 // One buildTrellisTree pass nests the (root-filtered) active + archive
 // lists; rendering is recursive DOM — each node is a row plus a bordered
@@ -1478,6 +1501,7 @@ function createTrellisTreeCaret(node) {
   caret.className = "trellis-tree-caret";
   caret.textContent = trellisTreeIsExpanded(node) ? "▾" : "▸";
   caret.setAttribute("aria-expanded", trellisTreeIsExpanded(node) ? "true" : "false");
+  caret.setAttribute("data-open", trellisTreeIsExpanded(node) ? "true" : "false");
   const label = node.task.title || node.task.taskPath;
   caret.title = label;
   caret.setAttribute("aria-label", label);
@@ -1591,15 +1615,17 @@ function createTrellisTreeNodeRow(node, projectLabel) {
   return row;
 }
 
-function createTrellisTreeNodeEl(node, labels) {
+function createTrellisTreeNodeEl(node, labels, depth = 0) {
   const wrapper = document.createElement("div");
   wrapper.className = "trellis-tree-node";
-  wrapper.appendChild(createTrellisTreeNodeRow(node, trellisRowProjectLabel(node.task, labels)));
+  const row = createTrellisTreeNodeRow(node, trellisRowProjectLabel(node.task, labels));
+  row.setAttribute("data-depth", String(Math.min(depth, 5)));
+  wrapper.appendChild(row);
   if (node.children.length && trellisTreeIsExpanded(node)) {
     const kids = document.createElement("div");
     kids.className = "trellis-tree-children";
     for (const child of node.children) {
-      kids.appendChild(createTrellisTreeNodeEl(child, labels));
+      kids.appendChild(createTrellisTreeNodeEl(child, labels, depth + 1));
     }
     wrapper.appendChild(kids);
   }
@@ -1649,7 +1675,34 @@ function buildTrellisRootsSection() {
   } else if (!trellisView.roots.length) {
     section.appendChild(createText("div", "trellis-view-empty", t("dashboardTrellisRootsEmptyHint")));
   } else {
+    // Managed entries render as the folder the user PICKED (one row, one
+    // remove button — removing drops every root that pick registered).
+    // Roots without a pick entry (session-resolved / legacy persisted)
+    // render individually so nothing becomes unmanageable.
+    const pickRoots = new Set();
+    for (const pick of trellisView.picks) {
+      for (const r of pick.roots) pickRoots.add(r);
+    }
+    for (const pick of trellisView.picks) {
+      const row = document.createElement("div");
+      row.className = "trellis-root-row";
+      const pathEl = createText("span", "trellis-root-path", pick.picked);
+      pathEl.title = `${pick.picked}\n→ ${pick.roots.length} ${t("dashboardTrellisRootsPickCount")}`;
+      row.appendChild(pathEl);
+      const count = createText("span", "trellis-root-count", `×${pick.roots.length}`);
+      row.appendChild(count);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "trellis-root-remove";
+      remove.textContent = t("dashboardTrellisRootsRemove");
+      remove.addEventListener("click", () => {
+        void removeTrellisPickFromRow(pick.picked);
+      });
+      row.appendChild(remove);
+      section.appendChild(row);
+    }
     for (const root of trellisView.roots) {
+      if (pickRoots.has(root)) continue;
       const row = document.createElement("div");
       row.className = "trellis-root-row";
       const pathEl = createText("span", "trellis-root-path", root);
@@ -1792,6 +1845,7 @@ function computeTrellisViewSignature() {
   return JSON.stringify({
     lang: (i18nPayload && i18nPayload.lang) || "en",
     roots: trellisView.roots,
+    picks: trellisView.picks,
     rootsLoaded: trellisView.rootsLoaded,
     rootsError: trellisView.rootsError,
     noProjectsHint: trellisView.noProjectsHint,

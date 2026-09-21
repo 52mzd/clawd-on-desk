@@ -2647,9 +2647,47 @@ function syncTrellisPersistedRoots() {
 }
 syncTrellisPersistedRoots();
 
+// Expand the picker's "picked" folder into the project roots that would
+// actually be registered: the pick itself when it is a project, else its
+// direct trellis children. Used for pick bookkeeping (single removable
+// entry) and by listTrellisRoots to report each managed entry's fan-out.
+async function expandTrellisPickToRoots(picked) {
+  if (typeof picked !== "string" || !picked.trim()) return [];
+  try {
+    if (await _trellisActivity.isDirectProjectRoot(picked)) return [path.normalize(picked)];
+  } catch {
+    /* fall through to children */
+  }
+  try {
+    return await _trellisActivity.listChildProjectRoots(picked);
+  } catch {
+    return [];
+  }
+}
+
 // Directory picker for the Trellis view's "Add project root": the path is
 // chosen in a native dialog and resolved towards the nearest .trellis here
 // in main — the renderer only ever triggers, never supplies a path.
+
+// Bookkeeping for multi-root picks: the folder the user chose -> the
+// project roots that were actually registered from it. Removing the
+// bookkeeping entry removes all of its roots in one action.
+const _trellisRootsPicks = new Map(); // picked folder -> Set(project roots)
+
+function recordTrellisPick(picked, registeredRoots) {
+  if (typeof picked !== "string" || !picked.trim()) return;
+  if (!Array.isArray(registeredRoots) || registeredRoots.length === 0) return;
+  const key = path.normalize(picked);
+  let set = _trellisRootsPicks.get(key);
+  if (!set) {
+    set = new Set();
+    _trellisRootsPicks.set(key, set);
+  }
+  for (const root of registeredRoots) {
+    if (typeof root === "string" && root) set.add(path.normalize(root));
+  }
+}
+
 async function pickAndRegisterTrellisRoot() {
   const parent = _dashboard && typeof _dashboard.getWindow === "function"
     ? _dashboard.getWindow()
@@ -2684,17 +2722,19 @@ async function pickAndRegisterTrellisRoot() {
       return { status: outcome.status };
     }
     syncTrellisPersistedRoots();
+    recordTrellisPick(picked, [picked]);
     return { status: "ok", roots: _trellisRootsStore.list() };
   }
   const children = await _trellisActivity.listChildProjectRoots(picked);
   if (children.length) {
-    let added = 0;
+    const registered = [];
     for (const child of children) {
       const childOutcome = _trellisRootsStore.add(child);
-      if (childOutcome.status === "ok" || childOutcome.status === "duplicate") added += 1;
+      if (childOutcome.status === "ok" || childOutcome.status === "duplicate") registered.push(child);
     }
-    if (added > 0) {
+    if (registered.length > 0) {
       syncTrellisPersistedRoots();
+      recordTrellisPick(picked, registered);
       return { status: "ok", roots: _trellisRootsStore.list() };
     }
   }
@@ -2708,6 +2748,20 @@ function removeRegisteredTrellisRoot(root) {
   if (outcome.status !== "ok") return { status: outcome.status };
   syncTrellisPersistedRoots();
   return { status: "ok", roots: _trellisRootsStore.list() };
+}
+
+// Remove one bookkeeping pick and every still-registered root it produced.
+function removeTrellisPick(picked) {
+  if (typeof picked !== "string" || !picked.trim()) return { status: "invalid" };
+  const key = path.normalize(picked);
+  const set = _trellisRootsPicks.get(key);
+  if (!set) return { status: "not-found" };
+  _trellisRootsPicks.delete(key);
+  for (const root of set) {
+    _trellisRootsStore.remove(root);
+  }
+  syncTrellisPersistedRoots();
+  return { status: "ok", roots: _trellisRootsStore.list(), removed: [...set] };
 }
 
 displayedVisualProjection = createDisplayedVisualProjection({
@@ -5380,9 +5434,20 @@ registerSessionIpc({
     }
     return _trellisActivity.readArchiveList();
   },
-  listTrellisRoots: () => ({ status: "ok", roots: _trellisRootsStore.list() }),
+  listTrellisRoots: () => ({
+    status: "ok",
+    roots: _trellisRootsStore.list(),
+    // One entry per user pick: the folder they chose plus the roots that
+    // were registered from it. The UI lists picks (single remove per pick);
+    // roots is kept for backwards compatibility / diagnostics.
+    picks: [..._trellisRootsPicks.entries()].map(([picked, rootSet]) => ({
+      picked,
+      roots: [...rootSet],
+    })),
+  }),
   addTrellisRoot: () => pickAndRegisterTrellisRoot(),
   removeTrellisRoot: (root) => removeRegisteredTrellisRoot(root),
+  removeTrellisPick: (picked) => removeTrellisPick(picked),
   getTrellisActiveList: () => {
     if (!_trellisActivity || typeof _trellisActivity.readActiveList !== "function") {
       return { status: "error", message: "trellis-activity-unavailable" };

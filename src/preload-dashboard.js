@@ -84,6 +84,7 @@ contextBridge.exposeInMainWorld("dashboardAPI", {
   listTrellisRoots: () => ipcRenderer.invoke("dashboard:trellis-roots-list"),
   addTrellisRoot: () => ipcRenderer.invoke("dashboard:trellis-roots-add"),
   removeTrellisRoot: (root) => ipcRenderer.invoke("dashboard:trellis-roots-remove", { root }),
+  removeTrellisPick: (picked) => ipcRenderer.invoke("dashboard:trellis-pick-remove", { picked }),
   ackCompletion: (sessionId) => ipcRenderer.invoke("session:ack-completion", sessionId),
   onSessionSnapshot: (cb) => {
     if (typeof cb !== "function") return () => {};
