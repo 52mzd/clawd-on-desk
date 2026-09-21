@@ -228,3 +228,30 @@ trellis-card 二次对照缺口全补（每件独立 implement→check→commit�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 9: 创意池 v3 验收反馈三连修：picker 爬根 / pick 一行制 / 树视觉 + spec 收口
+
+**Date**: 2026-09-22
+**Task**: 创意池 v3 验收反馈三连修：picker 爬根 / pick 一行制 / 树视觉 + spec 收口
+**Branch**: `main`
+
+### Summary
+
+v3 交付后真机验收暴露三问题全修：① e560ac76 选父目录批量注册子项目（listChildProjectRoots 直查非点子级，cap 32）；② aeba090e picker 不再向上爬——选 /Users/Dae/Downloads/codes 曾因野 ~/.trellis 把整个 /Users/Dae 注册成根，改 isDirectProjectRoot 直查三态（本项目/子项目批量/无项目提示），并清理误注册；③ 67f62d6c roots 区改 pick 语义一行制（选择目录 + ×N 徽标 + 单移除按钮一次撤销整组，新通道 trellis-pick-remove）+ 树视觉升级（渐变辉光连接线/五级深度着色内衬/hover 位移/unfold 动画），5faf4343 修深度选择器锚定空类名；spec 收口：§4.6a pick 契约、§4.6b 通道 7 段式、cross-layer Mistake 7（权威输入禁走启发式解析）。npm test 全量失败集各批均与 stash 基线 diff=0。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e560ac76` | (see git log) |
+| `aeba090e` | (see git log) |
+| `67f62d6c` | (see git log) |
+| `5faf4343` | (see git log) |
+| `2b5c81fb` | (see git log) |
+| `a07ca08f` | (see git log) |
+| `d2068309` | (see git log) |
+
+### Status
+
+[OK] **Completed**
