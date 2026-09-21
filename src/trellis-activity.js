@@ -304,6 +304,17 @@ function createTrellisActivity(options) {
   // (parent of the .trellis dir) nearest to `dir`, or null when the picked
   // directory has no .trellis at or above it. Mirrors findTrellisRoot's
   // climb but is never cached — it runs once per explicit user action.
+  // Whether `dir` ITSELF contains a .trellis — no upward walk. Used by the
+  // explicit root picker where the user's choice is authoritative;
+  // resolveProjectRoot's upward search is for session cwds only (picking
+  // ~/Downloads/codes used to climb all the way to a stray ~/.trellis in
+  // $HOME and register the whole home as a root).
+  async function isDirectProjectRoot(dir) {
+    if (typeof dir !== "string" || !dir.trim()) return false;
+    const st = await statQuiet(path.join(path.normalize(dir), ".trellis"));
+    return !!(st && st.isDirectory());
+  }
+
   async function resolveProjectRoot(dir) {
     if (typeof dir !== "string" || !dir.trim()) return null;
     let cur = path.normalize(dir);
@@ -1080,6 +1091,7 @@ function createTrellisActivity(options) {
     hasPlanningBinding,
     setPersistedRoots,
     resolveProjectRoot,
+    isDirectProjectRoot,
     listChildProjectRoots,
     readTaskDetail,
     readTaskDoc,

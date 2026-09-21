@@ -1131,6 +1131,9 @@ const trellisView = {
   roots: [],
   rootsLoaded: false,
   rootsError: false,
+  // One-shot hint after picking a folder that contains no trellis
+  // projects (directly or as children); cleared on next roots refresh.
+  noProjectsHint: false,
   // Session-level UI state, never persisted: null = merged "all"
   // view, otherwise the registered root the lists are filtered to.
   selectedRoot: null,
@@ -1300,6 +1303,7 @@ async function refreshTrellisViewRoots() {
     trellisView.roots = result.roots.filter((root) => typeof root === "string" && root);
     trellisView.rootsLoaded = true;
     trellisView.rootsError = false;
+    trellisView.noProjectsHint = false;
     // A removed root takes its filter selection with it — fall back to
     // the merged "all" view instead of filtering everything out.
     if (trellisView.selectedRoot !== null && !trellisView.roots.includes(trellisView.selectedRoot)) {
@@ -1400,6 +1404,11 @@ async function addTrellisRootViaPicker() {
   // error row (same treatment as a failed roots-list read).
   if (result && typeof result === "object" && result.status === "ok") {
     refreshTrellisView();
+  } else if (result && typeof result === "object" && result.status === "no-projects") {
+    trellisView.rootsError = false;
+    trellisView.noProjectsHint = true;
+    lastTrellisViewSignature = null;
+    renderTrellisView();
   } else if (result && typeof result === "object" && result.status === "limit") {
     trellisView.rootsError = true;
     lastTrellisViewSignature = null;
@@ -1635,6 +1644,8 @@ function buildTrellisRootsSection() {
 
   if (trellisView.rootsError) {
     section.appendChild(createText("div", "trellis-view-error", t("dashboardTrellisRootsError")));
+  } else if (trellisView.noProjectsHint) {
+    section.appendChild(createText("div", "trellis-view-empty", t("dashboardTrellisRootsNoProjects")));
   } else if (!trellisView.roots.length) {
     section.appendChild(createText("div", "trellis-view-empty", t("dashboardTrellisRootsEmptyHint")));
   } else {
@@ -1783,6 +1794,7 @@ function computeTrellisViewSignature() {
     roots: trellisView.roots,
     rootsLoaded: trellisView.rootsLoaded,
     rootsError: trellisView.rootsError,
+    noProjectsHint: trellisView.noProjectsHint,
     selectedRoot: trellisView.selectedRoot,
     active: {
       loading: trellisView.active.loading,

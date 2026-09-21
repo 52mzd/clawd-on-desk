@@ -2667,39 +2667,38 @@ async function pickAndRegisterTrellisRoot() {
     picked = null;
   }
   if (typeof picked !== "string" || !picked.trim()) return { status: "cancelled" };
-  // A sub-directory pick resolves to the project that owns the nearest
-  // .trellis; a directory without one registers as-is (empty until trellis
-  // init) so the user's explicit choice is never silently dropped.
-  let projectRoot = null;
+  // The user's explicit pick is authoritative — NO upward .trellis walk here
+  // (that resolveProjectRoot climb is for session cwds and would register
+  // all of $HOME when a stray ~/.trellis exists). Three outcomes: the pick
+  // is itself a project; its direct children contain projects (register
+  // them all); or nothing trellis-related lives there (tell the user).
+  let isProject = false;
   try {
-    projectRoot = await _trellisActivity.resolveProjectRoot(picked);
+    isProject = await _trellisActivity.isDirectProjectRoot(picked);
   } catch {
-    projectRoot = null;
+    isProject = false;
   }
-  if (!projectRoot) {
-    // The picked folder itself is not a trellis project — the common case is
-    // a parent folder holding several projects (e.g. ~/Downloads/codes).
-    // Register each child project directly so the view lands on real
-    // project roots instead of the inert parent.
-    const children = await _trellisActivity.listChildProjectRoots(picked);
-    if (children.length) {
-      let added = 0;
-      for (const child of children) {
-        const childOutcome = _trellisRootsStore.add(child);
-        if (childOutcome.status === "ok" || childOutcome.status === "duplicate") added += 1;
-      }
-      if (added > 0) {
-        syncTrellisPersistedRoots();
-        return { status: "ok", roots: _trellisRootsStore.list() };
-      }
+  if (isProject) {
+    const outcome = _trellisRootsStore.add(picked);
+    if (outcome.status !== "ok" && outcome.status !== "duplicate") {
+      return { status: outcome.status };
+    }
+    syncTrellisPersistedRoots();
+    return { status: "ok", roots: _trellisRootsStore.list() };
+  }
+  const children = await _trellisActivity.listChildProjectRoots(picked);
+  if (children.length) {
+    let added = 0;
+    for (const child of children) {
+      const childOutcome = _trellisRootsStore.add(child);
+      if (childOutcome.status === "ok" || childOutcome.status === "duplicate") added += 1;
+    }
+    if (added > 0) {
+      syncTrellisPersistedRoots();
+      return { status: "ok", roots: _trellisRootsStore.list() };
     }
   }
-  const outcome = _trellisRootsStore.add(projectRoot || picked);
-  if (outcome.status !== "ok" && outcome.status !== "duplicate") {
-    return { status: outcome.status };
-  }
-  syncTrellisPersistedRoots();
-  return { status: "ok", roots: _trellisRootsStore.list() };
+  return { status: "no-projects", picked };
 }
 
 function removeRegisteredTrellisRoot(root) {
