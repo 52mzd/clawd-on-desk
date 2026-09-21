@@ -35,10 +35,15 @@ function loadTemplate(filename) {
   return parsed;
 }
 
+function hasOwn(object, key) {
+  return Object.prototype.hasOwnProperty.call(object || {}, key);
+}
+
 function optionShape(option) {
   if (typeof option === "string") return { type: "string" };
   return {
     type: "object",
+    hasLabel: hasOwn(option, "label"),
     required: Boolean(option && option.required),
   };
 }
@@ -49,7 +54,11 @@ function fieldShape(field) {
     type: field.type,
     id: field.id ?? null,
     validations: field.validations || {},
-    multiple: Object.prototype.hasOwnProperty.call(attributes, "multiple")
+    hasLabel: hasOwn(attributes, "label"),
+    hasDescription: hasOwn(attributes, "description"),
+    hasPlaceholder: hasOwn(attributes, "placeholder"),
+    hasValue: hasOwn(attributes, "value"),
+    multiple: hasOwn(attributes, "multiple")
       ? Boolean(attributes.multiple)
       : null,
     render: attributes.render ?? null,
