@@ -97,6 +97,7 @@ const { createTrellisActivity } = require("./trellis-activity");
 const { createTrellisRootsStore } = require("./trellis-roots");
 const { createTrellisCelebration } = require("./trellis-celebration");
 const { createTrellisBubble, TRELLIS_BUBBLE_DIMENSIONS } = require("./trellis-bubble");
+const { phaseLabelKey } = require("./trellis-phase");
 const { createKimiQuotaClient } = require("./kimi-quota-client");
 const { createKimiQuotaCredentialStore } = require("./kimi-quota-credential-store");
 const { createKimiQuotaRuntime } = require("./kimi-quota-runtime");
@@ -2497,6 +2498,15 @@ _trellisBubble = createTrellisBubble({
   getHudReservedOffset: () => _sessionHud.getHudReservedOffset(),
   getPermissionReservedHeight: () =>
     _perm.getVisibleBubbleBounds().reduce((max, r) => Math.max(max, r.height || 0), 0),
+  getSleepingLike: () => {
+    // Phase-transition bubble only: sleeping pets stay quiet even mid-work.
+    // DND/hidden/mini gates are shared with the idle bubble above.
+    try {
+      return _state.SLEEP_SEQUENCE.has(_state.getCurrentState());
+    } catch {
+      return false;
+    }
+  },
   getWindow: () => {
     // Same shape as update-bubble: standalone transparent window, no parent.
     // macOS "panel" type matches the proven update-bubble construction.
@@ -2545,7 +2555,8 @@ _trellisBubble = createTrellisBubble({
       text = text
         .replace("{done}", String(params.done))
         .replace("{total}", String(params.total))
-        .replace("{nextStep}", params.nextStep == null ? "" : String(params.nextStep));
+        .replace("{nextStep}", params.nextStep == null ? "" : String(params.nextStep))
+        .replace("{phase}", params.phase == null ? "" : String(params.phase));
     }
     return text;
   },
@@ -2597,6 +2608,21 @@ _trellisActivity = createTrellisActivity({
       _state.setState(displayState, _state.getSvgOverride(displayState));
     } catch {}
     try { deliverAccessorySlotsSnapshot(); } catch {}
+  },
+  // v3 lifecycle feedback: every genuine phase transition drives the
+  // one-shot phase bubble (task name + localized phase label). Diff-driven
+  // off the existing polling round — no new timers. The finish/done
+  // celebration below keeps its own reactions channel; themes without
+  // celebration assets simply degrade to bubble-only here.
+  onPhaseTransition: (transition) => {
+    try {
+      if (!_trellisBubble) return;
+      const key = phaseLabelKey(transition && transition.toPhase);
+      _trellisBubble.showPhaseTransitionBubble({
+        ...transition,
+        phaseLabel: key ? translate(key) : null,
+      });
+    } catch { /* bubble feedback must never break the poll round */ }
   },
   onCelebration: createTrellisCelebration({
     getDnd: () => doNotDisturb,

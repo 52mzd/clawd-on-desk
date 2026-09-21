@@ -17,8 +17,9 @@ function makeHarness(overrides = {}) {
     close() {},
   };
   const timers = [];
+  const clock = { now: 1000 };
   const state = {
-    dnd: false, petHidden: false, mini: false, petState: "idle",
+    dnd: false, petHidden: false, mini: false, petState: "idle", sleeping: false,
     info: { taskPath: ".trellis/tasks/task-a", title: "Task A", phase: "plan" },
     petBounds: { x: 100, y: 700, width: 120, height: 120 },
     workArea: { x: 0, y: 0, width: 1512, height: 982 },
@@ -29,12 +30,14 @@ function makeHarness(overrides = {}) {
   const h = {
     win,
     state,
+    clock,
     ...overrides,
     bubble: createTrellisBubble({
       getDnd: () => state.dnd,
       getPetHidden: () => state.petHidden,
       getMiniMode: () => state.mini,
       getPetState: () => state.petState,
+      getSleepingLike: () => state.sleeping,
       getPetBounds: () => state.petBounds,
       getWorkArea: () => state.workArea,
       getAvoidRects: () => state.avoidRects,
@@ -42,10 +45,13 @@ function makeHarness(overrides = {}) {
       getPermissionReservedHeight: () => state.permHeight,
       getWindow: () => win,
       setText: (w, t) => win._texts.push(t),
-      formatHint: ({ key, params }) => params
-        ? `${key}|${params.done}/${params.total}`
-        : key,
+      formatHint: ({ key, params }) => {
+        if (!params) return key;
+        if (params.phase !== undefined) return `${key}:${params.phase}`;
+        return `${key}|${params.done}/${params.total}`;
+      },
       getTrellisInfo: () => state.info,
+      now: () => clock.now,
       setTimeoutFn: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
       clearTimeoutFn: (id) => { timers[id - 1] = null; },
     }),
@@ -161,4 +167,108 @@ test("dispose closes window and clears timers", () => {
   assert.strictEqual(timers.length, 1);
   bubble.dispose();
   assert.strictEqual(closed, true);
+});
+
+// ── phase-transition bubble (v3 lifecycle feedback) ──
+
+function phaseTransition(overrides = {}) {
+  return {
+    taskPath: ".trellis/tasks/task-a",
+    title: "Task A",
+    fromPhase: "plan",
+    toPhase: "execute",
+    phaseLabel: "Execute",
+    ...overrides,
+  };
+}
+
+test("phase bubble shows task title + localized phase hint", () => {
+  const h = makeHarness();
+  assert.strictEqual(h.bubble.showPhaseTransitionBubble(phaseTransition()), true);
+  assert.strictEqual(h.win._shown, 1);
+  assert.deepStrictEqual(h.win._texts, [
+    { title: "Task A", hint: "trellisPhaseBubbleHint:Execute" },
+  ]);
+});
+
+test("phase bubble gate chain: dnd / petHidden / mini / sleeping suppress", () => {
+  for (const gate of ["dnd", "petHidden", "mini", "sleeping"]) {
+    const h = makeHarness();
+    h.state[gate] = true;
+    assert.strictEqual(h.bubble.showPhaseTransitionBubble(phaseTransition()), false, gate);
+  }
+});
+
+test("phase bubble fires while an agent is working (no agent-idle gate)", () => {
+  const h = makeHarness();
+  h.state.petState = "working";
+  assert.strictEqual(h.bubble.showPhaseTransitionBubble(phaseTransition()), true);
+});
+
+test("phase bubble requires taskPath and toPhase; falls back to the raw phase", () => {
+  const h = makeHarness();
+  assert.strictEqual(h.bubble.showPhaseTransitionBubble({ title: "X" }), false);
+  const { phaseLabel, ...noLabel } = phaseTransition();
+  assert.strictEqual(h.bubble.showPhaseTransitionBubble(noLabel), true);
+  assert.strictEqual(h.win._texts[0].hint, "trellisPhaseBubbleHint:execute");
+  // A missing title falls back to the task path.
+  h.fireTimers();
+  h.clock.now += 11 * 1000;
+  assert.strictEqual(
+    h.bubble.showPhaseTransitionBubble(phaseTransition({ title: null, toPhase: "check", phaseLabel: "Check" })),
+    true
+  );
+  assert.strictEqual(h.win._texts.at(-1).title, ".trellis/tasks/task-a");
+});
+
+test("same task+phase does not re-pop within 10s, re-pops after", () => {
+  const h = makeHarness();
+  assert.strictEqual(h.bubble.showPhaseTransitionBubble(phaseTransition()), true);
+  h.fireTimers(); // hidden
+  h.clock.now += 5 * 1000;
+  assert.strictEqual(h.bubble.showPhaseTransitionBubble(phaseTransition()), false);
+  h.clock.now += 6 * 1000; // 11s since the first pop
+  assert.strictEqual(h.bubble.showPhaseTransitionBubble(phaseTransition()), true);
+  assert.strictEqual(h.win._shown, 2);
+});
+
+test("rapid switch rewrites the visible bubble to the final phase (one pop)", () => {
+  const h = makeHarness();
+  assert.strictEqual(
+    h.bubble.showPhaseTransitionBubble(phaseTransition({ toPhase: "execute", phaseLabel: "Execute" })),
+    true
+  );
+  h.clock.now += 2 * 1000; // still visible (SHOW_MS = 4s)
+  assert.strictEqual(
+    h.bubble.showPhaseTransitionBubble(phaseTransition({ fromPhase: "execute", toPhase: "check", phaseLabel: "Check" })),
+    true
+  );
+  assert.strictEqual(h.win._shown, 1); // rewritten in place, not re-popped
+  assert.deepStrictEqual(h.win._texts.at(-1), { title: "Task A", hint: "trellisPhaseBubbleHint:Check" });
+});
+
+test("rapid switch after the bubble hid stays silent, then recovers", () => {
+  const h = makeHarness();
+  assert.strictEqual(h.bubble.showPhaseTransitionBubble(phaseTransition()), true);
+  h.fireTimers(); // hidden after SHOW_MS
+  h.clock.now += 7 * 1000; // inside the 10s window, bubble hidden → dropped
+  assert.strictEqual(
+    h.bubble.showPhaseTransitionBubble(phaseTransition({ fromPhase: "execute", toPhase: "check", phaseLabel: "Check" })),
+    false
+  );
+  h.clock.now += 4 * 1000; // window passed → the genuine transition pops
+  assert.strictEqual(
+    h.bubble.showPhaseTransitionBubble(phaseTransition({ fromPhase: "execute", toPhase: "check", phaseLabel: "Check" })),
+    true
+  );
+  assert.strictEqual(h.win._shown, 2);
+});
+
+test("phase bubble keys stay independent of the idle shownTasks set", () => {
+  const h = makeHarness();
+  assert.strictEqual(h.bubble.showPhaseTransitionBubble(phaseTransition()), true);
+  h.fireTimers();
+  // The idle bubble can still show afterwards for the very same task.
+  assert.strictEqual(h.bubble.maybeShow(), true);
+  assert.strictEqual(h.win._texts.at(-1).hint, "trellisHintPlan");
 });

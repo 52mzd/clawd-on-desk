@@ -168,6 +168,24 @@ function deriveNextStepHint(trellisInfo) {
   return null;
 }
 
+// Localized phase-name key for the phase-transition bubble (v3 lifecycle
+// feedback): reuses the HUD badge keys so a phase is named identically
+// everywhere. Unknown phases answer null — the caller falls back to the
+// raw phase string instead of a wrong label.
+const PHASE_LABEL_KEYS = {
+  plan: "sessionHudTrellisPhasePlan",
+  execute: "sessionHudTrellisPhaseExecute",
+  check: "sessionHudTrellisPhaseCheck",
+  finish: "sessionHudTrellisPhaseFinish",
+  done: "sessionHudTrellisPhaseDone",
+};
+
+function phaseLabelKey(phase) {
+  return Object.prototype.hasOwnProperty.call(PHASE_LABEL_KEYS, phase)
+    ? PHASE_LABEL_KEYS[phase]
+    : null;
+}
+
 module.exports = {
   PLATFORM_ALIASES,
   SANITIZE_MAX_LEN,
@@ -178,4 +196,6 @@ module.exports = {
   derivePhase,
   deriveProgress,
   deriveNextStepHint,
+  PHASE_LABEL_KEYS,
+  phaseLabelKey,
 };

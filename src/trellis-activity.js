@@ -70,6 +70,7 @@ function createTrellisActivity(options) {
   const clearTimeoutFn = opts.clearTimeoutFn || clearTimeout;
   const onTrellisUpdate = typeof opts.onTrellisUpdate === "function" ? opts.onTrellisUpdate : null;
   const onCelebration = typeof opts.onCelebration === "function" ? opts.onCelebration : null;
+  const onPhaseTransition = typeof opts.onPhaseTransition === "function" ? opts.onPhaseTransition : null;
   const onAggregateChange = typeof opts.onAggregateChange === "function" ? opts.onAggregateChange : null;
 
   let lifecycleToken = 0;
@@ -514,17 +515,28 @@ function createTrellisActivity(options) {
     for (const { archivedDir, relPath } of archived) {
       if (lastCelebrationAt.has(archivedDir)) continue;
       lastCelebrationAt.set(archivedDir, nowMs);
+      // Archive move = arrival at done. The pointer is already deleted, so
+      // no title is available here — the bubble falls back to the task path.
+      if (onPhaseTransition) onPhaseTransition({ taskPath: relPath, title: null, fromPhase: null, toPhase: "done" });
       if (onCelebration) onCelebration(relPath);
     }
-    const seen = new Map(); // abs task dir → { relPath, phase }
+    const seen = new Map(); // abs task dir → { relPath, title, phase }
     for (const resolved of nextResolved.values()) {
       if (!resolved || !resolved.info) continue;
-      seen.set(resolved.absDir, { relPath: resolved.info.taskPath, phase: resolved.info.phase });
+      seen.set(resolved.absDir, {
+        relPath: resolved.info.taskPath,
+        title: resolved.info.title,
+        phase: resolved.info.phase,
+      });
     }
-    for (const [absDir, { relPath, phase }] of seen) {
+    for (const [absDir, { relPath, title, phase }] of seen) {
       const last = phaseHistory.get(absDir);
       phaseHistory.set(absDir, phase);
       if (!last || !phase || last === phase) continue;
+      // v3 lifecycle feedback: every genuine transition is surfaced to the
+      // host (one-shot phase bubble). The celebration below keeps its
+      // narrower finish/done-only remit and its own 10s jitter window.
+      if (onPhaseTransition) onPhaseTransition({ taskPath: relPath, title, fromPhase: last, toPhase: phase });
       if (phase !== "finish" && phase !== "done") continue;
       const lastAt = lastCelebrationAt.get(absDir) || 0;
       if (nowMs - lastAt < CELEBRATION_MIN_INTERVAL_MS) continue;

@@ -13,6 +13,7 @@ const {
   derivePhase,
   deriveProgress,
   deriveNextStepHint,
+  phaseLabelKey,
 } = require("../src/trellis-phase");
 
 // Every sanitize/hash expectation below was produced by running the Python
@@ -346,5 +347,22 @@ describe("deriveNextStepHint", () => {
     assert.strictEqual(deriveNextStepHint({ phase: null }), null);
     assert.strictEqual(deriveNextStepHint(null), null);
     assert.strictEqual(deriveNextStepHint("execute"), null);
+  });
+});
+
+describe("phaseLabelKey (phase-transition bubble labels)", () => {
+  it("maps every known phase onto the HUD badge key", () => {
+    assert.strictEqual(phaseLabelKey("plan"), "sessionHudTrellisPhasePlan");
+    assert.strictEqual(phaseLabelKey("execute"), "sessionHudTrellisPhaseExecute");
+    assert.strictEqual(phaseLabelKey("check"), "sessionHudTrellisPhaseCheck");
+    assert.strictEqual(phaseLabelKey("finish"), "sessionHudTrellisPhaseFinish");
+    assert.strictEqual(phaseLabelKey("done"), "sessionHudTrellisPhaseDone");
+  });
+
+  it("answers null for unknown phases (caller falls back to the raw phase)", () => {
+    assert.strictEqual(phaseLabelKey("nope"), null);
+    assert.strictEqual(phaseLabelKey(""), null);
+    assert.strictEqual(phaseLabelKey(null), null);
+    assert.strictEqual(phaseLabelKey(42), null);
   });
 });
