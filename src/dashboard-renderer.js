@@ -5,6 +5,8 @@ const {
   aggregateTrellisTasks,
   groupTrellisTasks,
   groupTrellisArchiveByMonth,
+  buildTrellisTree,
+  trellisArchiveMonthOf,
   trellisTaskOwningRoot,
   filterTrellisTasksByRoot,
   buildTrellisRootLabels,
@@ -1424,42 +1426,137 @@ async function removeTrellisRootFromRow(root) {
   }
 }
 
-function createTrellisActiveRow(groupRow, projectLabel) {
-  const task = groupRow.task;
+// ── Trellis task tree (independent view) ───────────────────────────────
+// One buildTrellisTree pass nests the (root-filtered) active + archive
+// lists; rendering is recursive DOM — each node is a row plus a bordered
+// children container (CSS indent + connector line), so collapsing a
+// subtree means simply not building its container. Expansion lives in
+// session memory keyed by taskPath: a Map of explicit overrides on top
+// of the per-node default (active branches expand, archive branches
+// start collapsed). Clicking a branch row (or its caret) toggles it;
+// leaf rows keep the v2 click semantics (open the detail overlay), and
+// the ⓘ button stays on every row so a collapsed branch still opens it.
+const trellisTreeExpanded = new Map(); // taskPath → boolean override
+
+function trellisTreeIsExpanded(node) {
+  const override = trellisTreeExpanded.get(node.task.taskPath);
+  if (typeof override === "boolean") return override;
+  return !node.archived;
+}
+
+function toggleTrellisTreeNode(node) {
+  trellisTreeExpanded.set(node.task.taskPath, !trellisTreeIsExpanded(node));
+  lastTrellisViewSignature = null;
+  renderTrellisView();
+}
+
+// expand-all / collapse-all: set the override on every branch node of the
+// given roots (leaf overrides are meaningless), then repaint once.
+function setTrellisTreeAllExpanded(roots, expanded) {
+  const stack = [...roots];
+  while (stack.length) {
+    const node = stack.pop();
+    if (node.children.length) trellisTreeExpanded.set(node.task.taskPath, expanded);
+    stack.push(...node.children);
+  }
+  lastTrellisViewSignature = null;
+  renderTrellisView();
+}
+
+function createTrellisTreeCaret(node) {
+  const caret = document.createElement("button");
+  caret.type = "button";
+  caret.className = "trellis-tree-caret";
+  caret.textContent = trellisTreeIsExpanded(node) ? "▾" : "▸";
+  caret.setAttribute("aria-expanded", trellisTreeIsExpanded(node) ? "true" : "false");
+  const label = node.task.title || node.task.taskPath;
+  caret.title = label;
+  caret.setAttribute("aria-label", label);
+  caret.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleTrellisTreeNode(node);
+  });
+  return caret;
+}
+
+function openTrellisDetailFromNode(node) {
+  const task = node.task;
+  if (node.archived) {
+    // Archived rows carry the cwd their archive scan resolved; no live
+    // binding exists to donate one (same payload as the v2 archive row).
+    void openTrellisDetail({
+      taskPath: task.taskPath,
+      title: task.title || "",
+      cwd: task.cwd || "",
+      sessions: [],
+      progress: null,
+    });
+    return;
+  }
+  void openTrellisDetail(task);
+}
+
+function createTrellisTreeNodeRow(node, projectLabel) {
+  const task = node.task;
   const row = document.createElement("div");
-  row.className = "trellis-task-row";
-  if (groupRow.depth > 0) row.classList.add("trellis-task-row-child");
-  if (groupRow.hasChildren) row.classList.add("trellis-task-row-group");
-  row.title = trellisTaskRowTitle(task);
+  row.className = node.archived ? "trellis-archive-row" : "trellis-task-row";
+  if (node.children.length) row.classList.add("trellis-task-row-group");
+  if (!node.archived) row.title = trellisTaskRowTitle(task);
 
   const main = document.createElement("div");
-  main.className = "trellis-task-main";
-  main.appendChild(createText("span", "trellis-task-title", task.title || task.taskPath));
-  // In the merged "all" view each row says which project it came from
-  // (the root's disambiguated label); a single-project view already says
-  // it in the filter title, so the tag would only repeat it.
-  if (projectLabel) {
-    main.appendChild(createText("span", "trellis-task-project", projectLabel));
-  }
+  main.className = node.archived ? "trellis-archive-main" : "trellis-task-main";
+  main.appendChild(
+    node.children.length ? createTrellisTreeCaret(node) : createText("span", "trellis-tree-caret-spacer", "")
+  );
 
-  const badge = TRELLIS_PHASE_BADGE[task.phase];
-  const phaseEl = createText("span", `trellis-phase-badge ${badge.cls}`, t(badge.labelKey));
-  main.appendChild(phaseEl);
-
-  if (groupRow.childSummary) {
-    main.appendChild(createText(
+  if (node.archived) {
+    main.appendChild(createText("span", "trellis-archive-title", task.title || task.taskPath));
+    if (projectLabel) {
+      main.appendChild(createText("span", "trellis-task-project", projectLabel));
+    }
+    const meta = document.createElement("span");
+    meta.className = "trellis-archive-meta";
+    const completed = trellisArchiveCompletedLabel(task);
+    if (completed) {
+      meta.appendChild(createText(
+        "span",
+        "trellis-archive-date",
+        t("dashboardTrellisDetailCompleted").replace("{date}", completed)
+      ));
+    }
+    meta.appendChild(createText(
       "span",
-      "trellis-task-group-summary",
-      t("dashboardTrellisGroupProgress")
-        .replace("{done}", String(groupRow.childSummary.done))
-        .replace("{total}", String(groupRow.childSummary.total))
+      "trellis-archive-duration",
+      formatTrellisArchiveDuration(task.durationMs)
     ));
-  } else if (task.progress) {
-    main.appendChild(createText(
-      "span",
-      "trellis-task-progress",
-      `${task.progress.done}/${task.progress.total}`
-    ));
+    main.appendChild(meta);
+  } else {
+    main.appendChild(createText("span", "trellis-task-title", task.title || task.taskPath));
+    if (projectLabel) {
+      main.appendChild(createText("span", "trellis-task-project", projectLabel));
+    }
+    const badge = TRELLIS_PHASE_BADGE[task.phase];
+    if (badge) {
+      main.appendChild(createText("span", `trellis-phase-badge ${badge.cls}`, t(badge.labelKey)));
+    }
+    // A branch row answers for its subtree (archived children carry no
+    // progress, so they never skew the sum); childless rows keep the
+    // plain task progress.
+    if (node.childSummary) {
+      main.appendChild(createText(
+        "span",
+        "trellis-task-group-summary",
+        t("dashboardTrellisGroupProgress")
+          .replace("{done}", String(node.childSummary.done))
+          .replace("{total}", String(node.childSummary.total))
+      ));
+    } else if (task.progress) {
+      main.appendChild(createText(
+        "span",
+        "trellis-task-progress",
+        `${task.progress.done}/${task.progress.total}`
+      ));
+    }
   }
 
   const detailBtn = document.createElement("button");
@@ -1470,14 +1567,53 @@ function createTrellisActiveRow(groupRow, projectLabel) {
   detailBtn.setAttribute("aria-label", t("dashboardTrellisDetailOpen"));
   detailBtn.addEventListener("click", (event) => {
     event.stopPropagation();
-    void openTrellisDetail(task);
+    openTrellisDetailFromNode(node);
   });
   main.appendChild(detailBtn);
   row.appendChild(main);
+
   row.addEventListener("click", () => {
-    void openTrellisDetail(task);
+    if (node.children.length) {
+      toggleTrellisTreeNode(node);
+      return;
+    }
+    openTrellisDetailFromNode(node);
   });
   return row;
+}
+
+function createTrellisTreeNodeEl(node, labels) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "trellis-tree-node";
+  wrapper.appendChild(createTrellisTreeNodeRow(node, trellisRowProjectLabel(node.task, labels)));
+  if (node.children.length && trellisTreeIsExpanded(node)) {
+    const kids = document.createElement("div");
+    kids.className = "trellis-tree-children";
+    for (const child of node.children) {
+      kids.appendChild(createTrellisTreeNodeEl(child, labels));
+    }
+    wrapper.appendChild(kids);
+  }
+  return wrapper;
+}
+
+function appendTrellisTreeTools(titleRow, roots) {
+  const expand = document.createElement("button");
+  expand.type = "button";
+  expand.className = "trellis-tree-tool";
+  expand.textContent = t("dashboardTrellisTreeExpandAll");
+  expand.addEventListener("click", () => {
+    setTrellisTreeAllExpanded(roots, true);
+  });
+  titleRow.appendChild(expand);
+  const collapse = document.createElement("button");
+  collapse.type = "button";
+  collapse.className = "trellis-tree-tool";
+  collapse.textContent = t("dashboardTrellisTreeCollapseAll");
+  collapse.addEventListener("click", () => {
+    setTrellisTreeAllExpanded(roots, false);
+  });
+  titleRow.appendChild(collapse);
 }
 
 function buildTrellisRootsSection() {
@@ -1598,7 +1734,7 @@ function buildTrellisFilterSection() {
   return section;
 }
 
-function buildTrellisActiveSection(tasks) {
+function buildTrellisActiveSection(tree, tasks) {
   const state = trellisView.active;
   const section = document.createElement("div");
   section.className = "trellis-view-section";
@@ -1606,6 +1742,11 @@ function buildTrellisActiveSection(tasks) {
   const titleRow = document.createElement("div");
   titleRow.className = "trellis-view-section-title";
   titleRow.appendChild(createText("span", "trellis-active-title", t("dashboardTrellisActiveTitle")));
+  // Expand/collapse all only make sense with rows on screen — the empty,
+  // loading and error states skip them.
+  if (tasks.length) {
+    appendTrellisTreeTools(titleRow, tree.roots.filter((node) => !node.archived));
+  }
   const refresh = document.createElement("button");
   refresh.type = "button";
   refresh.className = "trellis-archive-refresh trellis-active-refresh";
@@ -1625,9 +1766,12 @@ function buildTrellisActiveSection(tasks) {
   } else if (!tasks.length) {
     section.appendChild(createText("div", "trellis-view-empty", t("dashboardTrellisActiveEmpty")));
   } else {
+    // Active roots render their whole subtree — archived subtasks that
+    // linked back to a still-active parent show grey under it here (and
+    // are consequently absent from the archive section below).
     const labels = buildTrellisRootLabels(trellisView.roots);
-    for (const groupRow of groupTrellisTasks(tasks)) {
-      section.appendChild(createTrellisActiveRow(groupRow, trellisRowProjectLabel(groupRow.task, labels)));
+    for (const node of tree.roots) {
+      if (!node.archived) section.appendChild(createTrellisTreeNodeEl(node, labels));
     }
   }
   return section;
@@ -1655,11 +1799,25 @@ function computeTrellisViewSignature() {
         : null,
       tasks: trellisView.archive.tasks,
     },
+    treeExpanded: [...trellisTreeExpanded.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)),
   });
 }
 
 function renderTrellisView() {
   if (!trellisViewEl || activeView !== "trellis") return;
+  // Drop expansion overrides for tasks neither list carries anymore, so
+  // the Map stays bounded by live taskPaths (same pruning policy as the
+  // session-panel Set above).
+  const liveTreeKeys = new Set();
+  for (const task of trellisView.active.tasks) {
+    if (task && typeof task.taskPath === "string") liveTreeKeys.add(task.taskPath);
+  }
+  for (const task of trellisView.archive.tasks) {
+    if (task && typeof task.taskPath === "string") liveTreeKeys.add(task.taskPath);
+  }
+  for (const key of trellisTreeExpanded.keys()) {
+    if (!liveTreeKeys.has(key)) trellisTreeExpanded.delete(key);
+  }
   const signature = computeTrellisViewSignature();
   if (signature === lastTrellisViewSignature) return;
   lastTrellisViewSignature = signature;
@@ -1669,14 +1827,15 @@ function renderTrellisView() {
   const filterSection = buildTrellisFilterSection();
   if (filterSection) fragment.appendChild(filterSection);
   // The filter is render-layer only: the full lists stay in memory and
-  // each rebuild slices them down to the selected root.
+  // each rebuild slices them down to the selected root BEFORE the tree is
+  // built, so the nesting always reflects the filtered view (a parent
+  // filtered out flattens its orphaned children back to roots).
   const selectedRoot = trellisView.selectedRoot;
-  fragment.appendChild(buildTrellisActiveSection(
-    filterTrellisTasksByRoot(trellisView.active.tasks, trellisView.roots, selectedRoot)
-  ));
-  fragment.appendChild(buildTrellisArchiveSection(
-    filterTrellisTasksByRoot(trellisView.archive.tasks, trellisView.roots, selectedRoot)
-  ));
+  const activeFiltered = filterTrellisTasksByRoot(trellisView.active.tasks, trellisView.roots, selectedRoot);
+  const archiveFiltered = filterTrellisTasksByRoot(trellisView.archive.tasks, trellisView.roots, selectedRoot);
+  const tree = buildTrellisTree(activeFiltered, archiveFiltered);
+  fragment.appendChild(buildTrellisActiveSection(tree, activeFiltered));
+  fragment.appendChild(buildTrellisArchiveSection(tree, archiveFiltered));
   trellisViewEl.replaceChildren(fragment);
 }
 
@@ -1748,48 +1907,7 @@ function trellisArchiveCompletedLabel(task) {
   return "";
 }
 
-function createTrellisArchiveRow(task, projectLabel) {
-  const row = document.createElement("div");
-  row.className = "trellis-archive-row";
-
-  const main = document.createElement("div");
-  main.className = "trellis-archive-main";
-  main.appendChild(createText("span", "trellis-archive-title", task.title || task.taskPath));
-  // Same cross-project origin tag as the active rows: merged view only.
-  if (projectLabel) {
-    main.appendChild(createText("span", "trellis-task-project", projectLabel));
-  }
-
-  const meta = document.createElement("span");
-  meta.className = "trellis-archive-meta";
-  const completed = trellisArchiveCompletedLabel(task);
-  if (completed) {
-    meta.appendChild(createText(
-      "span",
-      "trellis-archive-date",
-      t("dashboardTrellisDetailCompleted").replace("{date}", completed)
-    ));
-  }
-  meta.appendChild(createText("span", "trellis-archive-duration", formatTrellisArchiveDuration(task.durationMs)));
-  main.appendChild(meta);
-  row.appendChild(main);
-
-  // Same detail overlay as a live task: no sessions ride along (the task
-  // is archived, nothing is bound to it anymore), but the row's own cwd
-  // resolves the detail read's .trellis root.
-  row.addEventListener("click", () => {
-    void openTrellisDetail({
-      taskPath: task.taskPath,
-      title: task.title || "",
-      cwd: task.cwd || "",
-      sessions: [],
-      progress: null,
-    });
-  });
-  return row;
-}
-
-function buildTrellisArchiveSection(tasks) {
+function buildTrellisArchiveSection(tree, tasks) {
   const state = trellisView.archive;
   const section = document.createElement("div");
   section.className = "trellis-view-section";
@@ -1800,6 +1918,10 @@ function buildTrellisArchiveSection(tasks) {
     ? `${t("dashboardTrellisArchiveTitle")} (${tasks.length})`
     : t("dashboardTrellisArchiveTitle");
   titleRow.appendChild(createText("span", "trellis-archive-title", label));
+  const archiveRoots = tree.roots.filter((node) => node.archived);
+  if (tasks.length) {
+    appendTrellisTreeTools(titleRow, archiveRoots);
+  }
   const refresh = document.createElement("button");
   refresh.type = "button";
   refresh.className = "trellis-archive-refresh";
@@ -1830,13 +1952,22 @@ function buildTrellisArchiveSection(tasks) {
   } else if (!tasks.length) {
     body.appendChild(createText("div", "trellis-archive-empty", t("dashboardTrellisArchivedEmpty")));
   } else {
-    // Month-grouped browser: collapsed groups show just the header
-    // ("2026-09 · 12"), expanding reveals that month's rows. This keeps
-    // a 200-task archive navigable without an unbounded flat list.
+    // Month-grouped browser over the archive ROOT nodes: a task nested
+    // under a parent (same month or cross-month) rides its parent's
+    // subtree wherever that parent lives, so only roots get a month slot
+    // and the group count is the number of expandable roots in it.
+    // Archived children still linked to an active parent are absent here
+    // entirely — they render in the active section under that parent.
     const labels = buildTrellisRootLabels(trellisView.roots);
-    const groups = groupTrellisArchiveByMonth(tasks);
-    for (const group of groups) {
-      const monthKey = group.month || "";
+    const byMonth = new Map();
+    for (const node of archiveRoots) {
+      const month = trellisArchiveMonthOf(node.task.taskPath);
+      if (!byMonth.has(month)) byMonth.set(month, []);
+      byMonth.get(month).push(node);
+    }
+    const months = [...byMonth.keys()].sort((a, b) => (a === b ? 0 : a < b ? 1 : -1));
+    for (const month of months) {
+      const monthKey = month || "";
       const isOpen = state.openMonths !== null && state.openMonths.has(monthKey);
       const monthHeader = document.createElement("button");
       monthHeader.type = "button";
@@ -1850,7 +1981,7 @@ function buildTrellisArchiveSection(tasks) {
       monthHeader.appendChild(createText(
         "span",
         "trellis-archive-month-label",
-        `${monthKey || t("dashboardTrellisArchivedUnknownMonth")} · ${group.tasks.length}`
+        `${monthKey || t("dashboardTrellisArchivedUnknownMonth")} · ${byMonth.get(monthKey).length}`
       ));
       monthHeader.addEventListener("click", () => {
         if (state.openMonths === null) state.openMonths = new Set();
@@ -1864,8 +1995,8 @@ function buildTrellisArchiveSection(tasks) {
       });
       body.appendChild(monthHeader);
       if (isOpen) {
-        for (const task of group.tasks) {
-          body.appendChild(createTrellisArchiveRow(task, trellisRowProjectLabel(task, labels)));
+        for (const node of byMonth.get(monthKey)) {
+          body.appendChild(createTrellisTreeNodeEl(node, labels));
         }
       }
     }

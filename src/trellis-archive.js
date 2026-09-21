@@ -9,13 +9,16 @@
 // already injects, so both consumers stay testable off the real disk.
 //
 // Entry shape (frozen, IPC/JSON-safe):
-//   { name, month, dir, title, createdAt, completedAt, completedAtMs }
+//   { name, month, dir, title, parent, createdAt, completedAt, completedAtMs }
 //     name/completedAt semantics mirror task.py: createdAt/completedAt are
 //     YYYY-MM-DD local-date strings, and a missing/invalid completedAt falls
 //     back to the task directory's mtime (exposed as completedAtMs only, so
 //     each consumer projects it into its own time zone — recap freezes it,
-//     the dashboard renders a local date). A task.json that cannot be read
-//     or parsed is skipped, exactly like the recap scan always did.
+//     the dashboard renders a local date). parent is the task.json `parent`
+//     task NAME (string) or null — the dashboard's archive tree resolves it
+//     by name across months; the recap scan ignores it. A task.json that
+//     cannot be read or parsed is skipped, exactly like the recap scan
+//     always did.
 
 const path = require("path");
 
@@ -83,11 +86,15 @@ function listArchivedTasks(fsApi, archiveBase, options) {
       const title = typeof taskJson.title === "string" && taskJson.title.trim()
         ? taskJson.title.trim()
         : null;
+      const parent = typeof taskJson.parent === "string" && taskJson.parent.trim()
+        ? taskJson.parent.trim()
+        : null;
       entries.push(Object.freeze({
         name,
         month,
         dir,
         title,
+        parent,
         createdAt: isValidDateString(taskJson.createdAt) ? taskJson.createdAt : null,
         completedAt,
         completedAtMs,

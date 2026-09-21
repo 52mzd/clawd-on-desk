@@ -699,6 +699,58 @@ Correct readArchiveList() 无参；根集来自 collectKnownRootCwds()
   archive 且隐藏来源标签、空项目置灰可点、注销所选 root 后回退
   全部、重名 basename 的 chip 与行标签
 
+#### §4.8 任务树（独立视图，活跃 + 归档统一嵌套）
+
+**1. Scope/Trigger**：任何「在独立 Trellis 视图内把活跃/归档任务按
+parent 嵌套成树」的代码。当前实现：`src/dashboard-trellis-panel.js`
+的 `buildTrellisTree` / `trellisArchiveMonthOf`、
+`src/dashboard-renderer.js` 的 `createTrellisTreeNodeEl` /
+`trellisTreeExpanded`。
+
+**2. Signatures**：
+- `buildTrellisTree(activeTasks, archivedTasks)` → `{roots, depthCap}`；
+  节点 `{task, archived, depth, children, childSummary:{done,total}|null}`。
+  纯函数：零 DOM/零 i18n/零 IPC（UMD 导出，测试直接 require）
+- `trellisArchiveMonthOf(taskPath)` → `"YYYY-MM"` 或 `""`：取
+  `"/archive/"` 段后的第一段（readArchiveList 的 taskPath 是
+  `.trellis/tasks/archive/<月>/<名>` 全路径）。**不得改回取第一段**——
+  v2 的月分组 bug 正是把全路径形态当 archive-relative 形态提取，
+  所有月份静默合并进单个 `.trellis` 组（当时无 month 断言所以绿灯）
+
+**3. Contracts**：
+- **parent 匹配四层规则**（parent 是 task.json 的同级任务 NAME，
+  逐层降级，歧义一律平铺不猜）：① 活跃子 → 同目录活跃父
+  （`dirname(taskPath)+"/"+parent` 必须在活跃集内，v1
+  groupTrellisTasks 同规则）；② 活跃子 → 唯一同名归档任务（任意月）；
+  ③ 归档子 → 同月同名归档父，无同月时唯一跨月匹配；④ 归档子 →
+  唯一同名活跃父（灰子挂活跃父下）。自指/环/超深（depth cap 32）
+  平铺到 depth 0，行永不丢、永不双出（emitted Set + slot 预留，
+  同 v2 防护模式）；活跃 taskPath 重复 first-wins 去重，归档重复行全保留
+- **灰子不重复**：归档子挂到活跃父后不再是 root，归档月分组只对
+  archive roots 做——它**只**出现在活跃父子树里，绝不同时出现在
+  归档月组。归档区标题计数仍是全部归档任务数，与月组行数可以
+  不一致（嵌套走的不占月组槽）
+- **childSummary** 汇总全部后代 progress（归档任务无 progress，
+  永不进分子分母）；组头行显示汇总，无子行的叶子保留自身 progress
+- **展开语义**：模块级 `Map<taskPath, boolean>` override + 默认值
+  （活跃分支展开、归档分支收起）；枝干行点击 = 切换子树（不打开
+  详情卡），叶子行点击 = v2 详情卡语义，ⓘ 按钮恒在；
+  expand/collapse-all 只对存在行的 section 渲染，且只动本 section
+  的枝干；视图签名含排序后的展开 entries——展开集稳定时 1s tick
+  不重建 DOM，override 以 live taskPath 集合修剪（不是只增不减）
+- **渲染**：递归 DOM（`row + .trellis-tree-children` 容器），CSS
+  缩进 + 左边框连接线，不引树组件；收起即不建子容器；递归深度
+  受纯函数 depth cap 约束（树深 ≤ 32，JS 栈/DOM 嵌套均安全）
+- **filter 先于树**：selectedRoot 过滤发生在 buildTrellisTree 之前，
+  被滤掉的父任务使其孤儿子平铺回 root（树始终反映过滤后视图）
+
+**4. Tests Required**（`test/dashboard-trellis-panel.test.js`）:
+- 纯函数：同目录嵌套/跨集嵌套四层各一例、歧义平铺、环/自指/垃圾
+  输入、depth cap 尾部重根、200 任务森林不丢不重、重复路径去重
+  语义、`trellisArchiveMonthOf` 形状表（含 legacy 相对形态 → ""）
+- 渲染：枝干点击切换且不开详情卡、归档分支默认收起、
+  expand/collapse-all 分区隔离、灰子挂活跃父且不在月组重复出现
+
 ### 5. 失败模式
 
 | 症状 | 根因 | 防护 |
@@ -714,6 +766,7 @@ Correct readArchiveList() 无参；根集来自 collectKnownRootCwds()
 | 同 overlay 连续打开多任务后内存膨胀 | doc 缓存只在 close 清，重入 open 残留 1MB×docs 死条目 | openTrellisDetail 与 closeTrellisDetail 都清空 trellisDetailDocs（§4.3） |
 | 陌生 cwd 能探测任意 .trellis | readTaskDetail 直接 findTrellisRoot(renderer 的 cwd) | cwd 必须过 isTrustedTrellisCwd 三源（见 §4.3）；两平台都要有用例 |
 | 独立视图活跃任务每条出现两次 | 注册根与子目录会话解析同一 root，readActiveList 无 root 去重 | seenRoots/rootToCwd 按 root 去重（§4.4/§4.6）+ 双源共享 root 回归用例 |
+| 归档区所有月份合进单个组（月浏览器失效） | 月提取把全路径 taskPath 当 archive-relative 形态切第一段（得到 `.trellis` 而非月份）——形态认知错位，且当时无 month 断言故绿灯 | 提取锚定 `/archive/` 段（`trellisArchiveMonthOf`）+ 形状表测试含 legacy 形态（§4.8）；改 taskPath 形态时同步改所有消费方提取逻辑 |
 
 ### 6. 测试断言点（review 必查）
 

@@ -64,11 +64,11 @@ test("month-less mode reads every YYYY-MM folder in lexical order", (t) => {
 test("exposes sanitized title/dates and skips unreadable task.json", (t) => {
   const archive = makeArchive(t, "sanitize");
   writeArchived(archive, "2026-09", "full", {
-    title: "  Full  ", createdAt: "2026-09-01", completedAt: "2026-09-20",
+    title: "  Full  ", parent: "  parent-name  ", createdAt: "2026-09-01", completedAt: "2026-09-20",
   });
   writeArchived(archive, "2026-09", "sparse", {});
   writeArchived(archive, "2026-09", "bad-dates", {
-    title: "Bad", createdAt: 20260901, completedAt: 20260920,
+    title: "Bad", parent: 42, createdAt: 20260901, completedAt: 20260920,
   });
   const corrupt = path.join(archive, "2026-09", "corrupt");
   fs.mkdirSync(corrupt, { recursive: true });
@@ -80,14 +80,17 @@ test("exposes sanitized title/dates and skips unreadable task.json", (t) => {
   assert.equal(byName.get("full").createdAt, "2026-09-01");
   assert.equal(byName.get("full").completedAt, "2026-09-20");
   assert.equal(byName.get("full").completedAtMs, Date.parse("2026-09-20"));
+  assert.equal(byName.get("full").parent, "parent-name", "the task.json parent NAME is trimmed and passed through for the archive tree");
 
   assert.ok(!byName.has("corrupt"), "corrupt task.json entries are skipped");
   const sparse = byName.get("sparse");
   assert.equal(sparse.title, null);
+  assert.equal(sparse.parent, null);
   assert.equal(sparse.createdAt, null);
   assert.equal(sparse.completedAt, null);
 
   const bad = byName.get("bad-dates");
+  assert.equal(bad.parent, null, "a non-string parent normalizes to null");
   assert.equal(bad.createdAt, null);
   assert.equal(bad.completedAt, null);
   // Invalid stored dates still fall back to the directory mtime.

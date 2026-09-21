@@ -700,6 +700,57 @@ h1 {
   cursor: pointer;
 }
 
+/* Task tree (independent view): rows nest inside .trellis-tree-children
+   containers whose left border doubles as the connector line — pure CSS
+   indent, no tree component. The caret column stays a fixed width so
+   branch and leaf rows align. */
+.trellis-tree-children {
+  margin-left: 14px;
+  padding-left: 10px;
+  border-left: 1px solid color-mix(in srgb, var(--muted, #6b7280) 35%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.trellis-tree-caret {
+  flex: 0 0 auto;
+  width: 16px;
+  border: none;
+  background: transparent;
+  color: var(--subtle);
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+.trellis-tree-caret:hover {
+  color: var(--text);
+}
+
+.trellis-tree-caret-spacer {
+  flex: 0 0 auto;
+  width: 16px;
+}
+
+/* Expand-all / collapse-all text buttons in the section title rows. */
+.trellis-tree-tool {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-alt);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.trellis-tree-tool:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
 /* Task detail: a modal card inside the Dashboard window. Clicks on the
    dimmed backdrop (not the card) and ESC close it. Same palette as the
    panel above; the card scrolls independently of the page. */

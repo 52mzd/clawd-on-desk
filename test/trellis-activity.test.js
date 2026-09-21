@@ -1518,6 +1518,7 @@ describe("trellis-activity readArchiveList", () => {
     assert.deepStrictEqual(result.tasks[0], {
       taskPath: ".trellis/tasks/archive/2026-09/newer",
       title: "Newer task",
+      parent: null,
       createdAt: "2026-09-18",
       completedAt: "2026-09-20",
       completedAtMs: Date.parse("2026-09-20"),
@@ -1527,6 +1528,19 @@ describe("trellis-activity readArchiveList", () => {
     assert.strictEqual(result.tasks[1].taskPath, ".trellis/tasks/archive/2026-08/older");
     assert.strictEqual(result.tasks[1].durationMs, 4 * 24 * 60 * 60 * 1000);
     assert.deepStrictEqual(h.fakeFs.writeOps, [], "archive reads stay read-only");
+  });
+
+  it("passes the task.json parent NAME through for the archive tree", async () => {
+    const h = makeArchiveHarness();
+    addArchived(h.fakeFs, "2026-09", "sub", {
+      title: "Sub", parent: "09-20-main", createdAt: "2026-09-18", completedAt: "2026-09-20",
+    });
+    h.activity.setPersistedRoots([PROJECT]);
+
+    const result = await h.activity.readArchiveList();
+    assert.strictEqual(result.tasks.length, 1);
+    assert.strictEqual(result.tasks[0].parent, "09-20-main",
+      "the by-name link survives the IPC boundary so the tree can match it cross-month");
   });
 
   it("caps the list at 200 newest-first and nulls zero/negative durations", async () => {

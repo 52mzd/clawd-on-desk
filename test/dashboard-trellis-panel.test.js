@@ -16,6 +16,10 @@ const { i18n } = require("../src/i18n");
 const {
   aggregateTrellisTasks,
   groupTrellisTasks,
+  groupTrellisArchiveByMonth,
+  buildTrellisTree,
+  trellisArchiveMonthOf,
+  TRELLIS_TREE_DEPTH_CAP,
   TRELLIS_PHASE_BADGE,
   normalizeProgress,
   trellisTaskOwningRoot,
@@ -298,6 +302,238 @@ describe("dashboard trellis panel grouping (pure)", () => {
     assert.deepEqual(groupTrellisTasks([]), []);
     assert.deepEqual(groupTrellisTasks(null), []);
     assert.equal(groupTrellisTasks([null, { taskPath: "x" }, {}]).length, 1);
+  });
+});
+
+describe("dashboard trellis tree building (pure)", () => {
+  function active(taskPath, extra = {}) {
+    return {
+      taskPath,
+      title: taskPath,
+      phase: "execute",
+      progress: null,
+      parent: null,
+      cwd: "/proj",
+      ...extra,
+    };
+  }
+
+  function archived(taskPath, extra = {}) {
+    return {
+      taskPath,
+      title: taskPath,
+      parent: null,
+      createdAt: "2026-09-01",
+      completedAt: "2026-09-20",
+      completedAtMs: Date.parse("2026-09-20"),
+      durationMs: null,
+      cwd: "/proj",
+      ...extra,
+    };
+  }
+
+  // Depth-first path projection of a tree: one "[A]/path@depth" per node.
+  function paths(roots) {
+    const out = [];
+    const walk = (nodes) => {
+      for (const node of nodes) {
+        out.push(`${node.archived ? "[A]" : ""}${node.task.taskPath}@${node.depth}`);
+        walk(node.children);
+      }
+    };
+    walk(roots);
+    return out;
+  }
+
+  it("nests active tasks arbitrarily deep via the same-directory parent rule", () => {
+    const tree = buildTrellisTree([
+      active(".trellis/tasks/top", { progress: { done: 1, total: 2 } }),
+      active(".trellis/tasks/mid", { parent: "top", progress: { done: 1, total: 4 } }),
+      active(".trellis/tasks/leaf", { parent: "mid", progress: { done: 2, total: 2 } }),
+      active(".trellis/tasks/solo"),
+    ], []);
+    assert.deepEqual(paths(tree.roots), [
+      ".trellis/tasks/top@0",
+      ".trellis/tasks/mid@1",
+      ".trellis/tasks/leaf@2",
+      ".trellis/tasks/solo@0",
+    ]);
+    assert.deepEqual(tree.roots[0].childSummary, { done: 3, total: 6 },
+      "subtree summary sums every descendant's progress (not the node's own)");
+    assert.deepEqual(tree.roots[0].children[0].childSummary, { done: 2, total: 2 });
+    assert.equal(tree.roots[0].children[0].children[0].childSummary, null);
+  });
+
+  it("nests an active child under its unique archived parent", () => {
+    const tree = buildTrellisTree(
+      [active(".trellis/tasks/late-kid", { parent: "done-parent" })],
+      [archived(".trellis/tasks/archive/2026-09/done-parent")],
+    );
+    assert.deepEqual(paths(tree.roots), [
+      "[A].trellis/tasks/archive/2026-09/done-parent@0",
+      ".trellis/tasks/late-kid@1",
+    ]);
+  });
+
+  it("nests archived children: same month first, then a unique cross-month match", () => {
+    const tree = buildTrellisTree([], [
+      archived(".trellis/tasks/archive/2026-09/parent-a"),
+      archived(".trellis/tasks/archive/2026-08/parent-b"),
+      archived(".trellis/tasks/archive/2026-09/kid-same", { parent: "parent-a" }),
+      archived(".trellis/tasks/archive/2026-08/kid-cross", { parent: "parent-b" }),
+      archived(".trellis/tasks/archive/2026-07/kid-crosser", { parent: "parent-b" }),
+    ]);
+    assert.deepEqual(paths(tree.roots), [
+      "[A].trellis/tasks/archive/2026-09/parent-a@0",
+      "[A].trellis/tasks/archive/2026-09/kid-same@1",
+      "[A].trellis/tasks/archive/2026-08/parent-b@0",
+      "[A].trellis/tasks/archive/2026-08/kid-cross@1",
+      "[A].trellis/tasks/archive/2026-07/kid-crosser@1",
+    ]);
+  });
+
+  it("flattens ambiguous archive parents instead of guessing", () => {
+    // Same parent NAME in two different months, child in a third month.
+    const tree = buildTrellisTree([], [
+      archived(".trellis/tasks/archive/2026-07/dup"),
+      archived(".trellis/tasks/archive/2026-08/dup"),
+      archived(".trellis/tasks/archive/2026-09/kid", { parent: "dup" }),
+      // Two same-name candidates inside the child's OWN month are equally
+      // ambiguous — no cross-month fallback may rescue a guess.
+      archived(".trellis/tasks/archive/2026-09/pair"),
+      archived(".trellis/tasks/archive/2026-09/pair", { title: "pair (other root)" }),
+      archived(".trellis/tasks/archive/2026-09/kid-pair", { parent: "pair" }),
+    ]);
+    assert.equal(tree.roots.length, 6);
+    assert.ok(tree.roots.every((node) => node.depth === 0 && node.children.length === 0),
+      "ambiguous parents leave the children flat");
+  });
+
+  it("nests an archived child under its still-active parent", () => {
+    const tree = buildTrellisTree(
+      [active(".trellis/tasks/live-parent", { progress: { done: 3, total: 5 } })],
+      [archived(".trellis/tasks/archive/2026-09/done-kid", { parent: "live-parent" })],
+    );
+    assert.deepEqual(paths(tree.roots), [
+      ".trellis/tasks/live-parent@0",
+      "[A].trellis/tasks/archive/2026-09/done-kid@1",
+    ]);
+    // Archived children carry no progress, so they never skew the sum.
+    assert.equal(tree.roots[0].childSummary, null);
+  });
+
+  it("keeps cycles, self-parents and unknown parents flat without dropping rows", () => {
+    const tree = buildTrellisTree([
+      active(".trellis/tasks/cyc-a", { parent: "cyc-b" }),
+      active(".trellis/tasks/cyc-b", { parent: "cyc-a" }),
+      active(".trellis/tasks/self", { parent: "self" }),
+      active(".trellis/tasks/orphan", { parent: "ghost" }),
+      active(".trellis/tasks/bad", { parent: 42 }),
+    ], []);
+    const flat = paths(tree.roots);
+    assert.equal(flat.length, 5, "every task still renders exactly once");
+    assert.deepEqual(flat, [
+      ".trellis/tasks/self@0",
+      ".trellis/tasks/orphan@0",
+      ".trellis/tasks/bad@0",
+      ".trellis/tasks/cyc-a@0", // cycle members flatten after the rooted rows
+      ".trellis/tasks/cyc-b@1", // the cycle partner follows the first-emitted member
+    ]);
+    const archivedCycle = buildTrellisTree([], [
+      archived(".trellis/tasks/archive/2026-09/rx", { parent: "ry" }),
+      archived(".trellis/tasks/archive/2026-09/ry", { parent: "rx" }),
+    ]);
+    assert.equal(archivedCycle.roots.reduce((n, node) => n + 1 + node.children.length, 0), 2);
+  });
+
+  it("pushes nesting past the depth cap down to flat roots", () => {
+    const chain = [];
+    for (let i = 0; i < TRELLIS_TREE_DEPTH_CAP + 5; i++) {
+      chain.push(active(`.trellis/tasks/n${i}`, i === 0 ? {} : { parent: `n${i - 1}` }));
+    }
+    const tree = buildTrellisTree(chain, []);
+    let deepest = 0;
+    let count = 0;
+    const walk = (nodes) => {
+      for (const node of nodes) {
+        count += 1;
+        deepest = Math.max(deepest, node.depth);
+        walk(node.children);
+      }
+    };
+    walk(tree.roots);
+    assert.equal(count, chain.length, "no task is dropped at the cap");
+    assert.equal(deepest, TRELLIS_TREE_DEPTH_CAP,
+      "the overflow tail re-roots at depth 0 instead of nesting deeper");
+  });
+
+  it("builds a 200-task forest with random parents without dropping or duplicating rows", () => {
+    let seed = 42;
+    const rand = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    const actives = [];
+    for (let i = 0; i < 120; i++) {
+      const parent = i > 0 && rand() < 0.7 ? `n${Math.floor(rand() * i)}` : null;
+      actives.push(active(`.trellis/tasks/n${i}`, { parent }));
+    }
+    const archives = [];
+    for (let i = 0; i < 80; i++) {
+      const roll = rand();
+      const parent = roll < 0.4 ? `n${Math.floor(rand() * 120)}`
+        : roll < 0.8 ? `a${Math.floor(rand() * 80)}`
+        : null;
+      archives.push(archived(`.trellis/tasks/archive/2026-0${9 - (i % 3)}/a${i}`, { parent }));
+    }
+    const tree = buildTrellisTree(actives, archives);
+    const seen = new Set();
+    let count = 0;
+    const walk = (nodes) => {
+      for (const node of nodes) {
+        count += 1;
+        assert.ok(!seen.has(node.task), "each task object appears exactly once");
+        seen.add(node.task);
+        walk(node.children);
+      }
+    };
+    walk(tree.roots);
+    assert.equal(count, 200);
+  });
+
+  it("dedupes duplicate active taskPaths (first wins) but keeps duplicate archive rows", () => {
+    const tree = buildTrellisTree([
+      active(".trellis/tasks/dup", { title: "first" }),
+      active(".trellis/tasks/dup", { title: "second" }),
+    ], [
+      archived(".trellis/tasks/archive/2026-09/dup"),
+      archived(".trellis/tasks/archive/2026-09/dup", { title: "other root" }),
+    ]);
+    assert.equal(tree.roots.length, 3);
+    assert.equal(tree.roots[0].task.title, "first");
+  });
+
+  it("extracts the month from the /archive/ segment and groups months descending", () => {
+    assert.equal(trellisArchiveMonthOf(".trellis/tasks/archive/2026-09/name"), "2026-09");
+    assert.equal(trellisArchiveMonthOf(".trellis/tasks/archive/2026-09/deep/name"), "2026-09");
+    assert.equal(trellisArchiveMonthOf(".trellis/tasks/archive/nope"), "");
+    assert.equal(trellisArchiveMonthOf("2026-09/name"), "", "legacy archive-relative shapes have no /archive/ segment");
+    const groups = groupTrellisArchiveByMonth([
+      { taskPath: ".trellis/tasks/archive/2026-09/a" },
+      { taskPath: ".trellis/tasks/archive/2026-08/b" },
+      { taskPath: ".trellis/tasks/archive/2026-09/c" },
+      { taskPath: ".trellis/tasks/weird" },
+    ]);
+    assert.deepEqual(groups.map((g) => [g.month, g.tasks.length]), [
+      ["2026-09", 2],
+      ["2026-08", 1],
+      ["", 1],
+    ]);
+  });
+
+  it("tolerates junk input without throwing", () => {
+    assert.deepEqual(buildTrellisTree(null, null).roots, []);
+    assert.deepEqual(buildTrellisTree([null, {}, { taskPath: "x" }], [null]).roots.length > 0, true);
   });
 });
 
@@ -1384,6 +1620,153 @@ describe("dashboard trellis independent view", () => {
     assert.ok(text.includes(
       new Date(Date.parse("2026-09-20")).toLocaleDateString("en")
     ), "mtime-completed tasks render a localized date");
+  });
+
+  it("nests active children under their parent and toggles the subtree on row click", async () => {
+    const app = loadDashboard({
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/s1"] },
+      activeResult: { status: "ok", tasks: [
+        {
+          taskPath: ".trellis/tasks/parent", title: "Parent", phase: "execute",
+          progress: null, parent: null, cwd: "/proj/s1",
+        },
+        {
+          taskPath: ".trellis/tasks/kid", title: "Kid", phase: "plan",
+          progress: { done: 1, total: 2 }, parent: "parent", cwd: "/proj/s1",
+        },
+      ] },
+      archiveResult: { status: "ok", tasks: [] },
+    });
+    await flush();
+    await switchToTrellis(app);
+
+    // Default: an active branch starts expanded — kid renders inside the
+    // parent's children container (CSS indent + connector line).
+    const kidsContainers = byClass(app.view, "trellis-tree-children");
+    assert.equal(kidsContainers.length, 1);
+    const kidRows = byClass(kidsContainers[0], "trellis-task-row");
+    assert.equal(kidRows.length, 1);
+    assert.ok(textOf(kidRows[0]).includes("Kid"));
+    const carets = byClass(app.view, "trellis-tree-caret");
+    assert.equal(carets.length, 1, "only the branch row carries a caret");
+    assert.equal(carets[0].attributes["aria-expanded"], "true");
+
+    // Clicking the branch row (PRD acceptance) collapses the subtree and
+    // must NOT open the detail overlay — the ⓘ button stays for that.
+    const parentRow = byClass(app.view, "trellis-task-row")[0];
+    await parentRow.dispatch("click");
+    assert.equal(byClass(app.view, "trellis-tree-children").length, 0,
+      "collapsing drops the whole children container");
+    assert.equal(app.detailCalls.length, 0, "a branch row click toggles, it does not open details");
+    assert.equal(byClass(app.view, "trellis-tree-caret")[0].attributes["aria-expanded"], "false");
+
+    await byClass(app.view, "trellis-tree-caret")[0].dispatch("click");
+    assert.equal(byClass(app.view, "trellis-tree-children").length, 1,
+      "the caret alone re-expands the subtree");
+
+    // A leaf row keeps the v2 click semantics: open the detail overlay.
+    const leafRow = byClass(byClass(app.view, "trellis-tree-children")[0], "trellis-task-row")[0];
+    await leafRow.dispatch("click");
+    assert.deepEqual(app.detailCalls, [{ taskPath: ".trellis/tasks/kid", cwd: "/proj/s1" }]);
+  });
+
+  it("starts archive branches collapsed and wires the expand/collapse-all tools", async () => {
+    const app = loadDashboard({
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/s1"] },
+      activeResult: { status: "ok", tasks: [
+        {
+          taskPath: ".trellis/tasks/live", title: "Live", phase: "execute",
+          progress: null, parent: null, cwd: "/proj/s1",
+        },
+        {
+          taskPath: ".trellis/tasks/live-kid", title: "Live kid", phase: "plan",
+          progress: null, parent: "live", cwd: "/proj/s1",
+        },
+      ] },
+      archiveResult: { status: "ok", tasks: [
+        archivedTask({ title: "Arch parent" }),
+        archivedTask({
+          taskPath: ".trellis/tasks/archive/2026-09/arch-kid",
+          title: "Arch kid",
+          parent: "done-thing",
+        }),
+      ] },
+    });
+    await flush();
+    await switchToTrellis(app);
+
+    // Newest month is open by default, but archive BRANCHES start
+    // collapsed: only the parent row shows, no children container.
+    assert.equal(byClass(app.view, "trellis-archive-row").length, 1,
+      "only the archive parent row renders until it is expanded");
+    assert.equal(byClass(app.view, "trellis-tree-children").length, 1,
+      "the active branch still renders expanded");
+
+    // The tools only exist where rows exist; the second pair belongs to
+    // the archive section (DOM order: active tools, then archive tools).
+    const tools = byClass(app.view, "trellis-tree-tool");
+    assert.equal(tools.length, 4, "each non-empty section carries expand + collapse");
+    await tools[2].dispatch("click");
+    assert.equal(tools[2].textContent, i18n.en.dashboardTrellisTreeExpandAll);
+    assert.equal(byClass(app.view, "trellis-archive-row").length, 2,
+      "expand-all reveals the nested archive child");
+
+    await tools[3].dispatch("click");
+    assert.equal(tools[3].textContent, i18n.en.dashboardTrellisTreeCollapseAll);
+    assert.equal(byClass(app.view, "trellis-archive-row").length, 1,
+      "collapse-all on the archive section folds only its own branches");
+    assert.equal(byClass(app.view, "trellis-tree-children").length, 1,
+      "the active branch stays expanded — the tools are per section");
+  });
+
+  it("shows an archived subtask under its still-active parent and keeps it out of the archive months", async () => {
+    const app = loadDashboard({
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/s1"] },
+      activeResult: { status: "ok", tasks: [
+        {
+          taskPath: ".trellis/tasks/live-parent", title: "Live parent", phase: "execute",
+          progress: null, parent: null, cwd: "/proj/s1",
+        },
+      ] },
+      archiveResult: { status: "ok", tasks: [
+        archivedTask({
+          taskPath: ".trellis/tasks/archive/2026-09/done-kid",
+          title: "Done kid",
+          parent: "live-parent",
+        }),
+        archivedTask({
+          taskPath: ".trellis/tasks/archive/2026-08/old-loner",
+          title: "Old loner",
+        }),
+      ] },
+    });
+    await flush();
+    await switchToTrellis(app);
+
+    // The archived child renders grey (archive row) inside the active
+    // parent's subtree, with its completed date and duration.
+    const activeTree = byClass(app.view, "trellis-tree-children")[0];
+    const greyRows = byClass(activeTree, "trellis-archive-row");
+    assert.equal(greyRows.length, 1);
+    const grey = textOf(greyRows[0]);
+    assert.ok(grey.includes("Done kid"));
+    assert.ok(grey.includes(
+      i18n.en.dashboardTrellisDetailCompleted.replace("{date}", "2026-09-20")
+    ));
+    assert.ok(grey.includes(i18n.en.dashboardTrellisArchivedDurationDays.replace("{n}", "10")));
+
+    // The archive section counts both archived tasks but the newest month
+    // group only holds the rooted loner… wait, done-kid lives under the
+    // active parent so 2026-09 has NO rooted row at all.
+    assert.ok(textOf(app.view).includes(
+      `${i18n.en.dashboardTrellisArchiveTitle} (2)`
+    ), "the section header counts every archived task");
+    const monthLabels = byClass(app.view, "trellis-archive-month-label").map((el) => textOf(el));
+    assert.deepEqual(monthLabels, [`2026-08 · 1`],
+      "months with only nested-away tasks show no rooted rows; cross-month roots group by their own month");
   });
 });
 
