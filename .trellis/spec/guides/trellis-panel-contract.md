@@ -672,6 +672,24 @@ Correct readArchiveList() 无参；根集来自 collectKnownRootCwds()
   beginQuickRound，一例即可覆盖）
 - `.trellis-view[hidden]` 静态 CSS 守卫
 
+#### §4.6a Roots 管理的 pick 语义（67f62d6c）
+
+- roots 区渲染的是**用户选择**（pick）而不是展开后的项目根：多项目
+  pick（~/Downloads/codes → 5 个子项目）只显示一行——选择目录 + ×N
+  徽标 + 一个移除按钮（移除即撤销该 pick 注册的全部根）。
+- pick 簿记在 main（`_trellisRootsPicks` Map），`dashboard:trellis-pick-remove`
+  通道严格 `{picked}` 单字符串 payload；无 pick 记录的根（会话解析/
+  历史持久化）仍逐根渲染，保证一切可管理。
+- picker 的选择**权威且不向上爬**：`isDirectProjectRoot` 只查所选目录
+  本身（aeba090e 的教训——resolveProjectRoot 的向上 .trellis 爬会把
+  整个 $HOME 注册成根）；三态：本项目→注册它 / 直接子级含项目→批量
+  注册（CHILD_PROJECT_MAX=32）/ 否则 UI 提示"无 trellis 项目"。
+- 树视觉（纯 CSS，无树组件）：连接线渐变辉光珠、[data-depth] 1-5
+  深度着色内衬（蓝→紫→琥珀→橙→红）、行 hover 2px 位移、caret 悬停
+  缩放、展开 160ms unfold 动画。**选择器必须锚定真实行类名**
+  `.trellis-task-row / .trellis-archive-row`（曾写成 .trellis-tree-row
+  匹配空）。
+
 #### §4.7 多项目筛选（独立视图 chip 行，纯渲染层）
 
 **1. Scope/Trigger**：任何「在独立 Trellis 视图内按项目根切分/合并
