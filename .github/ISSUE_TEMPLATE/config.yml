@@ -1,5 +1,5 @@
 blank_issues_enabled: true
 contact_links:
-  - name: "💬 Questions & support"
+  - name: "💬 Questions & support / 问题与支持"
     url: https://github.com/rullerzhou-afk/clawd-on-desk/discussions
-    about: "Ask usage questions, troubleshoot setup, or discuss ideas with the community."
+    about: "Ask usage questions or troubleshoot setup. / 使用问题、配置排查和一般讨论请前往 Discussions。"

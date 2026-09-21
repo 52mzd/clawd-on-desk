@@ -1,4 +1,4 @@
-name: "🔌 Agent / integration issue"
+name: "🔌 Agent / integration issue (English)"
 description: "Report an AI-agent, hook, permission, session, focus, WSL, or Remote SSH integration problem"
 labels:
   - bug
