@@ -198,6 +198,7 @@ async function renderer(options = {}) {
         focusUnavailableReasonKey: () => "sessionFocusUnavailableRemote",
       },
       ClawdDashboardTrellisPanel: require("../src/dashboard-trellis-panel"),
+      ClawdTrellisDocRenderer: require("../src/trellis-doc-renderer"),
     },
     setTimeout: (fn, delay) => {
       const id = ++timerId;

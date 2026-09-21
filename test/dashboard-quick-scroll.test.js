@@ -180,6 +180,7 @@ async function renderer(options = {}) {
         focusUnavailableReasonKey: () => "sessionFocusUnavailableRemote",
       },
       ClawdDashboardTrellisPanel: require("../src/dashboard-trellis-panel"),
+      ClawdTrellisDocRenderer: require("../src/trellis-doc-renderer"),
     },
     ResizeObserver: options.noResizeObserver ? undefined : class {
       constructor(callback) { this.callback = callback; observers.push(this); }

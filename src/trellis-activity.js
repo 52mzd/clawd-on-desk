@@ -33,6 +33,7 @@
 
 const path = require("path");
 const { parseImplementChecklist, truncateNextStep } = require("./trellis-checklist");
+const { compareDocNames } = require("./trellis-doc-renderer");
 const { listArchivedTasks } = require("./trellis-archive");
 const { normalizeRootPath } = require("./trellis-roots");
 const {
@@ -727,22 +728,29 @@ function createTrellisActivity(options) {
   // for a live task, ".trellis/tasks/archive/<month>/<name>" for one that
   // already moved). Results:
   //   { status: "ok", task: { title, phase, rawStatus, createdAt,
-  //                           completedAt, archived, checklist } }
+  //                           completedAt, archived, checklist, docs } }
   //   { status: "missing" }          — no root / task dir nowhere on disk
   //   { status: "error", message }   — unreadable (corrupt) task.json
+  // docs lists the task dir's *.md files (name + byte size) so the card can
+  // offer one tab per document; contents are read separately, one doc at a
+  // time, by readTaskDoc.
   const TASK_DETAIL_PREFIX = ".trellis/tasks/";
 
-  async function readTaskDetail(cwd, taskPath) {
-    if (typeof cwd !== "string" || !cwd.trim()) return { status: "missing" };
+  // Shared path resolution for the on-demand detail/doc reads: validates
+  // the trusted cwd + the renderer-supplied taskPath (prefix + per-segment
+  // containment on BOTH separators), then resolves the task dir with the
+  // active→archive fallback. Returns { absDir, archived } or null.
+  async function resolveTaskDir(cwd, taskPath) {
+    if (typeof cwd !== "string" || !cwd.trim()) return null;
     if (typeof taskPath !== "string" || !taskPath.startsWith(TASK_DETAIL_PREFIX)) {
-      return { status: "missing" };
+      return null;
     }
     // Only a cwd a live trellis-capable session is working in, one that
     // resolved a .trellis root earlier in this process, or a registered
     // project root may resolve a root. Rows are built from exactly those
     // sources, so a compromised renderer cannot probe .trellis trees no
     // session ever touched and no user ever registered.
-    if (!isTrustedTrellisCwd(cwd)) return { status: "missing" };
+    if (!isTrustedTrellisCwd(cwd)) return null;
     // Split on BOTH separators before validating: on win32 path.join
     // normalizes backslash segments too, so a "/"-only split would let
     // ".trellis/tasks/a\..\..\x" join outside the root.
@@ -750,26 +758,33 @@ function createTrellisActivity(options) {
     // Path containment: the renderer supplies this string, so traversal
     // segments must be rejected before they ever reach path.join.
     if (!segments.length || segments.some((s) => !s || s === "." || s === "..")) {
-      return { status: "missing" };
+      return null;
     }
     const root = await findTrellisRoot(cwd);
-    if (!root) return { status: "missing" };
+    if (!root) return null;
 
     let absDir = path.join(root, "tasks", ...segments);
     let archived = segments[0] === "archive";
     const st = await statQuiet(absDir);
     if (!(st && st.isDirectory())) {
-      if (archived) return { status: "missing" };
+      if (archived) return null;
       // Active dir gone → maybe it was just archived (task.py moves the dir
-      // in one commit); the archive copy answers the same detail read.
+      // in one commit); the archive copy answers the same reads.
       const archivedDir = await findArchivedTaskDir(
         path.join(root, "tasks", "archive"),
         segments[segments.length - 1]
       );
-      if (!archivedDir) return { status: "missing" };
+      if (!archivedDir) return null;
       absDir = archivedDir;
       archived = true;
     }
+    return { absDir, archived };
+  }
+
+  async function readTaskDetail(cwd, taskPath) {
+    const resolved = await resolveTaskDir(cwd, taskPath);
+    if (!resolved) return { status: "missing" };
+    const { absDir, archived } = resolved;
 
     const taskJson = await readJsonObject(path.join(absDir, "task.json"));
     // A corrupt task.json cannot answer any of the card's fields — surface
@@ -797,12 +812,86 @@ function createTrellisActivity(options) {
           done: checklist.done,
           total: checklist.total,
         },
+        docs: await listTaskDocs(absDir),
       },
     };
   }
 
   function sanitizeTaskDate(value) {
     return typeof value === "string" && value.trim() ? value.trim() : null;
+  }
+
+  // The task dir's markdown documents for the detail card's doc tabs:
+  // every regular *.md file, canonical Trellis names first (prd → design →
+  // implement), everything else alphabetically. sizes are byte lengths of
+  // the utf-8 contents (fake fs stats carry no size field, so the read
+  // itself is the source of truth — one small read per file, only on the
+  // on-demand detail path).
+  async function listTaskDocs(absDir) {
+    const entries = await readdirQuiet(absDir);
+    if (!entries) return [];
+    const docs = [];
+    for (const name of entries) {
+      if (!name.endsWith(".md")) continue;
+      const st = await statQuiet(path.join(absDir, name));
+      if (!(st && !st.isDirectory())) continue;
+      const content = await readTextQuiet(path.join(absDir, name));
+      if (content === null) continue;
+      docs.push({ name, size: Buffer.byteLength(content, "utf8") });
+    }
+    docs.sort((a, b) => compareDocNames(a.name, b.name));
+    return docs;
+  }
+
+  // Single-document read for the detail card's doc tabs. Same trust surface
+  // and same taskPath containment as readTaskDetail (resolveTaskDir); the
+  // `doc` argument must additionally be a plain *.md basename that is a
+  // member of the directory's freshly listed file set — never a path, never
+  // a name that was not listed. Content is capped at TASK_DOC_MAX_BYTES
+  // (beyond that it is byte-truncated and flagged, so a runaway document
+  // cannot drag the whole card down). Document contents are ephemeral:
+  // they ride the IPC reply only — never prefs, never logs, never disk.
+  //   { status: "ok", name, size, truncated, content }
+  //   { status: "missing" }        — bad doc name / not listed / unreadable
+  const TASK_DOC_MAX_BYTES = 1024 * 1024;
+
+  async function readTaskDoc(cwd, taskPath, doc) {
+    const resolved = await resolveTaskDir(cwd, taskPath);
+    if (!resolved) return { status: "missing" };
+    if (
+      typeof doc !== "string"
+      || !doc.endsWith(".md")
+      || !doc.slice(0, -3)
+      || doc.includes("/")
+      || doc.includes("\\")
+      || doc === "."
+      || doc === ".."
+    ) {
+      return { status: "missing" };
+    }
+    // Whitelist membership: only a name the directory itself just listed
+    // may be read — the renderer cannot name a file that is not there.
+    const entries = await readdirQuiet(resolved.absDir);
+    if (!entries || !entries.includes(doc)) return { status: "missing" };
+    const st = await statQuiet(path.join(resolved.absDir, doc));
+    if (!(st && !st.isDirectory())) return { status: "missing" };
+
+    const content = await readTextQuiet(path.join(resolved.absDir, doc));
+    if (content === null) return { status: "missing" };
+    const size = Buffer.byteLength(content, "utf8");
+    if (size <= TASK_DOC_MAX_BYTES) {
+      return { status: "ok", name: doc, size, truncated: false, content };
+    }
+    const truncatedContent = Buffer.from(content, "utf8")
+      .subarray(0, TASK_DOC_MAX_BYTES)
+      .toString("utf8");
+    return {
+      status: "ok",
+      name: doc,
+      size,
+      truncated: true,
+      content: truncatedContent,
+    };
   }
 
   // On-demand read of the most recently archived tasks for the Dashboard's
@@ -948,6 +1037,7 @@ function createTrellisActivity(options) {
     setPersistedRoots,
     resolveProjectRoot,
     readTaskDetail,
+    readTaskDoc,
     readArchiveList,
     readActiveList,
   };

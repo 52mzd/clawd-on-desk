@@ -320,6 +320,7 @@ class FakeClassList {
     const on = force === undefined ? !this.contains(name) : !!force;
     if (on) this.add(name);
     else this.remove(name);
+    return on;
   }
 }
 
@@ -377,6 +378,8 @@ function loadDashboard({
   sessions = [],
   detailResult = null,
   detailError = null,
+  docResult = null,
+  docError = null,
   archiveResult = null,
   archiveError = null,
   activeResult = null,
@@ -412,6 +415,7 @@ function loadDashboard({
 
   const focusCalls = [];
   const detailCalls = [];
+  const docCalls = [];
   const archiveCalls = [];
   const activeCalls = [];
   const rootsCalls = [];
@@ -448,6 +452,11 @@ function loadDashboard({
       detailCalls.push(payload);
       if (detailError) throw detailError;
       return typeof detailResult === "function" ? detailResult(payload) : detailResult;
+    },
+    getTrellisTaskDoc: async (payload) => {
+      docCalls.push(payload);
+      if (docError) throw docError;
+      return typeof docResult === "function" ? docResult(payload) : docResult;
     },
     getTrellisArchiveList: async () => {
       archiveCalls.push(null);
@@ -492,6 +501,10 @@ function loadDashboard({
     context,
   );
   vm.runInContext(
+    fs.readFileSync(path.join(__dirname, "..", "src", "trellis-doc-renderer.js"), "utf8"),
+    context,
+  );
+  vm.runInContext(
     fs.readFileSync(path.join(__dirname, "..", "src", "dashboard-renderer.js"), "utf8"),
     context,
   );
@@ -507,6 +520,7 @@ function loadDashboard({
     headerExtras: elements.get("sessionsHeaderExtras"),
     focusCalls,
     detailCalls,
+    docCalls,
     archiveCalls,
     activeCalls,
     rootsCalls,
@@ -651,6 +665,7 @@ function detailOk(extra = {}) {
       createdAt: "2026-09-20",
       completedAt: null,
       archived: false,
+      docs: [],
       checklist: {
         items: [{ text: "step one", checked: true }, { text: "step two", checked: false }],
         done: 1,
@@ -809,6 +824,246 @@ describe("dashboard trellis task detail overlay", () => {
     app.tickRender();
     assert.equal(app.overlay.hidden, false, "the periodic rebuild must not close the card");
     assert.ok(textOf(app.overlay).includes("Title from disk"));
+  });
+});
+
+// ── Task detail document tabs (renderer harness) ─────────────────────
+
+const DOC_TASK = { taskPath: ".trellis/tasks/docs", title: "Docs", phase: "execute" };
+const DOC_LIST = [
+  { name: "prd.md", size: 120 },
+  { name: "implement.md", size: 80 },
+  { name: "research-notes.md", size: 40 },
+];
+
+function docOk(content, extra = {}) {
+  return {
+    status: "ok",
+    name: "prd.md",
+    size: Buffer.byteLength(content, "utf8"),
+    truncated: false,
+    content,
+    ...extra,
+  };
+}
+
+async function openDetailWithDocs(app, docResult) {
+  await openDetail(app);
+  return docResult;
+}
+
+async function clickTab(app, label) {
+  const tab = byClass(app.overlay, "trellis-detail-tab")
+    .find((el) => textOf(el) === label);
+  assert.ok(tab, `tab ${label} must exist`);
+  await tab.dispatch("click");
+  await flush();
+}
+
+describe("dashboard trellis task detail doc tabs", () => {
+  it("renders one tab per listed doc with overview active by default", async () => {
+    const app = loadDashboard({
+      sessions: [bindingSession("s1", DOC_TASK)],
+      detailResult: detailOk({ docs: DOC_LIST }),
+    });
+    await flush();
+    await openDetail(app);
+
+    const tabs = byClass(app.overlay, "trellis-detail-tab");
+    assert.deepEqual(tabs.map((el) => textOf(el)), [
+      i18n.en.dashboardTrellisDetailTabOverview, "prd", "implement", "research-notes",
+    ]);
+    assert.equal(tabs[0].attributes["aria-selected"], "true");
+    assert.deepEqual(app.docCalls, [], "no doc is read until its tab is opened");
+    assert.ok(textOf(app.overlay).includes("step one"), "overview content stays visible");
+  });
+
+  it("fetches a doc once on tab click and renders the GFM subset", async () => {
+    const md = [
+      "# 标题",
+      "",
+      "| 列 | 值 |",
+      "| --- | --- |",
+      "| a | **b** |",
+      "",
+      "- [x] 完成",
+      "- [ ] 待办",
+      "",
+      "```",
+      "const x = 1;",
+      "```",
+    ].join("\n");
+    const app = loadDashboard({
+      sessions: [bindingSession("s1", DOC_TASK)],
+      detailResult: detailOk({ docs: DOC_LIST }),
+      docResult: docOk(md),
+    });
+    await flush();
+    await openDetail(app);
+    await clickTab(app, "prd");
+
+    assert.deepEqual(app.docCalls, [{
+      taskPath: ".trellis/tasks/docs",
+      cwd: "/proj/s1",
+      doc: "prd.md",
+    }], "exactly one on-demand doc read with the frozen cwd");
+
+    const doc = byClass(app.overlay, "trellis-detail-doc")[0];
+    assert.ok(doc, "doc view renders");
+    assert.equal(byClass(app.overlay, "md-h1").length, 1);
+    assert.equal(byClass(app.overlay, "md-table").length, 1);
+    assert.equal(byClass(app.overlay, "md-bold").length, 1);
+    assert.equal(byClass(app.overlay, "md-task").length, 2);
+    assert.equal(byClass(app.overlay, "md-code").length, 1);
+    assert.ok(!textOf(app.overlay).includes("step one"), "overview content is tabbed away");
+
+    // Reopening the same tab within the open card hits the cache only.
+    await clickTab(app, i18n.en.dashboardTrellisDetailTabOverview);
+    await clickTab(app, "prd");
+    assert.equal(app.docCalls.length, 1, "cached doc is not re-fetched");
+  });
+
+  it("shows the truncation note for a truncated document", async () => {
+    const app = loadDashboard({
+      sessions: [bindingSession("s1", DOC_TASK)],
+      detailResult: detailOk({ docs: DOC_LIST }),
+      docResult: docOk("x", { truncated: true, size: 2 * 1024 * 1024 }),
+    });
+    await flush();
+    await openDetail(app);
+    await clickTab(app, "prd");
+    assert.equal(byClass(app.overlay, "trellis-detail-doc-note").length, 1);
+    assert.ok(textOf(app.overlay).includes(i18n.en.dashboardTrellisDocTruncated));
+  });
+
+  it("renders doc missing / error states and survives a hostile document", async () => {
+    const hostile = [
+      '<script>alert(1)</script>',
+      '[x](javascript:alert(2))',
+      '```',
+      'unclosed <b>fence',
+    ].join("\n");
+
+    const missing = loadDashboard({
+      sessions: [bindingSession("s1", DOC_TASK)],
+      detailResult: detailOk({ docs: DOC_LIST }),
+      docResult: { status: "missing" },
+    });
+    await flush();
+    await openDetail(missing);
+    await clickTab(missing, "prd");
+    assert.ok(textOf(missing.overlay).includes(i18n.en.dashboardTrellisDocMissing));
+
+    const boom = loadDashboard({
+      sessions: [bindingSession("s1", DOC_TASK)],
+      detailResult: detailOk({ docs: DOC_LIST }),
+      docError: new Error("ipc boom"),
+    });
+    await flush();
+    await openDetail(boom);
+    await clickTab(boom, "prd");
+    assert.ok(textOf(boom.overlay).includes(i18n.en.dashboardTrellisDocReadError));
+
+    const evil = loadDashboard({
+      sessions: [bindingSession("s1", DOC_TASK)],
+      detailResult: detailOk({ docs: DOC_LIST }),
+      docResult: docOk(hostile),
+    });
+    await flush();
+    await openDetail(evil);
+    await clickTab(evil, "prd");
+    assert.equal(evil.overlay.hidden, false, "hostile markup never crashes the page");
+    assert.ok(textOf(evil.overlay).includes("<script>alert(1)</script>"));
+    assert.ok(textOf(evil.overlay).includes("x"), "link label survives without the URL");
+  });
+
+  it("collapses an h2 section on heading click and restores it on a second click", async () => {
+    const md = "## Section A\ncontent one\n\n## Section B\ncontent two\n";
+    const app = loadDashboard({
+      sessions: [bindingSession("s1", DOC_TASK)],
+      detailResult: detailOk({ docs: DOC_LIST }),
+      docResult: docOk(md),
+    });
+    await flush();
+    await openDetail(app);
+    await clickTab(app, "prd");
+
+    const headings = byClass(app.overlay, "md-heading-collapsible");
+    assert.equal(headings.length, 2);
+    const paragraphs = () => byClass(app.overlay, "md-p");
+    assert.equal(paragraphs().length, 2);
+    assert.equal(paragraphs()[0].hidden, false);
+
+    await headings[0].dispatch("click");
+    assert.ok(headings[0].classList.contains("md-collapsed"));
+    assert.equal(headings[0].attributes["aria-expanded"], "false");
+    assert.equal(paragraphs()[0].hidden, true, "section A's body hides");
+    assert.equal(paragraphs()[1].hidden, false, "section B stays visible (next h2 boundary)");
+
+    await headings[0].dispatch("click");
+    assert.equal(paragraphs()[0].hidden, false, "second click restores the body");
+  });
+
+  it("drops the doc cache when the card closes and re-reads on reopen", async () => {
+    const app = loadDashboard({
+      sessions: [bindingSession("s1", DOC_TASK)],
+      detailResult: detailOk({ docs: DOC_LIST }),
+      docResult: docOk("# again\n"),
+    });
+    await flush();
+    await openDetail(app);
+    await clickTab(app, "prd");
+    assert.equal(app.docCalls.length, 1);
+
+    await byClass(app.overlay, "trellis-detail-close")[0].dispatch("click");
+    await openDetail(app);
+    await clickTab(app, "prd");
+    assert.equal(app.docCalls.length, 2, "close clears the ephemeral doc cache");
+  });
+
+  it("re-opening a card without closing it also drops the previous doc cache", async () => {
+    // Same overlay, no close click in between: opening must still reset the
+    // per-card doc cache — a stale entry must not be reused across opens and
+    // the fingerprint must not accumulate keys from a previous open.
+    const app = loadDashboard({
+      sessions: [bindingSession("s1", DOC_TASK)],
+      detailResult: detailOk({ docs: DOC_LIST }),
+      docResult: docOk("# fresh\n"),
+    });
+    await flush();
+    await openDetail(app);
+    await clickTab(app, "prd");
+    assert.equal(app.docCalls.length, 1);
+
+    await byClass(app.panel, "trellis-task-detail-btn")[0].dispatch("click");
+    await flush();
+    await clickTab(app, "prd");
+    assert.equal(app.docCalls.length, 2,
+      "openTrellisDetail clears the cache even without a close in between");
+  });
+
+  it("keeps the open doc tab and its collapse state stable across the one-second rebuild", async () => {
+    const app = loadDashboard({
+      sessions: [bindingSession("s1", DOC_TASK)],
+      detailResult: detailOk({ docs: DOC_LIST }),
+      docResult: docOk("## stay\nbody\n"),
+    });
+    await flush();
+    await openDetail(app);
+    await clickTab(app, "prd");
+    // Collapse the h2 section, then let the periodic tick run: the unchanged
+    // signature must skip the rebuild, so the collapsed DOM survives as-is.
+    const heading = byClass(app.overlay, "md-heading-collapsible")[0];
+    await heading.dispatch("click");
+    const body = byClass(app.overlay, "md-p")[0];
+    assert.equal(body.hidden, true);
+    app.tickRender();
+    assert.equal(app.overlay.hidden, false);
+    assert.equal(byClass(app.overlay, "trellis-detail-doc").length, 1,
+      "the doc view survives the periodic rebuild");
+    assert.ok(heading.classList.contains("md-collapsed"),
+      "collapse state survives the periodic rebuild");
+    assert.equal(body.hidden, true, "the collapsed body stays hidden after the tick");
   });
 });
 

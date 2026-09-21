@@ -411,25 +411,36 @@ Correct 聚合入 dashboard-trellis-panel.js UMD；阶段文案复用 sessionHud
         重建时以 liveTasks 的 taskPath 集合修剪 Set
 ```
 
-#### §4.3 任务详情卡（readTaskDetail + Dashboard overlay）
+#### §4.3 任务详情卡（readTaskDetail + readTaskDoc + Dashboard overlay）
 
 **1. Scope/Trigger**：任何「按需单次读取某个 Trellis 任务文件并呈现」的
-代码。当前实现：`src/trellis-activity.js` 的 `readTaskDetail`、
-`src/session-ipc.js` 的 `dashboard:trellis-task-detail`、
-`src/dashboard-renderer.js` 的 trellis-detail overlay。
+代码。当前实现：`src/trellis-activity.js` 的 `readTaskDetail` /
+`readTaskDoc`（共享 `resolveTaskDir`）、`src/session-ipc.js` 的
+`dashboard:trellis-task-detail` / `dashboard:trellis-task-doc`、
+`src/dashboard-renderer.js` 的 trellis-detail overlay + doc tabs、
+`src/trellis-doc-renderer.js`（受限 GFM 子集渲染器，UMD twin）。
 
 **2. Signatures**（全链路，自渲染层起）：
 - renderer `openTrellisDetail(task)` → 单次 `dashboardAPI.getTrellisTaskDetail(
   { taskPath, cwd })`（冻结于打开瞬间，从不轮询）
-- preload `getTrellisTaskDetail(payload)` → `ipcRenderer.invoke`
+- preload `getTrellisTaskDetail(payload)` / `getTrellisTaskDoc(payload)` →
+  `ipcRenderer.invoke`
 - IPC `dashboard:trellis-task-detail`（handle，同步返回结果对象）
 - main `_trellisActivity.readTaskDetail(cwd, taskPath)` →
   `{status:"ok",task:{title,phase,rawStatus,createdAt,completedAt,
-  archived,checklist}}` | `{status:"missing"}` | `{status:"error",message}`
+  archived,checklist,docs}}` | `{status:"missing"}` | `{status:"error",message}`；
+  `docs` 列出任务目录全部 `*.md`（`{name,size}`，prd → design → implement
+  优先，其余字典序；size 是 utf-8 字节数）
+- main `_trellisActivity.readTaskDoc(cwd, taskPath, doc)` →
+  `{status:"ok",name,size,truncated,content}` | `{status:"missing"}`
+- renderer `switchTrellisDetailTab(tab)` → doc tab 懒拉取一次，
+  `renderMarkdownDoc(builder, content)` 渲染（builder 注入，
+  createElement/createTextNode only）
 
 **3. Contracts**：
-- **payload 恰为 `{cwd,taskPath}` 两字符串**：`Object.keys` 排序后长度必须
-  是 2；结构化克隆后的 `{"__proto__":…}` 是 own property，会被这个门拦下，
+- **payload 恰为两/三字符串**：detail 通道 `Object.keys` 排序后长度必须是
+  2（`cwd`/`taskPath`）；doc 通道长度必须是 3（`cwd`/`doc`/`taskPath`）。
+  结构化克隆后的 `{"__proto__":…}` 是 own property，会被这个门拦下，
   污染面到不了 owner
 - **trusted-frame 门禁**：与 session history 同一道
   `isTrustedDashboardEvent`（sender===owner contents && mainFrame &&
@@ -440,14 +451,41 @@ Correct 聚合入 dashboard-trellis-panel.js UMD；阶段文案复用 sessionHud
   会把反斜杠段也 normalize**：`"/"`-only 拆分放行
   `.trellis/tasks/a\..\..\x` → join 越界到 root 外（POSIX 分支碰巧无害，
   win32 分支真越界——分支相关错误，拆分逻辑必须平台无关）
+- **doc 名双门禁**：`doc` 必须是纯 `*.md` basename（字符串、非空
+  stem、无 `/` 无 `\\`、非 `.`/`..`），且必须是**重新列目录结果**的成员
+  ——rendir 白名单在读取前重验，渲染层无法指名目录里不存在的文件。
+  basename 门禁已在名字空间上封死路径逃逸；白名单是"列目录结果即真实
+  文件名"的字符串级 containment（symlink 指向属任务目录内容信任面，
+  与 task.json 同一既有语义，不额外 realpath）
+- **1MB 字节截断**：`Buffer.subarray(0, 1MiB).toString("utf8")` +
+  `truncated:true`；截断落在多字节序列中间时 Node 会把悬挂字节换成
+  U+FFFD（合法字符串，不 mojibake 不抛错——有回归用例）；截断后
+  未闭合围栏由渲染器 fail-open 渲到 EOF
+- **文档内容 ephemeral**：内容只乘 IPC 回包而行——不进 prefs、
+  不进日志、不落盘；渲染层 `trellisDetailDocs` 会话内存缓存在
+  `closeTrellisDetail()` **和** `openTrellisDetail()`（同一 overlay 重入，
+  不经过 close）都必须清空——否则跨任务累积 1MB×docs 且签名
+  fingerprint 携带死 key
+- **渲染器红线**（`trellis-doc-renderer.js`，UMD twin 同 §4.2 模式）：
+  纯函数 `(builder, markdown, options) → {root, truncated}`，全部元素
+  经注入 builder 的 createElement/createTextNode，零 innerHTML；
+  行内 tokenizer 单趟前向 + `MAX_INLINE_DEPTH=4` 硬帽（敌意输入
+  O(n×depth)，无 O(n²) 退化）；行数帽 `MD_MAX_RENDER_LINES=5000`，
+  超限丢弃尾部并返回 truncated；链接只渲染 label 文本（URL 丢弃）；
+  h2/h3 折叠交互在 renderer 侧 wire（toggle 类 + 隐藏同级），点击
+  不会误关 overlay（backdrop 判定是 `event.target === overlay`）
 - **归档回退**：active 目录消失时复用 `findArchivedTaskDir` 精确名匹配
-  （与轮询/庆祝同一语义）；跨月同名取 readdir 首个，与既有回退一致
+  （与轮询/庆祝同一语义）；跨月同名取 readdir 首个，与既有回退一致；
+  detail 与 doc 共享同一条 `resolveTaskDir`（含回退）
 - **降级语义**：无 root/无目录/被拒 → `missing`（卡片提示可能已归档）；
-  task.json 损坏 → `error`（不渲染半空数据）；checklist 只解析
-  checkbox 列表，不渲染任意 markdown
+  task.json 损坏 → `error`（不渲染半空数据）；doc 不可读/不在白名单 →
+  `missing`；checklist 只解析 checkbox 列表，不渲染任意 markdown
 - **overlay 生命周期**：每秒 render() 调 `renderTrellisDetail`，但签名 =
-  `{lang,open,loading,request,result}` 的 JSON 全量比较——request
-  （含 sessions 快照）在打开时冻结，所以周期重建既不关卡也不闪；
+  `{lang,open,loading,request,result,tab,docsFingerprint}` 的 JSON 全量比较——
+  request（含 sessions 快照）在打开时冻结，所以周期重建既不关卡也不闪，
+  折叠态/激活 tab 在 tick 下保留；docsFingerprint 只含缓存条目的
+  (key,loading,status,length,truncated)——1MB 文档不进签名（碰撞面：
+  同 key 内容变化但 length 相同 → 不刷新，snapshot 语义可接受）；
   任务从面板消失后卡片靠冻结引用继续存活。ESC（quick 模式持键时不
   抢）/backdrop 点击/✕ 关闭；监听器只在 init 注册一次
 - **CSS hidden 守卫**：`.trellis-detail-overlay[hidden]{display:none}`
@@ -458,9 +496,15 @@ Correct 聚合入 dashboard-trellis-panel.js UMD；阶段文案复用 sessionHud
 Wrong   taskPath.split("/") 后只拒 ".." 段        // win32 反斜杠段漏网
         findTrellisRoot(renderer 传入的任意 cwd)   // 任意目录探测 .trellis
         overlay 重建引用面板实时 sessions          // 每秒卡片闪变/被归档期关掉
+        doc 名白名单只在打开时验一次               // TOCTOU + 渲染层可指名任意文件
+        doc 缓存只在 close 清空                    // 同 overlay 重入跨任务累积 1MB×docs
+        截断用 content.slice(0, N)                 // 按代码点切，字节上限失效
 Correct taskPath.slice(prefix).split(/[\\/]/) 后逐段拒绝
         cwd ∈ collectLiveSessions() 的 cwd 集合，否则 missing
         request 冻结于 open 瞬间，签名含 request/result 才重渲染
+        每次读前 readdir 重验 doc 名白名单（纯 basename 门禁）
+        openTrellisDetail + closeTrellisDetail 都清 trellisDetailDocs
+        Buffer.byteLength 验收：截断后 ≤ 1MiB+2（U+FFFD 补偿）
 ```
 
 #### §4.4 归档任务列表（独立视图 + 共享遍历）
@@ -666,6 +710,8 @@ Correct readArchiveList() 无参；根集来自 collectKnownRootCwds()
 | 展开后 HUD 越缩越小 | detail 行可 flex-shrink，实测回传的是被压缩值，反馈成 runaway loop | `.trellis-detail { flex: 0 0 auto }`；实测值与压缩值必须区分 |
 | Dashboard 面板隐藏后仍留空白间距 | `.trellis-panel { display:flex }` 覆盖了 UA `[hidden]` 规则 | `.trellis-panel[hidden] { display:none }` + 静态测试断言（见 §4.2） |
 | 详情卡读出 root 外文件（win32） | taskPath 只按 `/` 拆分，`a\..\..\x` 单段过检，`path.join` normalize 后越界 | 双分隔符拆分 + 逐段拒绝（见 §4.3）；两平台都要有用例 |
+| doc 渲染层执行了注入的 HTML | 渲染器拼了 innerHTML / 消费侧绕开 builder | builder 注入 + createElement/textContent only，hostile-input 用例断言只建 div/span（§4.3） |
+| 同 overlay 连续打开多任务后内存膨胀 | doc 缓存只在 close 清，重入 open 残留 1MB×docs 死条目 | openTrellisDetail 与 closeTrellisDetail 都清空 trellisDetailDocs（§4.3） |
 | 陌生 cwd 能探测任意 .trellis | readTaskDetail 直接 findTrellisRoot(renderer 的 cwd) | cwd 必须过 isTrustedTrellisCwd 三源（见 §4.3）；两平台都要有用例 |
 | 独立视图活跃任务每条出现两次 | 注册根与子目录会话解析同一 root，readActiveList 无 root 去重 | seenRoots/rootToCwd 按 root 去重（§4.4/§4.6）+ 双源共享 root 回归用例 |
 

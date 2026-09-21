@@ -1370,6 +1370,126 @@ describe("trellis-activity project aggregates", () => {
 
 // ── archived-task list + parent link (Dashboard archive/group view) ──
 
+describe("trellis-activity readTaskDoc", () => {
+  const TASK_JSON = { title: "文档任务", status: "in_progress", subtasks: [] };
+  const PRD_MD = "# PRD\n\n| 列 | 值 |\n| --- | --- |\n| a | b |\n";
+
+  function makeDocHarness() {
+    return makeHarness({ sessions: new Map([["pi:doc", { agentId: "pi", cwd: CWD }]]) });
+  }
+
+  function addDocsTask(h) {
+    const dir = addTask(h.fakeFs, "doc-task", TASK_JSON, { prd: true, implementMd: "- [x] done\n" });
+    h.fakeFs.add(path.join(dir, "design.md"), "## design\n");
+    h.fakeFs.add(path.join(dir, "research-notes.md"), "notes");
+    h.fakeFs.add(path.join(dir, "not-md.txt"), "ignored");
+    return dir;
+  }
+
+  it("lists the task dir's *.md files, canonical order first, in the detail payload", async () => {
+    const h = makeDocHarness();
+    addDocsTask(h);
+    const result = await h.activity.readTaskDetail(CWD, ".trellis/tasks/doc-task");
+    assert.strictEqual(result.status, "ok");
+    assert.deepStrictEqual(result.task.docs.map((d) => d.name), [
+      "prd.md", "design.md", "implement.md", "research-notes.md",
+    ]);
+    assert.ok(result.task.docs.every((d) => typeof d.size === "number" && d.size > 0));
+    assert.deepStrictEqual(h.fakeFs.writeOps, [], "doc listing stays read-only");
+  });
+
+  it("reads one listed document with its content", async () => {
+    const h = makeDocHarness();
+    addDocsTask(h);
+    const result = await h.activity.readTaskDoc(CWD, ".trellis/tasks/doc-task", "prd.md");
+    assert.deepStrictEqual(result, {
+      status: "ok",
+      name: "prd.md",
+      size: Buffer.byteLength("# prd\n", "utf8"),
+      truncated: false,
+      content: "# prd\n",
+    });
+    assert.deepStrictEqual(h.fakeFs.writeOps, [], "doc reads stay read-only");
+  });
+
+  it("reads the archive copy's documents after the task moved", async () => {
+    const h = makeDocHarness();
+    const dir = addDocsTask(h);
+    for (const name of ["task.json", "prd.md", "implement.md", "design.md", "research-notes.md", "not-md.txt"]) {
+      h.fakeFs.remove(path.join(dir, name));
+    }
+    const archived = path.join(PROJECT, ".trellis", "tasks", "archive", "2026-09", "doc-task");
+    h.fakeFs.add(path.join(archived, "task.json"), JSON.stringify(TASK_JSON));
+    h.fakeFs.add(path.join(archived, "prd.md"), "# archived prd\n");
+    const result = await h.activity.readTaskDoc(CWD, ".trellis/tasks/doc-task", "prd.md");
+    assert.strictEqual(result.status, "ok");
+    assert.strictEqual(result.content, "# archived prd\n");
+  });
+
+  it("rejects doc names that are not plain listed *.md basenames", async () => {
+    const h = makeDocHarness();
+    addDocsTask(h);
+    for (const bad of [
+      null,
+      undefined,
+      42,
+      "",
+      "prd.md/..",
+      "../prd.md",
+      "..\\prd.md",
+      "sub/prd.md",
+      "prd.txt",
+      "not-md.txt",
+      "ghost.md",
+      ".md",
+    ]) {
+      assert.deepStrictEqual(
+        await h.activity.readTaskDoc(CWD, ".trellis/tasks/doc-task", bad),
+        { status: "missing" },
+        JSON.stringify(bad)
+      );
+    }
+    // Same trust surface as the detail read: stranger cwds and traversal
+    // taskPaths never reach the fs.
+    assert.deepStrictEqual(
+      await h.activity.readTaskDoc("/nowhere", ".trellis/tasks/doc-task", "prd.md"),
+      { status: "missing" }
+    );
+    assert.deepStrictEqual(
+      await h.activity.readTaskDoc(CWD, ".trellis/tasks/../../etc", "prd.md"),
+      { status: "missing" }
+    );
+  });
+
+  it("truncates a document past the 1 MB byte cap and flags it", async () => {
+    const h = makeDocHarness();
+    const dir = addTask(h.fakeFs, "big", TASK_JSON);
+    const big = "x".repeat(1024 * 1024 + 500);
+    h.fakeFs.add(path.join(dir, "big.md"), big);
+    const result = await h.activity.readTaskDoc(CWD, ".trellis/tasks/big", "big.md");
+    assert.strictEqual(result.status, "ok");
+    assert.strictEqual(result.truncated, true);
+    assert.strictEqual(result.size, 1024 * 1024 + 500);
+    assert.strictEqual(Buffer.byteLength(result.content, "utf8"), 1024 * 1024);
+  });
+
+  it("byte-truncation inside a multi-byte UTF-8 sequence yields a valid string with a replacement char", async () => {
+    const h = makeDocHarness();
+    const dir = addTask(h.fakeFs, "wide", TASK_JSON);
+    // 400,000 × “你” = 1,200,000 bytes; the 1 MiB cap (1,048,576, %3==1)
+    // cuts inside a 3-byte sequence — the dangling bytes must surface as
+    // U+FFFD, never as a mojibake or an exception.
+    h.fakeFs.add(path.join(dir, "wide.md"), "你".repeat(400000));
+    const result = await h.activity.readTaskDoc(CWD, ".trellis/tasks/wide", "wide.md");
+    assert.strictEqual(result.status, "ok");
+    assert.strictEqual(result.truncated, true);
+    assert.strictEqual(typeof result.content, "string");
+    assert.ok(result.content.length <= 349526);
+    assert.strictEqual(result.content.codePointAt(result.content.length - 1), 0xfffd);
+    assert.ok(Buffer.byteLength(result.content, "utf8") <= 1024 * 1024 + 2);
+  });
+});
+
 describe("trellis-activity readArchiveList", () => {
   function makeArchiveHarness(sessions = new Map()) {
     return makeHarness({ sessions });

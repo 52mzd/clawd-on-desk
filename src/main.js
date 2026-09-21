@@ -5325,6 +5325,12 @@ registerSessionIpc({
     }
     return _trellisActivity.readTaskDetail(payload.cwd, payload.taskPath);
   },
+  getTrellisTaskDoc: (payload) => {
+    if (!_trellisActivity || typeof _trellisActivity.readTaskDoc !== "function") {
+      return { status: "error", message: "trellis-activity-unavailable" };
+    }
+    return _trellisActivity.readTaskDoc(payload.cwd, payload.taskPath, payload.doc);
+  },
   getTrellisArchiveList: () => {
     if (!_trellisActivity || typeof _trellisActivity.readArchiveList !== "function") {
       return { status: "error", message: "trellis-activity-unavailable" };

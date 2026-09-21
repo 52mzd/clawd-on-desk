@@ -10,6 +10,10 @@ const {
   buildTrellisRootLabels,
   TRELLIS_PHASE_BADGE,
 } = globalThis.ClawdDashboardTrellisPanel;
+const {
+  renderMarkdownDoc,
+  MD_MAX_RENDER_LINES,
+} = globalThis.ClawdTrellisDocRenderer;
 
 const AGENT_LABELS = {
   "claude-code": "Claude Code",
@@ -1882,8 +1886,35 @@ const trellisDetail = {
   seq: 0,
   request: null, // { taskPath, title, cwd, sessions } — frozen at open time
   result: null,  // IPC reply { status, task? }
+  activeTab: "overview", // "overview" | a doc name from result.task.docs
 };
+// Per-document read state, one entry per (taskPath, doc) pair. Contents are
+// session-memory only: the cache dies with closeTrellisDetail() — never
+// persisted, never logged (PRD: document contents are ephemeral).
+const trellisDetailDocs = new Map(); // "taskPath\u0000doc" → { loading, result }
 let lastTrellisDetailSignature = null;
+
+function trellisDetailDocKey(taskPath, doc) {
+  return `${taskPath}\u0000${doc}`;
+}
+
+// Signature stays cheap on purpose: a 1 MB document must not be re-stringified
+// every second, so cached docs contribute a fingerprint (state + length), not
+// their content — the content of a cached doc never changes after landing.
+function trellisDetailDocsFingerprint() {
+  const out = [];
+  for (const [key, entry] of trellisDetailDocs) {
+    const result = entry && entry.result;
+    out.push([
+      key,
+      entry ? entry.loading : null,
+      result ? result.status : null,
+      result && typeof result.content === "string" ? result.content.length : null,
+      result ? result.truncated : null,
+    ]);
+  }
+  return out;
+}
 
 function computeTrellisDetailSignature() {
   return JSON.stringify({
@@ -1892,6 +1923,8 @@ function computeTrellisDetailSignature() {
     loading: trellisDetail.loading,
     request: trellisDetail.request,
     result: trellisDetail.result,
+    tab: trellisDetail.activeTab,
+    docs: trellisDetailDocsFingerprint(),
   });
 }
 
@@ -1912,6 +1945,11 @@ async function openTrellisDetail(task) {
     sessions: sessions.slice(),
   };
   trellisDetail.result = null;
+  trellisDetail.activeTab = "overview";
+  // Opening another card without closing this one (same overlay) must not
+  // keep the previous task's cached documents alive: contents are ephemeral
+  // per open card, and the fingerprint must not carry stale keys forever.
+  trellisDetailDocs.clear();
   lastTrellisDetailSignature = null;
   renderTrellisDetail();
 
@@ -1942,6 +1980,59 @@ function closeTrellisDetail() {
   trellisDetail.loading = false;
   trellisDetail.request = null;
   trellisDetail.result = null;
+  trellisDetail.activeTab = "overview";
+  // Ephemeral by contract: closing the card drops every cached document
+  // content along with the card itself.
+  trellisDetailDocs.clear();
+  lastTrellisDetailSignature = null;
+  renderTrellisDetail();
+}
+
+// Tab switch inside an open card. "overview" is always available; a doc
+// tab lazily fetches its content once (the cache entry survives tab
+// switches within the same open card).
+function switchTrellisDetailTab(tab) {
+  if (!trellisDetail.open || tab === trellisDetail.activeTab) return;
+  if (tab !== "overview") {
+    const request = trellisDetail.request;
+    const detail = trellisDetail.result && trellisDetail.result.status === "ok"
+      ? trellisDetail.result.task
+      : null;
+    if (!request || !detail || !Array.isArray(detail.docs)) return;
+    if (!detail.docs.some((doc) => doc && doc.name === tab)) return;
+  }
+  trellisDetail.activeTab = tab;
+  lastTrellisDetailSignature = null;
+  renderTrellisDetail();
+  if (tab !== "overview") void fetchTrellisDetailDoc(tab);
+}
+
+async function fetchTrellisDetailDoc(doc) {
+  const request = trellisDetail.request;
+  if (!request || typeof window.dashboardAPI.getTrellisTaskDoc !== "function") return;
+  const key = trellisDetailDocKey(request.taskPath, doc);
+  if (trellisDetailDocs.has(key)) return;
+  trellisDetailDocs.set(key, { loading: true, result: null });
+  lastTrellisDetailSignature = null;
+  renderTrellisDetail();
+
+  let result = null;
+  try {
+    result = await window.dashboardAPI.getTrellisTaskDoc({
+      taskPath: request.taskPath,
+      cwd: request.cwd,
+      doc,
+    });
+  } catch {
+    result = null;
+  }
+  // The cache is keyed by (taskPath, doc), so a reply for a card that was
+  // closed (or superseded by another task) just lands in the cache unseen;
+  // closeTrellisDetail() drops it with everything else.
+  const entry = trellisDetailDocs.get(key);
+  if (!entry) return;
+  entry.loading = false;
+  entry.result = result && typeof result === "object" ? result : { status: "error" };
   lastTrellisDetailSignature = null;
   renderTrellisDetail();
 }
@@ -2031,6 +2122,107 @@ function appendTrellisDetailSessions(card, request) {
   card.appendChild(section);
 }
 
+// The doc renderer is a pure (builder → element) function; this adapter is
+// the only DOM touchpoint, so tests can swap in a fake document wholesale.
+const trellisDocBuilder = {
+  createElement: (tag) => document.createElement(tag),
+  createTextNode: (text) => document.createTextNode(text),
+};
+
+function trellisDocHeadingLevel(el) {
+  for (let level = 1; level <= 4; level += 1) {
+    if (el.classList && el.classList.contains(`md-h${level}`)) return level;
+  }
+  return 0;
+}
+
+// h2/h3 sections collapse on click: flip the class + hide the following
+// siblings up to (and excluding) the next same-or-higher heading. Default is
+// fully expanded (PRD); a card rebuild resets it, which only happens on tab
+// or language changes — never on the periodic tick (the signature guard
+// skips unchanged cards).
+function toggleTrellisDocHeading(docRoot, heading) {
+  const collapsed = heading.classList.toggle("md-collapsed");
+  heading.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  if (heading.children[0]) heading.children[0].textContent = collapsed ? "▸" : "▾";
+  const level = trellisDocHeadingLevel(heading);
+  const siblings = docRoot.children;
+  for (let i = siblings.length - 1; i >= 0; i -= 1) {
+    if (siblings[i] === heading) {
+      for (let j = i + 1; j < siblings.length; j += 1) {
+        const elLevel = trellisDocHeadingLevel(siblings[j]);
+        if (elLevel && elLevel <= level) break;
+        siblings[j].hidden = collapsed;
+      }
+      return;
+    }
+  }
+}
+
+function wireTrellisDocCollapse(docRoot) {
+  for (const el of docRoot.children) {
+    if (el.classList && el.classList.contains("md-heading-collapsible")) {
+      el.addEventListener("click", () => toggleTrellisDocHeading(docRoot, el));
+    }
+  }
+}
+
+function appendTrellisDetailTabs(card, docs) {
+  const tabs = document.createElement("div");
+  tabs.className = "trellis-detail-tabs";
+  tabs.setAttribute("role", "tablist");
+  const makeTab = (name, label) => {
+    const tab = document.createElement("button");
+    tab.type = "button";
+    tab.className = trellisDetail.activeTab === name
+      ? "trellis-detail-tab is-active"
+      : "trellis-detail-tab";
+    tab.textContent = label;
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-selected", trellisDetail.activeTab === name ? "true" : "false");
+    tab.addEventListener("click", () => switchTrellisDetailTab(name));
+    return tab;
+  };
+  tabs.appendChild(makeTab("overview", t("dashboardTrellisDetailTabOverview")));
+  for (const doc of docs) {
+    tabs.appendChild(makeTab(doc.name, doc.name.replace(/\.md$/, "")));
+  }
+  card.appendChild(tabs);
+}
+
+function appendTrellisDetailDocNote(container, key) {
+  container.appendChild(createText("div", "trellis-detail-doc-note", t(key)));
+}
+
+function appendTrellisDetailDocView(card, docName) {
+  const container = document.createElement("div");
+  container.className = "trellis-detail-doc";
+  const request = trellisDetail.request;
+  const entry = request ? trellisDetailDocs.get(trellisDetailDocKey(request.taskPath, docName)) : null;
+  if (!entry || entry.loading) {
+    appendTrellisDetailDocNote(container, "dashboardTrellisDetailLoading");
+    card.appendChild(container);
+    return;
+  }
+  const result = entry.result;
+  if (result && result.status === "ok" && typeof result.content === "string") {
+    if (result.truncated) {
+      appendTrellisDetailDocNote(container, "dashboardTrellisDocTruncated");
+    }
+    const { root, truncated } = renderMarkdownDoc(trellisDocBuilder, result.content);
+    if (truncated) {
+      appendTrellisDetailDocNote(container, "dashboardTrellisDocTruncated");
+    }
+    container.appendChild(root);
+    wireTrellisDocCollapse(root);
+  } else if (result && result.status === "missing") {
+    appendTrellisDetailDocNote(container, "dashboardTrellisDocMissing");
+  } else {
+    appendTrellisDetailDocNote(container, "dashboardTrellisDocReadError");
+  }
+  card.appendChild(container);
+}
+
 function buildTrellisDetailCard() {
   const card = document.createElement("div");
   card.className = "trellis-detail-card";
@@ -2075,15 +2267,25 @@ function buildTrellisDetailCard() {
   if (trellisDetail.loading) {
     card.appendChild(createText("div", "trellis-detail-empty", t("dashboardTrellisDetailLoading")));
   } else if (detail) {
-    appendTrellisDetailMeta(card, detail);
-    appendTrellisDetailChecklist(card, detail);
+    const docs = Array.isArray(detail.docs)
+      ? detail.docs.filter((doc) => doc && typeof doc.name === "string" && doc.name)
+      : [];
+    if (docs.length) appendTrellisDetailTabs(card, docs);
+    if (docs.length && trellisDetail.activeTab !== "overview") {
+      appendTrellisDetailDocView(card, trellisDetail.activeTab);
+    } else {
+      appendTrellisDetailMeta(card, detail);
+      appendTrellisDetailChecklist(card, detail);
+    }
   } else if (result && result.status === "missing") {
     card.appendChild(createText("div", "trellis-detail-empty", t("dashboardTrellisDetailMissing")));
   } else {
     card.appendChild(createText("div", "trellis-detail-empty", t("dashboardTrellisDetailError")));
   }
 
-  appendTrellisDetailSessions(card, request);
+  if (!detail || trellisDetail.activeTab === "overview") {
+    appendTrellisDetailSessions(card, request);
+  }
   return card;
 }
 

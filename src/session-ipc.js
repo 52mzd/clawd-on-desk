@@ -48,6 +48,10 @@ function registerSessionIpc(options = {}) {
     options.getTrellisTaskDetail,
     "getTrellisTaskDetail"
   );
+  const getTrellisTaskDoc = requiredDependency(
+    options.getTrellisTaskDoc,
+    "getTrellisTaskDoc"
+  );
   const getTrellisArchiveList = requiredDependency(
     options.getTrellisArchiveList,
     "getTrellisArchiveList"
@@ -174,6 +178,33 @@ function registerSessionIpc(options = {}) {
       return { status: "invalid" };
     }
     return getTrellisTaskDetail(payload);
+  });
+
+  // One-shot on-demand read of ONE markdown document of a Trellis task —
+  // same trusted-frame gate and the same cwd/taskPath validation story as
+  // the detail read above; `doc` must be a plain *.md basename that the
+  // owner re-validates against the directory listing (never a path).
+  handle("dashboard:trellis-task-doc", (event, payload) => {
+    const rejected = rejectUntrustedDashboardEvent(event);
+    if (rejected) return rejected;
+    const keys = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? Object.keys(payload).sort()
+      : [];
+    if (
+      keys.length !== 3
+      || keys[0] !== "cwd"
+      || keys[1] !== "doc"
+      || keys[2] !== "taskPath"
+      || typeof payload.cwd !== "string"
+      || !payload.cwd
+      || typeof payload.taskPath !== "string"
+      || !payload.taskPath
+      || typeof payload.doc !== "string"
+      || !payload.doc
+    ) {
+      return { status: "invalid" };
+    }
+    return getTrellisTaskDoc(payload);
   });
 
   // One-shot on-demand scan of the archive folders behind the known
