@@ -14,7 +14,7 @@ body:
     id: integration
     attributes:
       label: "Agent or integration"
-      description: "For example: Codex CLI, Claude Code, Cursor, Qoder, WSL, or Remote SSH."
+      description: "For example: Codex CLI, Claude Code, Cursor, OpenCode, or Gemini CLI."
       placeholder: "Codex CLI"
     validations:
       required: true
@@ -97,8 +97,7 @@ body:
     id: expected
     attributes:
       label: "Expected behavior"
-    validations:
-      required: true
+      description: "Optional. Describe what should have happened instead when it is not obvious."
 
   - type: input
     id: last-known-working

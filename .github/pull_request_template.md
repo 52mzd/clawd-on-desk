@@ -1,16 +1,7 @@
 <!--
-Write the PR in English unless a repository maintainer asks otherwise.
-
-Keep the default sections concise. Draft or specialized PRs may add or replace
-generic sections with clearer review-contract sections such as:
-- Why this is Draft
-- Activation contract
-- Safety boundary
-- Reporter boundary
-- Compatibility
-
-Specialized sections should preserve equivalent coverage of what changed,
-verification, and scope rather than merely adding more headings.
+Keep the default sections concise. Draft or specialized PRs may adapt the
+structure when it improves review clarity, while preserving equivalent coverage
+of the change, validation, and scope.
 -->
 
 ## Summary

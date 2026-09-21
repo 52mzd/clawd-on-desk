@@ -64,9 +64,7 @@ body:
     id: expected
     attributes:
       label: "Expected behavior"
-      description: "What should have happened instead?"
-    validations:
-      required: true
+      description: "Optional. Describe what should have happened instead when it is not obvious."
 
   - type: input
     id: last-known-working
