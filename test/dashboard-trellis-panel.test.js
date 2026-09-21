@@ -18,6 +18,9 @@ const {
   groupTrellisTasks,
   TRELLIS_PHASE_BADGE,
   normalizeProgress,
+  trellisTaskOwningRoot,
+  filterTrellisTasksByRoot,
+  buildTrellisRootLabels,
 } = require("../src/dashboard-trellis-panel");
 
 // The fake DOM below models `hidden` as a plain JS property, so the CSS
@@ -145,6 +148,62 @@ describe("dashboard trellis panel aggregation (pure)", () => {
     assert.equal(normalizeProgress({ done: Number.NaN, total: 4 }), null);
     assert.deepEqual(normalizeProgress({ done: 2.9, total: 5.9 }), { done: 2, total: 5 });
     assert.deepEqual(normalizeProgress({ done: -1, total: 5 }), { done: 0, total: 5 });
+  });
+});
+
+describe("dashboard trellis project filter (pure)", () => {
+  it("labels roots by basename and disambiguates duplicates with ancestor segments", () => {
+    const plain = buildTrellisRootLabels(["/a/proj", "/b/other"]);
+    assert.equal(plain.get("/a/proj"), "proj");
+    assert.equal(plain.get("/b/other"), "other");
+
+    // Same basename → one ancestor segment ("name (parent)").
+    const pair = buildTrellisRootLabels(["/a/one/proj", "/b/two/proj"]);
+    assert.equal(pair.get("/a/one/proj"), "proj (one)");
+    assert.equal(pair.get("/b/two/proj"), "proj (two)");
+
+    // Parent segments also clash → one level deeper ("name (grand/parent)").
+    const deep = buildTrellisRootLabels(["/x/w/proj", "/y/w/proj"]);
+    assert.equal(deep.get("/x/w/proj"), "proj (x/w)");
+    assert.equal(deep.get("/y/w/proj"), "proj (y/w)");
+
+    // A root with no ancestor segments cannot be disambiguated → the
+    // full path keeps every label unique.
+    const bare = buildTrellisRootLabels(["/p", "/q/p"]);
+    assert.equal(bare.get("/p"), "/p");
+    assert.equal(bare.get("/q/p"), "p (q)");
+  });
+
+  it("assigns a task to the longest matching registered root", () => {
+    const roots = ["/proj/one", "/proj/one/nested", "/proj/two"];
+    assert.equal(trellisTaskOwningRoot("/proj/one", roots), "/proj/one");
+    assert.equal(trellisTaskOwningRoot("/proj/one/sub", roots), "/proj/one");
+    // Nested roots pick the most specific owner so a task never counts twice.
+    assert.equal(trellisTaskOwningRoot("/proj/one/nested/deep", roots), "/proj/one/nested");
+    assert.equal(trellisTaskOwningRoot("C:\\work\\proj", ["C:\\work"]), "C:\\work");
+    assert.equal(trellisTaskOwningRoot("/proj/three", roots), null);
+    // A prefix must land on a separator — "/proj/onesuffix" is not owned
+    // by "/proj/one".
+    assert.equal(trellisTaskOwningRoot("/proj/onesuffix", roots), null);
+    assert.equal(trellisTaskOwningRoot(null, roots), null);
+  });
+
+  it("filters task lists by the selected root only", () => {
+    const roots = ["/proj/one", "/proj/two"];
+    const tasks = [
+      { taskPath: "a", cwd: "/proj/one" },
+      { taskPath: "b", cwd: "/proj/two/deep" },
+      { taskPath: "c", cwd: "/elsewhere" },
+    ];
+    assert.deepEqual(filterTrellisTasksByRoot(tasks, roots, null), tasks);
+    assert.deepEqual(
+      filterTrellisTasksByRoot(tasks, roots, "/proj/one").map((task) => task.taskPath),
+      ["a"]
+    );
+    assert.deepEqual(
+      filterTrellisTasksByRoot(tasks, roots, "/proj/two").map((task) => task.taskPath),
+      ["b"]
+    );
   });
 });
 
@@ -1070,5 +1129,155 @@ describe("dashboard trellis independent view", () => {
     assert.ok(text.includes(
       new Date(Date.parse("2026-09-20")).toLocaleDateString("en")
     ), "mtime-completed tasks render a localized date");
+  });
+});
+
+describe("dashboard trellis project filter (rendering)", () => {
+  function activeTask(extra = {}) {
+    return {
+      taskPath: ".trellis/tasks/t",
+      title: "Task",
+      phase: "execute",
+      progress: null,
+      parent: null,
+      cwd: "/proj/one",
+      ...extra,
+    };
+  }
+
+  async function loadTrellisView(overrides = {}) {
+    const app = loadDashboard({
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/one", "/proj/two"] },
+      activeResult: { status: "ok", tasks: [
+        activeTask({ taskPath: ".trellis/tasks/a", title: "Task A", cwd: "/proj/one" }),
+        activeTask({ taskPath: ".trellis/tasks/b", title: "Task B", cwd: "/proj/two/deep" }),
+      ] },
+      archiveResult: { status: "ok", tasks: [
+        archivedTask({ title: "Done one", cwd: "/proj/one" }),
+        archivedTask({ title: "Done two", cwd: "/proj/two" }),
+      ] },
+      ...overrides,
+    });
+    await flush();
+    await app.trellisTab.dispatch("click");
+    await flush();
+    return app;
+  }
+
+  it("merges projects under All with per-root chips, counts and row origin tags", async () => {
+    const app = await loadTrellisView();
+
+    const chips = byClass(app.view, "trellis-filter-chip");
+    assert.equal(chips.length, 3, "All + one chip per registered root");
+    assert.ok(textOf(chips[0]).includes(i18n.en.dashboardTrellisFilterAll));
+    assert.ok(textOf(chips[0]).includes("2"), "the All chip carries the merged active count");
+    assert.ok(textOf(chips[1]).includes("one"));
+    assert.ok(textOf(chips[1]).includes("1"), "per-root chips carry that root's active count");
+    assert.ok(textOf(chips[2]).includes("1"));
+    assert.equal(chips[0].attributes["aria-pressed"], "true", "All is the default selection");
+
+    assert.equal(byClass(app.view, "trellis-filter-title")[0].textContent,
+      i18n.en.dashboardTrellisFilterAll);
+    assert.equal(byClass(app.view, "trellis-task-row").length, 2,
+      "both projects' tasks are merged in the All view");
+    // Cross-project rows say where they come from — the disambiguated
+    // root basename, both in the active list and the archive browser.
+    const tags = byClass(app.view, "trellis-task-project");
+    assert.equal(tags.length, 4, "one tag per active row and per archive row");
+    assert.ok(textOf(app.view).includes("Done one"));
+    assert.ok(textOf(app.view).includes("Done two"));
+  });
+
+  it("selecting a chip narrows both lists and hides the origin tags", async () => {
+    const app = await loadTrellisView();
+
+    await byClass(app.view, "trellis-filter-chip")[1].dispatch("click");
+    assert.equal(byClass(app.view, "trellis-task-row").length, 1);
+    assert.ok(textOf(app.view).includes("Task A"));
+    assert.ok(!textOf(app.view).includes("Task B"),
+      "tasks owned by another root disappear");
+    assert.equal(byClass(app.view, "trellis-task-project").length, 0,
+      "the single-project view already names the project in the filter title");
+    assert.ok(byClass(app.view, "trellis-filter-title")[0].textContent.includes("one"));
+
+    const chips = byClass(app.view, "trellis-filter-chip");
+    assert.equal(chips[1].attributes["aria-pressed"], "true");
+    assert.equal(chips[0].attributes["aria-pressed"], "false");
+
+    // The archive honors the same selection: header count and rows.
+    assert.ok(textOf(app.view).includes(
+      `${i18n.en.dashboardTrellisArchiveTitle} (1)`
+    ), "the archive count follows the filter");
+    assert.equal(byClass(app.view, "trellis-archive-row").length, 1);
+    assert.ok(textOf(app.view).includes("Done one"));
+    assert.ok(!textOf(app.view).includes("Done two"));
+
+    // Back to All: the merged view returns untouched (memory state only).
+    await byClass(app.view, "trellis-filter-chip")[0].dispatch("click");
+    assert.equal(byClass(app.view, "trellis-task-row").length, 2);
+    assert.equal(byClass(app.view, "trellis-archive-row").length, 2);
+  });
+
+  it("dims empty-project chips but keeps them clickable into the empty view", async () => {
+    const app = await loadTrellisView({
+      rootsResult: { status: "ok", roots: ["/proj/full", "/proj/void"] },
+      activeResult: { status: "ok", tasks: [
+        activeTask({ taskPath: ".trellis/tasks/a", title: "Task A", cwd: "/proj/full" }),
+      ] },
+      archiveResult: { status: "ok", tasks: [] },
+    });
+
+    const chips = byClass(app.view, "trellis-filter-chip");
+    assert.equal(chips.length, 3);
+    assert.ok(chips[2].classList.contains("trellis-filter-chip-empty"),
+      "0 active + 0 archived dims the chip");
+    assert.equal(chips[2].disabled, false, "dimmed but still clickable");
+
+    await chips[2].dispatch("click");
+    assert.equal(byClass(app.view, "trellis-task-row").length, 0);
+    assert.ok(textOf(app.view).includes(i18n.en.dashboardTrellisActiveEmpty));
+    assert.ok(textOf(app.view).includes(i18n.en.dashboardTrellisArchivedEmpty));
+  });
+
+  it("falls back to All when the selected root gets unregistered", async () => {
+    let registered = ["/proj/one", "/proj/two"];
+    const app = await loadTrellisView({
+      rootsResult: () => ({ status: "ok", roots: registered }),
+      removeResult: { status: "ok", roots: ["/proj/one"] },
+    });
+
+    await byClass(app.view, "trellis-filter-chip")[2].dispatch("click");
+    assert.equal(byClass(app.view, "trellis-task-row").length, 1);
+
+    // Removing the selected root refreshes the roots list; the stale
+    // selection must not silently filter everything out.
+    registered = ["/proj/one"];
+    await byClass(app.view, "trellis-root-remove")[1].dispatch("click");
+    await flush();
+    assert.deepEqual(app.removeRootCalls, ["/proj/two"]);
+    assert.equal(byClass(app.view, "trellis-task-row").length, 2,
+      "an unregistered selection falls back to the merged All view");
+    assert.equal(byClass(app.view, "trellis-filter-chip").length, 2,
+      "the chip row follows the shrunken roots list");
+  });
+
+  it("disambiguates duplicate basenames in chips and row tags", async () => {
+    const app = await loadTrellisView({
+      rootsResult: { status: "ok", roots: ["/a/one/proj", "/b/two/proj"] },
+      activeResult: { status: "ok", tasks: [
+        activeTask({ taskPath: ".trellis/tasks/a", title: "Task A", cwd: "/a/one/proj" }),
+        activeTask({ taskPath: ".trellis/tasks/b", title: "Task B", cwd: "/b/two/proj" }),
+      ] },
+      archiveResult: { status: "ok", tasks: [] },
+    });
+
+    const chips = byClass(app.view, "trellis-filter-chip");
+    assert.ok(textOf(chips[1]).includes("proj (one)"));
+    assert.ok(textOf(chips[2]).includes("proj (two)"));
+    const tags = byClass(app.view, "trellis-task-project");
+    assert.equal(tags.length, 2);
+    assert.ok(textOf(tags[0]).includes("proj (one)"));
+    assert.ok(textOf(tags[1]).includes("proj (two)"));
   });
 });

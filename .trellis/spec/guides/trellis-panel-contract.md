@@ -593,7 +593,8 @@ Correct readArchiveList() 无参；根集来自 collectKnownRootCwds()
   隐藏，但 `renderTrellisPanel()` 照常执行（签名防抖挡住无谓重建）
 - **每秒 render() 与视图**：`renderTrellisView()` 开头
   `activeView !== "trellis"` 直接 return；视图签名 =
-  `{lang, roots, active, archive}` 全量 JSON（含 openMonths）
+  `{lang, roots, selectedRoot, active, archive}` 全量 JSON（含
+  openMonths；selectedRoot 见 §4.7）
 - **会话内嵌面板保留**：活跃绑定视角（entry.trellis 聚合）仍是
   §4.2 面板；归档浏览只在独立视图——双入口不得回潮
 
@@ -602,6 +603,57 @@ Correct readArchiveList() 无参；根集来自 collectKnownRootCwds()
 - quick round 在 trellis 视图上启动 → 切回 sessions（全部入口收口
   beginQuickRound，一例即可覆盖）
 - `.trellis-view[hidden]` 静态 CSS 守卫
+
+#### §4.7 多项目筛选（独立视图 chip 行，纯渲染层）
+
+**1. Scope/Trigger**：任何「在独立 Trellis 视图内按项目根切分/合并
+任务列表」的代码。当前实现：`src/dashboard-trellis-panel.js` 的三个
+纯函数 + `src/dashboard-renderer.js` 的 `buildTrellisFilterSection` /
+`trellisRowProjectLabel` / `trellisView.selectedRoot`。
+
+**2. Signatures**：
+- `trellisTaskOwningRoot(cwd, roots)` → 拥有该 cwd 的注册 root
+  （最长前缀匹配），无归属 → null
+- `filterTrellisTasksByRoot(tasks, roots, selectedRoot)` → 过滤后
+  数组；`selectedRoot === null` 原样返回（"全部" 合并视图）
+- `buildTrellisRootLabels(roots)` → `Map<root, label>`；label 默认
+  basename，重名时逐级加祖先段去歧义
+
+**3. Contracts**：
+- **纯渲染层**：筛选是聚合后过滤——完整 active/archive 列表留在
+  内存，每次重建按 selectedRoot 现切；不写 prefs、不发 IPC、
+  `selectedRoot` 会话级不持久化。chip 点击只置
+  `lastTrellisViewSignature = null` 强制重渲染（签名含
+  selectedRoot，双保险），同步完成、无点击竞态；active/archive
+  从不轮询，签名稳定期 chip 行不会被 per-second tick 重建
+- **最长前缀归属**：cwd === root 或以 `root + "/"` / `root + "\\"`
+  开头才算命中——前缀必须落在路径分隔符上（`/a/projx` 不归
+  `/a/proj`）；嵌套 root（`/a/proj` 与 `/a/proj/sub` 都注册）取
+  最长者，任务不会双计。精确匹配（不做 case folding）：cwd 与
+  root 出自同一 main 侧解析链（§4.5），分隔符已平台规范化
+- **去歧义规则**：basename 唯一直接用；重名先加父段
+  `name (parent)`，仍撞再加一级 `name (grand/parent)`（up 层
+  数决定括号内段数，不同层 candidate 必不相等）；根级 root 无
+  祖先段可用时全路径兜底——labels 键是 root 路径本身，chip 点击
+  闭包绑定路径而非 index，无错位面
+- **失效回退**：`refreshTrellisViewRoots` 成功落地后，若
+  selectedRoot 不在新 roots 内 → 回退 null（"全部"），绝不静默
+  过滤成空列表。回退条件只看存在性：异步 roots 回来时用户已切
+  到别的 chip 且该 chip 仍在列表内，则保留用户选择
+- **行内来源标注**：合并视图（selectedRoot === null）下每个归属
+  root 的行尾带去歧义 label 标签；单项目视图标题已点名项目，
+  标签省略；未注册 root 的 cwd 不显示误导性 basename
+- **空项目 chip**：0 活跃 + 0 归档 → 置灰（opacity）但仍可点，
+  点进去看空态是功能本身；chip 计数 = 该 root 活跃任务数，
+  归档计数在归档区标题 `(N)` 上跟随筛选
+
+**4. Tests Required**（`test/dashboard-trellis-panel.test.js`）：
+- 纯函数：最长前缀、分隔符边界（`/proj/onesuffix` → null）、
+  win32 反斜杠、去歧义三层 + 全路径兜底、`selectedRoot === null`
+  原样返回
+- 渲染：chip 行计数/aria-pressed/默认全选、单选收窄 active +
+  archive 且隐藏来源标签、空项目置灰可点、注销所选 root 后回退
+  全部、重名 basename 的 chip 与行标签
 
 ### 5. 失败模式
 

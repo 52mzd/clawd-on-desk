@@ -186,5 +186,86 @@
     return months.map((month) => ({ month, tasks: byMonth.get(month) }));
   }
 
-  return { aggregateTrellisTasks, groupTrellisTasks, groupTrellisArchiveByMonth, TRELLIS_PHASE_BADGE, normalizeProgress };
+  // ── Project filter (independent Trellis view) ────────────────────────────
+  // The filter is a pure render-layer concern: readActiveList /
+  // readArchiveList rows carry the trusted `cwd` that owns their root, and
+  // a registered root owns every cwd at or under it (main resolves roots
+  // by walking cwd upward, separators already platform-normalized, no case
+  // folding — matching here stays exact for the same reason). Nested roots
+  // pick the longest (most specific) owner so a task never counts twice.
+  function trellisTaskOwningRoot(cwd, roots) {
+    if (typeof cwd !== "string" || !cwd) return null;
+    const list = Array.isArray(roots) ? roots : [];
+    let best = null;
+    for (const root of list) {
+      if (typeof root !== "string" || !root) continue;
+      if (cwd !== root && !cwd.startsWith(root + "/") && !cwd.startsWith(root + "\\")) continue;
+      if (best === null || root.length > best.length) best = root;
+    }
+    return best;
+  }
+
+  // selectedRoot null = "all" (merged cross-project list); otherwise only
+  // tasks whose owning root is exactly the selected one survive.
+  function filterTrellisTasksByRoot(tasks, roots, selectedRoot) {
+    const list = Array.isArray(tasks) ? tasks : [];
+    if (selectedRoot === null || typeof selectedRoot !== "string") return list;
+    return list.filter((task) => trellisTaskOwningRoot(task && task.cwd, roots) === selectedRoot);
+  }
+
+  function trellisRootSegments(root) {
+    return String(root).split(/[\\/]+/).filter(Boolean);
+  }
+
+  // Chip labels: the root's basename, disambiguated only when several
+  // roots share it — first with the parent segment ("name (parent)"), then
+  // deeper ancestors ("name (grand/parent)"), finally the full path so a
+  // label is never ambiguous.
+  function buildTrellisRootLabels(roots) {
+    const list = Array.isArray(roots) ? roots.filter((root) => typeof root === "string" && root) : [];
+    const labels = new Map();
+    const groups = new Map();
+    for (const root of list) {
+      const segs = trellisRootSegments(root);
+      const base = segs.length ? segs[segs.length - 1] : root;
+      if (!groups.has(base)) groups.set(base, []);
+      groups.get(base).push(root);
+    }
+    for (const [base, group] of groups) {
+      if (group.length === 1) {
+        labels.set(group[0], base);
+        continue;
+      }
+      const segsOf = new Map(group.map((root) => [root, trellisRootSegments(root)]));
+      // "name (a/b)" takes the `up` segments ending right before the base.
+      const candidate = (root, up) => {
+        const segs = segsOf.get(root);
+        if (up <= 0 || up >= segs.length) return null;
+        return `${base} (${segs.slice(segs.length - 1 - up, segs.length - 1).join("/")})`;
+      };
+      for (const root of group) {
+        let label = root; // fallback: roots are deduped, the path is unique
+        for (let up = 1; up < segsOf.get(root).length; up++) {
+          const text = candidate(root, up);
+          if (text && !group.some((other) => other !== root && candidate(other, up) === text)) {
+            label = text;
+            break;
+          }
+        }
+        labels.set(root, label);
+      }
+    }
+    return labels;
+  }
+
+  return {
+    aggregateTrellisTasks,
+    groupTrellisTasks,
+    groupTrellisArchiveByMonth,
+    trellisTaskOwningRoot,
+    filterTrellisTasksByRoot,
+    buildTrellisRootLabels,
+    TRELLIS_PHASE_BADGE,
+    normalizeProgress,
+  };
 });

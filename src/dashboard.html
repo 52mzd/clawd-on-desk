@@ -558,6 +558,73 @@ h1 {
   cursor: pointer;
 }
 
+/* Project filter chips: "All projects" + one per registered root, labeled
+   by the disambiguated basename with its live-task count. Empty roots
+   (no live, no archived tasks) dim but stay clickable — seeing the empty
+   view is exactly what clicking them is for. */
+.trellis-filter-section {
+  margin: 0 0 14px;
+}
+
+.trellis-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.trellis-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-alt);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.trellis-filter-chip:hover,
+.trellis-filter-chip.is-active {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.trellis-filter-chip-empty {
+  opacity: 0.55;
+}
+
+.trellis-filter-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trellis-filter-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--subtle);
+}
+
+.trellis-filter-chip.is-active .trellis-filter-count {
+  color: var(--muted);
+}
+
+/* Cross-project origin tag on task rows (merged "all" view only). */
+.trellis-task-project {
+  flex: 0 0 auto;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--subtle);
+  font-size: 10px;
+}
+
 .trellis-archive-month {
   display: flex;
   align-items: center;
