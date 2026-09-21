@@ -1,0 +1,32 @@
+{
+  "id": "trellis-creative-pool-v3",
+  "name": "trellis-creative-pool-v3",
+  "title": "创意池 v3：独立 Trellis 视图 + 多项目 + 文档阅读 + 任务树 + 生命周期感知",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "clawd",
+  "assignee": "clawd",
+  "createdAt": "2026-09-21",
+  "completedAt": "2026-09-21",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-21-trellis-workspace",
+    "09-21-project-filter",
+    "09-21-doc-reader",
+    "09-21-task-tree",
+    "09-21-lifecycle-feedback"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
