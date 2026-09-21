@@ -202,3 +202,29 @@ e3efedf8,cac74c1b,d33747e3,c1bde2ed
 ### Status
 
 [OK] **Completed**
+
+
+## Session 8: 创意池 v3 五件全落地：独立视图+多项目+文档阅读+任务树+生命周期感知
+
+**Date**: 2026-09-21
+**Task**: 创意池 v3 五件全落地：独立视图+多项目+文档阅读+任务树+生命周期感知
+**Branch**: `main`
+
+### Summary
+
+trellis-card 二次对照缺口全补（每件独立 implement→check→commit→archive）：① trellis-workspace：Dashboard 双视图（Sessions/Trellis tab）+ roots 持久化（~/.clawd/trellis-roots.json 原子写、损坏容错不回写）+ dialog picker 手动管理 + readActiveList + 信任面三源合一 isTrustedTrellisCwd；② project-filter：最长前缀归属（分隔符锚定）+ 重名 basename 祖先去歧义 + chip 会话级筛选；③ doc-reader：受限 GFM 渲染器（createElement+textContent only、单趟 tokenizer、XSS 探针钉死）+ readTaskDoc 双门禁 basename 白名单 + 1MiB UTF-8 边界截断 + tab 懒加载缓存开关双清；④ task-tree：buildTrellisTree 四层 parent 匹配（同目录→唯一归档→同月→跨月）+ 环/深度帽守卫 + 修复 v2 潜伏月提取 bug（taskPath 全路径化后月组坍缩成 .trellis，28 条真实归档验证）；⑤ lifecycle-feedback：onPhaseTransition 挂既有 diff（零新轮询）+ 独立去重表 10s 去抖（可见气泡原地改写）+ DND/mini/sleep-like gate + celebration 双通道语义钉死。npm test 全量五件失败集均与基线逐条一致。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6ed0faf3` | (see git log) |
+| `4af5543c` | (see git log) |
+| `7ceebbd8` | (see git log) |
+| `1457571f` | (see git log) |
+| `07f93a60` | (see git log) |
+| `2767b056` | (see git log) |
+
+### Status
+
+[OK] **Completed**
