@@ -55,6 +55,31 @@ For each boundary:
 
 ### Mistake 5: Polling Assumes Transitional States Persist
 
+### Mistake 7: Authoritative Input Routed Through Heuristic Resolution
+
+When a resolver built for INFERRING context (e.g. walk up from a session
+cwd to the nearest `.trellis`) is reused for EXPLICIT user input (a
+directory the user just picked), the heuristic silently overrides the
+user's intent. Real case: picking `~/Downloads/codes` climbed to a stray
+`~/.trellis` and registered the entire `$HOME` as a project root
+(aeba090e).
+
+Rules:
+
+- Explicit picks get a direct predicate (`isDirectProjectRoot`) that
+  checks ONLY the input itself; heuristic resolvers stay reserved for
+  auto-inferred paths (session cwds, file-derived guesses)
+- Name the distinction: `resolveProjectRoot` (inference) vs
+  `isDirectProjectRoot` (authority). If a pick handler calls anything
+  that walks up, that's the bug
+- Same trap in styling: selectors written against IMAGINED class names
+  (`.trellis-tree-row`) match nothing when rows render as
+  `.trellis-task-row` — always grep the `className =` site before
+  writing CSS against it
+
+**Check yourself**: "Does this code path receive user-explicit input?
+Then every helper it calls must terminate at the input, never beyond."
+
 ### Mistake 6: Measurement Feeds The Layout It Measured
 
 When the renderer measures a DOM element (`offsetHeight` and friends) and
