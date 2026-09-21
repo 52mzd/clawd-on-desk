@@ -1,0 +1,114 @@
+name: "🔌 Agent / integration issue"
+description: "Report an AI-agent, hook, permission, session, focus, WSL, or Remote SSH integration problem"
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for integration-specific failures such as missing state updates, hook installation problems, permission bubbles, incorrect session identity, focus failures, WSL, or Remote SSH behavior.
+
+        Do not include API keys, tokens, credentials, private prompts, or unsanitized personal paths.
+
+  - type: input
+    id: integration
+    attributes:
+      label: "Agent or integration"
+      description: "For example: Codex CLI, Claude Code, Cursor, Qoder, WSL, or Remote SSH."
+      placeholder: "Codex CLI"
+    validations:
+      required: true
+
+  - type: input
+    id: integration-version
+    attributes:
+      label: "Agent / integration version"
+      description: "Provide the exact version when available."
+      placeholder: "0.123.0"
+
+  - type: input
+    id: clawd-version
+    attributes:
+      label: "Clawd on Desk version"
+      description: "For example: v0.16.0, or the commit SHA when running from source."
+      placeholder: "v0.16.0"
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: "Operating system and architecture"
+      placeholder: "Windows 11 24H2 x64 / macOS 15 arm64 / Ubuntu 24.04 x64"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: "Execution environment"
+      options:
+        - "Local / native"
+        - "WSL"
+        - "Remote SSH"
+        - "Other"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: capability
+    attributes:
+      label: "Affected capability"
+      multiple: true
+      options:
+        - "Hook installation or cleanup"
+        - "State / animation tracking"
+        - "Permissions / approvals"
+        - "Session identity or lifecycle"
+        - "Notifications / completion"
+        - "Terminal or editor focus"
+        - "Remote SSH / WSL"
+        - "Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: "What happened?"
+      description: "Describe the observed integration behavior and any exact error text."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: "Steps to reproduce"
+      description: "Include relevant setup state, install/enable steps, and the smallest reliable sequence."
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: "Expected behavior"
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: "Sanitized logs or additional context"
+      description: "Include relevant hook/runtime logs, screenshots, or diagnostics with secrets and personal data removed."
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: "Pre-submission check"
+      options:
+        - label: "I searched existing issues for the same integration problem."
+          required: true
