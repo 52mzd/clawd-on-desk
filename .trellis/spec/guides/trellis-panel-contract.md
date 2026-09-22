@@ -596,11 +596,15 @@ Correct readArchiveList() 无参；根集来自 collectKnownRootCwds()
 
 **2. Signatures**：
 - `createTrellisRootsStore({ fs?, filePath?, warn? })` →
-  `{ load(), list(), add(root), remove(root) }`；默认文件
-  `~/.clawd/trellis-roots.json`，极简 JSON 字符串数组（**不足 prefs**，
-  与 roam-area.json 同层，settings schema/controller 零接触）
+  `{ load(), list(), listPicks(), recordPick(), removePick(), add(root), remove(root) }`；默认文件
+  `~/.clawd/trellis-roots.json`，v1 形态 `{version:1, roots:[...], picks:[{picked, roots:[...]}]}`
+  （**不足 prefs**，与 roam-area.json 同层，settings schema/controller 零接触）。
+  legacy 纯字符串数组自动迁移：按未覆盖根的父目录推断 pick 行
+  （f853b513——簿记曾只在进程内存 Map，重启即退回逐根移除）
 - `add`/`remove` 返回 `{status: ok|duplicate|limit|invalid|not-found,
-  roots?}`；cap 64（`TRELLIS_ROOTS_MAX`）
+  roots?}`；cap 64（`TRELLIS_ROOTS_MAX`）；`remove` 会同步剪枝 pick
+  簿记（根耗尽的 pick 随之消失）；`recordPick`/`removePick` 返回
+  `{status: ok|invalid|not-found, roots?, removed?}`
 - `normalizeRootPath(p)`：`path.normalize` + 去尾分隔符（**不做
   case folding**）；持久化集合的 canonical 形式
 
@@ -677,7 +681,8 @@ Correct readArchiveList() 无参；根集来自 collectKnownRootCwds()
 - roots 区渲染的是**用户选择**（pick）而不是展开后的项目根：多项目
   pick（~/Downloads/codes → 5 个子项目）只显示一行——选择目录 + ×N
   徽标 + 一个移除按钮（移除即撤销该 pick 注册的全部根）。
-- pick 簿记在 main（`_trellisRootsPicks` Map），`dashboard:trellis-pick-remove`
+- pick 簿记持久化在 roots store 自身（`picks` 数组，随 roots 同文件
+  原子写，重启存活），`dashboard:trellis-pick-remove`
   通道严格 `{picked}` 单字符串 payload；无 pick 记录的根（会话解析/
   历史持久化）仍逐根渲染，保证一切可管理。
 - picker 的选择**权威且不向上爬**：`isDirectProjectRoot` 只查所选目录
@@ -699,9 +704,9 @@ Correct readArchiveList() 无参；根集来自 collectKnownRootCwds()
 - preload：`removeTrellisPick(picked: string) → invoke("dashboard:trellis-pick-remove", { picked })`
 - session-ipc handler：trusted Dashboard main-frame only；payload 键集
   恰为 `["picked"]` 且为非空 string，否则 `{status:"invalid"}`
-- main：`removeTrellisPick(picked)` → 查 `_trellisRootsPicks`（normalize
-  后匹配）→ 无则 `{status:"not-found"}`；有则删 Map 项 + 逐根
-  `_trellisRootsStore.remove()` + `syncTrellisPersistedRoots()` →
+- main：`removeTrellisPick(picked)` → `_trellisRootsStore.removePick()`
+  （store 内一次删 pick + 其全部仍注册根，单次原子持久化）+
+  `syncTrellisPersistedRoots()` →
   `{status:"ok", roots, removed:[...]}`
 - 依赖注入：`removeTrellisPick` 是 session-ipc 的 required dep（缺失即
   throw，测试基座必须补 noop）
