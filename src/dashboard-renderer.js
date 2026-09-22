@@ -49,6 +49,7 @@ const contentEl = document.getElementById("content");
 const quotaSummaryEl = document.getElementById("quotaSummary");
 const trellisPanelEl = document.getElementById("trellisPanel");
 const trellisDetailOverlayEl = document.getElementById("trellisDetailOverlay");
+const trellisSpecOverlayEl = document.getElementById("trellisSpecOverlay");
 // Independent Trellis view: a second scrolling main plus the header tab.
 const trellisViewEl = document.getElementById("trellisView");
 const viewSessionsTabEl = document.getElementById("viewSessionsTab");
@@ -1666,6 +1667,17 @@ function buildTrellisRootsSection() {
     void addTrellisRootViaPicker();
   });
   titleRow.appendChild(add);
+  // v4-a: browse this project's .trellis/spec in the spec-map overlay.
+  if (trellisView.roots.length > 0) {
+    const spec = document.createElement("button");
+    spec.type = "button";
+    spec.className = "trellis-view-add-root";
+    spec.textContent = t("dashboardTrellisSpecOpen");
+    spec.addEventListener("click", () => {
+      openTrellisSpec(trellisView.selectedRoot || trellisView.roots[0]);
+    });
+    titleRow.appendChild(spec);
+  }
   section.appendChild(titleRow);
 
   if (trellisView.rootsError) {
@@ -2090,6 +2102,238 @@ const trellisDetail = {
 // persisted, never logged (PRD: document contents are ephemeral).
 const trellisDetailDocs = new Map(); // "taskPath\u0000doc" → { loading, result }
 let lastTrellisDetailSignature = null;
+
+// ── v4-a spec map ──────────────────────────────────────────────────────────
+// A second overlay on the same pattern as the task-detail card: a left
+// file list over readSpecTree, a right pane rendering readSpecDoc through
+// the same whitelisted builder as task docs. Session-memory only; every
+// cached document dies with closeTrellisSpec().
+const trellisSpec = {
+  open: false,
+  loading: false,
+  seq: 0,
+  root: null, // registered root whose .trellis/spec is being browsed
+  files: [], // [{ relPath, group }] from readSpecTree
+  truncated: false,
+  selected: null, // relPath of the doc shown in the right pane
+};
+const trellisSpecDocs = new Map(); // "root\u0000relPath" → { loading, result }
+let lastTrellisSpecSignature = null;
+
+function trellisSpecDocKey(root, relPath) {
+  return `${root}\u0000${relPath}`;
+}
+
+function openTrellisSpec(root) {
+  const target = typeof root === "string" && root ? root : trellisView.selectedRoot || trellisView.roots[0];
+  if (!target) return;
+  if (trellisSpec.open && trellisSpec.root === target) {
+    renderTrellisSpec();
+    return;
+  }
+  trellisSpec.open = true;
+  trellisSpec.loading = trellisSpec.root !== target;
+  trellisSpec.seq += 1;
+  trellisSpec.root = target;
+  trellisSpec.files = [];
+  trellisSpec.truncated = false;
+  trellisSpec.selected = null;
+  trellisSpecDocs.clear();
+  lastTrellisSpecSignature = null;
+  renderTrellisSpec();
+  void fetchTrellisSpecTree(target);
+}
+
+function closeTrellisSpec() {
+  if (!trellisSpec.open) return;
+  trellisSpec.open = false;
+  trellisSpec.loading = false;
+  trellisSpec.root = null;
+  trellisSpec.files = [];
+  trellisSpec.truncated = false;
+  trellisSpec.selected = null;
+  // Ephemeral by contract: closing drops every cached document content.
+  trellisSpecDocs.clear();
+  lastTrellisSpecSignature = null;
+  renderTrellisSpec();
+}
+
+function switchTrellisSpecRoot(root) {
+  if (!trellisSpec.open || typeof root !== "string" || !root || root === trellisSpec.root) return;
+  trellisSpec.root = root;
+  trellisSpec.files = [];
+  trellisSpec.truncated = false;
+  trellisSpec.selected = null;
+  trellisSpecDocs.clear();
+  lastTrellisSpecSignature = null;
+  renderTrellisSpec();
+  void fetchTrellisSpecTree(root);
+}
+
+function selectTrellisSpecDoc(relPath) {
+  if (!trellisSpec.open || typeof relPath !== "string" || !relPath) return;
+  trellisSpec.selected = relPath;
+  lastTrellisSpecSignature = null;
+  renderTrellisSpec();
+  void fetchTrellisSpecDoc(relPath);
+}
+
+async function fetchTrellisSpecTree(root) {
+  if (typeof window.dashboardAPI.getTrellisSpecTree !== "function") return;
+  const seq = trellisSpec.seq;
+  trellisSpec.loading = true;
+  lastTrellisSpecSignature = null;
+  renderTrellisSpec();
+  let result = null;
+  try {
+    result = await window.dashboardAPI.getTrellisSpecTree({ root });
+  } catch {
+    result = null;
+  }
+  // Stale guard: a reply for a closed panel or a superseded root is dropped.
+  if (!trellisSpec.open || trellisSpec.root !== root || trellisSpec.seq !== seq) return;
+  trellisSpec.loading = false;
+  if (result && typeof result === "object" && result.status === "ok" && Array.isArray(result.files)) {
+    trellisSpec.files = result.files.filter(
+      (f) => f && typeof f === "object" && typeof f.relPath === "string" && f.relPath
+    );
+    trellisSpec.truncated = result.truncated === true;
+  } else {
+    trellisSpec.files = [];
+    trellisSpec.truncated = false;
+  }
+  lastTrellisSpecSignature = null;
+  renderTrellisSpec();
+}
+
+async function fetchTrellisSpecDoc(relPath) {
+  const root = trellisSpec.root;
+  if (!root || typeof window.dashboardAPI.getTrellisSpecDoc !== "function") return;
+  const key = trellisSpecDocKey(root, relPath);
+  if (trellisSpecDocs.has(key)) return;
+  trellisSpecDocs.set(key, { loading: true, result: null });
+  lastTrellisSpecSignature = null;
+  renderTrellisSpec();
+  let result = null;
+  try {
+    result = await window.dashboardAPI.getTrellisSpecDoc({ root, relPath });
+  } catch {
+    result = null;
+  }
+  const entry = trellisSpecDocs.get(key);
+  if (!entry) return; // closed / switched root dropped the cache
+  entry.loading = false;
+  entry.result = result && typeof result === "object" ? result : { status: "error" };
+  lastTrellisSpecSignature = null;
+  renderTrellisSpec();
+}
+
+function buildTrellisSpecCard() {
+  const card = document.createElement("div");
+  card.className = "trellis-detail-card trellis-spec-card";
+
+  // Header: title + (multi-root chips) + close — same shape as the detail card.
+  const header = document.createElement("div");
+  header.className = "trellis-detail-header";
+  header.appendChild(createText("h3", "trellis-detail-title", t("dashboardTrellisSpecTitle")));
+  const roots = trellisView.roots;
+  if (roots.length > 1) {
+    const labels = buildTrellisRootLabels(roots);
+    const chips = document.createElement("div");
+    chips.className = "trellis-spec-roots";
+    for (const root of roots) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "trellis-filter-chip";
+      if (root === trellisSpec.root) chip.classList.add("is-active");
+      chip.appendChild(document.createTextNode(labels.get(root) || root));
+      chip.addEventListener("click", () => switchTrellisSpecRoot(root));
+      chips.appendChild(chip);
+    }
+    header.appendChild(chips);
+  }
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "trellis-detail-close";
+  close.textContent = "✕";
+  close.title = t("dashboardTrellisDetailClose");
+  close.setAttribute("aria-label", t("dashboardTrellisDetailClose"));
+  close.addEventListener("click", closeTrellisSpec);
+  header.appendChild(close);
+  card.appendChild(header);
+
+  const body = document.createElement("div");
+  body.className = "trellis-spec-body";
+
+  // Left pane: grouped file list.
+  const list = document.createElement("div");
+  list.className = "trellis-spec-list";
+  if (trellisSpec.loading) {
+    list.appendChild(createText("div", "trellis-detail-hint", "…"));
+  } else if (trellisSpec.files.length === 0) {
+    list.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisSpecEmpty")));
+  } else {
+    let lastGroup = null;
+    for (const file of trellisSpec.files) {
+      if (file.group !== lastGroup) {
+        lastGroup = file.group;
+        list.appendChild(createText("div", "trellis-spec-group-label", file.group));
+      }
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "trellis-spec-file-button";
+      if (file.relPath === trellisSpec.selected) item.setAttribute("aria-current", "true");
+      item.appendChild(document.createTextNode(file.relPath));
+      item.addEventListener("click", () => selectTrellisSpecDoc(file.relPath));
+      list.appendChild(item);
+    }
+  }
+  body.appendChild(list);
+
+  // Right pane: selected document through the whitelisted renderer.
+  const docPane = document.createElement("div");
+  docPane.className = "trellis-spec-doc";
+  if (trellisSpec.selected) {
+    const entry = trellisSpecDocs.get(trellisSpecDocKey(trellisSpec.root, trellisSpec.selected));
+    if (!entry || entry.loading) {
+      docPane.appendChild(createText("div", "trellis-detail-hint", "…"));
+    } else if (entry.result && entry.result.status === "ok") {
+      const rendered = renderMarkdownDoc(trellisDocBuilder, entry.result.content || "");
+      docPane.appendChild(rendered.root);
+      if (rendered.truncated) {
+        docPane.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisDocTruncated")));
+      }
+    } else {
+      docPane.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisSpecLoadFailed")));
+    }
+  }
+  body.appendChild(docPane);
+  card.appendChild(body);
+  return card;
+}
+
+function renderTrellisSpec() {
+  if (!trellisSpecOverlayEl) return;
+  if (!trellisSpec.open) {
+    trellisSpecOverlayEl.hidden = true;
+    trellisSpecOverlayEl.replaceChildren();
+    return;
+  }
+  const signature = JSON.stringify([
+    trellisSpec.loading,
+    trellisSpec.root,
+    trellisSpec.files.map((f) => `${f.group}|${f.relPath}`),
+    trellisSpec.truncated,
+    trellisSpec.selected,
+    [...trellisSpecDocs.entries()].map(([k, v]) => [k, v.loading, v.result && v.result.status, v.result && v.result.truncated]),
+    trellisView.roots,
+  ]);
+  if (signature === lastTrellisSpecSignature) return;
+  lastTrellisSpecSignature = signature;
+  trellisSpecOverlayEl.replaceChildren(buildTrellisSpecCard());
+  trellisSpecOverlayEl.hidden = false;
+}
+// ── end spec map ───────────────────────────────────────────────────────────
 
 function trellisDetailDocKey(taskPath, doc) {
   return `${taskPath}\u0000${doc}`;
@@ -3532,9 +3776,17 @@ async function init() {
   // key) and a click on the dimmed backdrop outside the card.
   if (typeof document.addEventListener === "function") {
     document.addEventListener("keydown", (event) => {
-      if (!trellisDetail.open) return;
+      if (!trellisDetail.open && !trellisSpec.open) return;
       if (quick.active || quick.pending) return;
-      if (event.key === "Escape") closeTrellisDetail();
+      if (event.key === "Escape") {
+        if (trellisSpec.open) closeTrellisSpec();
+        else closeTrellisDetail();
+      }
+    });
+  }
+  if (trellisSpecOverlayEl && typeof trellisSpecOverlayEl.addEventListener === "function") {
+    trellisSpecOverlayEl.addEventListener("click", (event) => {
+      if (event.target === trellisSpecOverlayEl) closeTrellisSpec();
     });
   }
   if (trellisDetailOverlayEl && typeof trellisDetailOverlayEl.addEventListener === "function") {

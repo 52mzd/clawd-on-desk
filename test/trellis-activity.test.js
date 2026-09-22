@@ -1675,6 +1675,74 @@ describe("trellis-activity readArchiveList", () => {
     return makeHarness({ sessions });
   }
 
+  function addSpecDoc(fake, relPath, content) {
+    return fake.add(path.join(PROJECT, ".trellis", "spec", ...relPath.split("/")), content);
+  }
+
+  it("readSpecTree lists grouped markdown files under the trusted root", async () => {
+    const h = makeArchiveHarness();
+    addSpecDoc(h.fakeFs, "index.md", "# index");
+    addSpecDoc(h.fakeFs, "frontend/index.md", "# frontend");
+    addSpecDoc(h.fakeFs, "frontend/type-safety.md", "# types");
+    addSpecDoc(h.fakeFs, "guides/cross-layer-thinking-guide.md", "# guide");
+    addSpecDoc(h.fakeFs, "guides/.hidden.md", "# hidden");
+    addSpecDoc(h.fakeFs, "frontend/notes.txt", "not markdown");
+    h.activity.setPersistedRoots([PROJECT]);
+
+    const result = await h.activity.readSpecTree(PROJECT);
+    assert.strictEqual(result.status, "ok");
+    assert.deepStrictEqual(result.files.map((f) => f.relPath).sort(), [
+      "frontend/index.md",
+      "frontend/type-safety.md",
+      "guides/cross-layer-thinking-guide.md",
+      "index.md",
+    ]);
+    assert.strictEqual(result.files.find((f) => f.relPath === "index.md").group, "spec");
+    assert.strictEqual(result.files.find((f) => f.relPath === "guides/cross-layer-thinking-guide.md").group, "guides");
+    assert.strictEqual(result.truncated, false);
+    assert.deepStrictEqual(h.fakeFs.writeOps, [], "spec tree stays read-only");
+  });
+
+  it("readSpecTree rejects untrusted roots and tolerates a missing spec dir", async () => {
+    const h = makeArchiveHarness();
+    h.activity.setPersistedRoots([PROJECT]);
+
+    assert.strictEqual((await h.activity.readSpecTree("/untrusted")).status, "missing");
+    assert.strictEqual((await h.activity.readSpecTree(42)).status, "missing");
+    // Trusted root but no .trellis/spec at all — empty, not an error.
+    const empty = await h.activity.readSpecTree(PROJECT);
+    assert.strictEqual(empty.status, "ok");
+    assert.deepStrictEqual(empty.files, []);
+  });
+
+  it("readSpecDoc validates relPath segment-by-segment against live listings", async () => {
+    const h = makeArchiveHarness();
+    addSpecDoc(h.fakeFs, "guides/cross-layer-thinking-guide.md", "# Mistake 1");
+    h.activity.setPersistedRoots([PROJECT]);
+
+    const ok = await h.activity.readSpecDoc(PROJECT, "guides/cross-layer-thinking-guide.md");
+    assert.strictEqual(ok.status, "ok");
+    assert.strictEqual(ok.relPath, "guides/cross-layer-thinking-guide.md");
+    assert.ok(ok.content.includes("Mistake 1"));
+    assert.strictEqual(ok.truncated, false);
+
+    // Traversal / malformed shapes never reach path.join.
+    for (const bad of [
+      "../tasks/09-19-x/task.json",
+      "guides/../../secrets.md",
+      "guides\\cross-layer-thinking-guide.md",
+      "guides/missing.md",
+      "notes.txt",
+      "",
+      "a/".repeat(3) + "deep.md",
+    ]) {
+      const r = await h.activity.readSpecDoc(PROJECT, bad);
+      assert.notStrictEqual(r.status, "ok", `unexpected ok for ${JSON.stringify(bad)}`);
+    }
+    assert.strictEqual((await h.activity.readSpecDoc("/untrusted", "guides/cross-layer-thinking-guide.md")).status, "missing");
+    assert.deepStrictEqual(h.fakeFs.writeOps, [], "spec doc stays read-only");
+  });
+
   function addArchived(fake, month, name, taskJson) {
     const dir = path.join(PROJECT, ".trellis", "tasks", "archive", month, name);
     fake.add(path.join(dir, "task.json"), JSON.stringify(taskJson));

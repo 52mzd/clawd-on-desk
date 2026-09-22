@@ -79,6 +79,8 @@ contextBridge.exposeInMainWorld("dashboardAPI", {
   resumeSession: (payload) => ipcRenderer.invoke("dashboard:resume-session", payload),
   getTrellisTaskDetail: (payload) => ipcRenderer.invoke("dashboard:trellis-task-detail", payload),
   getTrellisTaskDoc: (payload) => ipcRenderer.invoke("dashboard:trellis-task-doc", payload),
+  getTrellisSpecTree: (payload) => ipcRenderer.invoke("dashboard:trellis-spec-tree", payload),
+  getTrellisSpecDoc: (payload) => ipcRenderer.invoke("dashboard:trellis-spec-doc", payload),
   getTrellisArchiveList: () => ipcRenderer.invoke("dashboard:trellis-archive-list"),
   getTrellisActiveList: () => ipcRenderer.invoke("dashboard:trellis-active-list"),
   listTrellisRoots: () => ipcRenderer.invoke("dashboard:trellis-roots-list"),

@@ -52,6 +52,14 @@ function registerSessionIpc(options = {}) {
     options.getTrellisTaskDoc,
     "getTrellisTaskDoc"
   );
+  const getTrellisSpecTree = requiredDependency(
+    options.getTrellisSpecTree,
+    "getTrellisSpecTree"
+  );
+  const getTrellisSpecDoc = requiredDependency(
+    options.getTrellisSpecDoc,
+    "getTrellisSpecDoc"
+  );
   const getTrellisArchiveList = requiredDependency(
     options.getTrellisArchiveList,
     "getTrellisArchiveList"
@@ -209,6 +217,46 @@ function registerSessionIpc(options = {}) {
       return { status: "invalid" };
     }
     return getTrellisTaskDoc(payload);
+  });
+
+  // v4-a spec map: one-shot listing / reading of the trusted root's
+  // .trellis/spec/**/*.md. Strict single-key {root} for the tree; strict
+  // {root, relPath} for the doc — the owner re-validates relPath segment
+  // by segment against live directory listings (never trusts it as a path).
+  handle("dashboard:trellis-spec-tree", (event, payload) => {
+    const rejected = rejectUntrustedDashboardEvent(event);
+    if (rejected) return rejected;
+    if (
+      payload === null
+      || typeof payload !== "object"
+      || Array.isArray(payload)
+      || Object.keys(payload).length !== 1
+      || typeof payload.root !== "string"
+      || !payload.root
+    ) {
+      return { status: "invalid" };
+    }
+    return getTrellisSpecTree(payload);
+  });
+
+  handle("dashboard:trellis-spec-doc", (event, payload) => {
+    const rejected = rejectUntrustedDashboardEvent(event);
+    if (rejected) return rejected;
+    const keys = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? Object.keys(payload).sort()
+      : [];
+    if (
+      keys.length !== 2
+      || keys[0] !== "relPath"
+      || keys[1] !== "root"
+      || typeof payload.root !== "string"
+      || !payload.root
+      || typeof payload.relPath !== "string"
+      || !payload.relPath
+    ) {
+      return { status: "invalid" };
+    }
+    return getTrellisSpecDoc(payload);
   });
 
   // One-shot on-demand scan of the archive folders behind the known

@@ -843,6 +843,80 @@ h1 {
   gap: 8px;
 }
 
+/* v4-a spec map — wider two-pane card on the same overlay pattern. */
+.trellis-spec-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(760px, 100%);
+  height: min(560px, 100%);
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+}
+
+.trellis-spec-body {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.trellis-spec-roots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.trellis-spec-list {
+  width: 240px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 8px;
+}
+
+.trellis-spec-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
+  padding: 8px 6px 4px;
+}
+
+.trellis-spec-file-button {
+  text-align: left;
+  font-size: 12.5px;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+}
+
+.trellis-spec-file-button:hover {
+  background: var(--hover, rgba(127, 127, 127, 0.12));
+}
+
+.trellis-spec-file-button[aria-current="true"] {
+  background: var(--accent-soft, rgba(127, 127, 127, 0.2));
+  font-weight: 600;
+}
+
+.trellis-spec-doc {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 4px 8px;
+}
+
 .trellis-detail-heading {
   display: flex;
   flex-wrap: wrap;
@@ -1792,6 +1866,7 @@ button:disabled {
     <main id="trellisView" class="content trellis-view" hidden></main>
   </div>
   <div id="trellisDetailOverlay" class="trellis-detail-overlay" role="dialog" hidden></div>
+  <div id="trellisSpecOverlay" class="trellis-detail-overlay" role="dialog" hidden></div>
   <script src="./session-focus-unavailable.js"></script>
   <script src="./dashboard-trellis-panel.js"></script>
   <script src="./trellis-doc-renderer.js"></script>

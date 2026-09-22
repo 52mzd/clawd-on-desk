@@ -954,6 +954,99 @@ function createTrellisActivity(options) {
     };
   }
 
+  // v4-a spec map: bounded listing of <root>/.trellis/spec/**/*.md for the
+  // Dashboard's Trellis view. Same trust gate as every other on-demand
+  // read (registered root / live cwd / positively resolved this process),
+  // same quiet-IO helpers. Depth is counted relative to spec/ and hard-
+  // capped so a pathological tree cannot stall the round-trip.
+  const SPEC_TREE_MAX_DEPTH = 3;
+  const SPEC_TREE_MAX_FILES = 200;
+
+  function resolveTrustedSpecDir(root) {
+    if (typeof root !== "string" || !root.trim()) return null;
+    if (!isTrustedTrellisCwd(root)) return null;
+    const specDir = path.join(root, ".trellis", "spec");
+    const normalizedRoot = normalizeRootPath(root);
+    return { specDir, normalizedRoot };
+  }
+
+  async function readSpecTree(root) {
+    const resolved = resolveTrustedSpecDir(root);
+    if (!resolved) return { status: "missing" };
+    const files = [];
+    // Iterative walk, one directory queue entry at a time; file order is
+    // directory order (stable per platform), not sorted here.
+    const queue = [{ rel: "", depth: 0 }];
+    while (queue.length > 0 && files.length < SPEC_TREE_MAX_FILES) {
+      const { rel, depth } = queue.shift();
+      if (depth > SPEC_TREE_MAX_DEPTH) continue;
+      const entries = await readdirQuiet(path.join(resolved.specDir, rel));
+      if (!entries) continue;
+      for (const name of entries) {
+        if (files.length >= SPEC_TREE_MAX_FILES) break;
+        if (name.startsWith(".")) continue;
+        const childRel = rel ? `${rel}/${name}` : name;
+        if (name.endsWith(".md")) {
+          const group = rel ? rel.split("/")[0] : "spec";
+          files.push({ relPath: childRel, group });
+          continue;
+        }
+        // Descend only into plain-named directories below the cap.
+        if (depth < SPEC_TREE_MAX_DEPTH) {
+          queue.push({ rel: childRel, depth: depth + 1 });
+        }
+      }
+    }
+    return { status: "ok", files, truncated: files.length >= SPEC_TREE_MAX_FILES };
+  }
+
+  // Read one spec document. The renderer-supplied relPath is validated by
+  // segment shape AND by whitelist membership against what the parent
+  // directories themselves list (the readTaskDoc philosophy: a file can
+  // only be read if the directory just said it exists) — traversal never
+  // reaches path.join.
+  async function readSpecDoc(root, relPath) {
+    const resolved = resolveTrustedSpecDir(root);
+    if (!resolved) return { status: "missing" };
+    if (
+      typeof relPath !== "string"
+      || !relPath.endsWith(".md")
+      || relPath.includes("\\")
+      || relPath === ".md"
+    ) {
+      return { status: "missing" };
+    }
+    const segments = relPath.split("/");
+    if (segments.length > SPEC_TREE_MAX_DEPTH + 1) return { status: "missing" };
+    for (const seg of segments) {
+      if (!seg || seg === "." || seg === "..") return { status: "missing" };
+    }
+    // Layer-by-layer whitelist: every directory segment must appear in the
+    // listing of its parent before we descend into it.
+    let absDir = resolved.specDir;
+    for (let i = 0; i < segments.length - 1; i++) {
+      const entries = await readdirQuiet(absDir);
+      if (!entries || !entries.includes(segments[i])) return { status: "missing" };
+      absDir = path.join(absDir, segments[i]);
+    }
+    const fileName = segments[segments.length - 1];
+    const dirEntries = await readdirQuiet(absDir);
+    if (!dirEntries || !dirEntries.includes(fileName)) return { status: "missing" };
+    const st = await statQuiet(path.join(absDir, fileName));
+    if (!(st && !st.isDirectory())) return { status: "missing" };
+
+    const content = await readTextQuiet(path.join(absDir, fileName));
+    if (content === null) return { status: "missing" };
+    const size = Buffer.byteLength(content, "utf8");
+    if (size <= TASK_DOC_MAX_BYTES) {
+      return { status: "ok", relPath, size, truncated: false, content };
+    }
+    const truncatedContent = Buffer.from(content, "utf8")
+      .subarray(0, TASK_DOC_MAX_BYTES)
+      .toString("utf8");
+    return { status: "ok", relPath, size, truncated: true, content: truncatedContent };
+  }
+
   // On-demand read of the most recently archived tasks for the Dashboard's
   // independent Trellis view. The data source is the known-root set
   // (registered roots + cwds that positively resolved a .trellis root this
@@ -1103,6 +1196,8 @@ function createTrellisActivity(options) {
     listChildProjectRoots,
     readTaskDetail,
     readTaskDoc,
+    readSpecTree,
+    readSpecDoc,
     readArchiveList,
     readActiveList,
   };

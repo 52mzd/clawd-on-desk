@@ -5404,6 +5404,18 @@ registerSessionIpc({
     }
     return _trellisActivity.readTaskDetail(payload.cwd, payload.taskPath);
   },
+  getTrellisSpecTree: (payload) => {
+    if (!_trellisActivity || typeof _trellisActivity.readSpecTree !== "function") {
+      return { status: "error", message: "trellis-activity-unavailable" };
+    }
+    return _trellisActivity.readSpecTree(payload.root);
+  },
+  getTrellisSpecDoc: (payload) => {
+    if (!_trellisActivity || typeof _trellisActivity.readSpecDoc !== "function") {
+      return { status: "error", message: "trellis-activity-unavailable" };
+    }
+    return _trellisActivity.readSpecDoc(payload.root, payload.relPath);
+  },
   getTrellisTaskDoc: (payload) => {
     if (!_trellisActivity || typeof _trellisActivity.readTaskDoc !== "function") {
       return { status: "error", message: "trellis-activity-unavailable" };
