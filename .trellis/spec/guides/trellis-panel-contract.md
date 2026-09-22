@@ -227,10 +227,11 @@ implement.md checklist 全勾**（`total > 0 && done === total`）。
 （“正在跑测试检查…”）是引导而非事实断言——与 finish 相
 （completed → “归档以收尾”）同一启发式模式；反向误标不可能
 （check 前必然全勾），中途补新未勾项自然回退 execute。
-`progress` 口径：**implement.md checklist（有勾选项时）优先于
-task.json subtasks**（task.py 从不同步后者）；`nextStep` 仅在
-存在未勾项时附键（无 implement.md 的任务 TrellisInfo 键集合
-逐字节不变，R4），值经 `truncateNextStep` 截到 40 code points
+`progress` 口径（c13afbd1 起三级链）：**implement.md checklist →
+prd.md 验收 checkbox → task.json subtasks**。implement.md 缺失或
+无勾选项时回退 prd.md（PRD-only 轻量任务也有执行步骤可显，
+不再是 0/0）；两者都无才走 subtasks。`nextStep` 仅在
+存在未勾项时附键，值经 `truncateNextStep` 截到 40 code points
 （surrogate-pair 安全，组合字符边界是可接受的视觉瑕疵）。
 
 ### 3. 会话绑定的双源真相（关键契约）
