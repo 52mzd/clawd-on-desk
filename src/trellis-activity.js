@@ -662,12 +662,20 @@ function createTrellisActivity(options) {
     return pointer;
   }
 
-  // Checklist facts from the task's implement.md, or an empty checklist
-  // when the file is absent — same read-only round as task.json/prd.md,
-  // no extra polling (the file rides the existing per-round task cache).
+  // Checklist facts from the task's implement.md. PRD-only lightweight
+  // tasks (no implement.md, or one without checkboxes) fall back to the
+  // prd.md acceptance-criteria checkboxes so progress/next-step still
+  // render — same read-only round, and the extra prd read only happens
+  // when implement yields nothing (tasks with a real checklist pay zero
+  // extra IO).
   async function readChecklist(absTaskDir) {
     const md = await readTextQuiet(path.join(absTaskDir, "implement.md"));
-    return parseImplementChecklist(md);
+    const parsed = parseImplementChecklist(md);
+    if (parsed.total > 0) return parsed;
+    const prd = await readTextQuiet(path.join(absTaskDir, "prd.md"));
+    const prdParsed = parseImplementChecklist(prd);
+    if (prdParsed.total > 0) return prdParsed;
+    return parsed;
   }
 
   async function readTaskInfo(root, absTaskDir) {

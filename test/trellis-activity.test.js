@@ -226,7 +226,7 @@ function makeHarness({ sessions = new Map(), getLiveSessions = null } = {}) {
 function addTask(fake, taskName, taskJson, { prd = false, implementMd = null, root = PROJECT } = {}) {
   const dir = path.join(root, ".trellis", "tasks", taskName);
   fake.add(path.join(dir, "task.json"), JSON.stringify(taskJson));
-  if (prd) fake.add(path.join(dir, "prd.md"), "# prd\n");
+  if (prd) fake.add(path.join(dir, "prd.md"), typeof prd === "string" ? prd : "# prd\n");
   if (implementMd) fake.add(path.join(dir, "implement.md"), implementMd);
   return dir;
 }
@@ -372,9 +372,10 @@ describe("trellis-activity pointer binding", () => {
     await h.timers.runDue();
 
     // 2 pointer reads + 1 binding read (task.json + prd stat + implement.md
-    // ENOENT) + 1 parallelCount read (the root scan does not dedupe against
-    // the per-round task cache).
-    assert.strictEqual(h.fakeFs.readOps.readFile, 5);
+    // ENOENT + prd.md checklist fallback read — implement.md had no
+    // checkboxes) + 1 parallelCount read (the root scan does not dedupe
+    // against the per-round task cache).
+    assert.strictEqual(h.fakeFs.readOps.readFile, 6);
     assert.strictEqual(h.activity.getTrellisInfo("codex:aaa").taskPath, ".trellis/tasks/shared");
     assert.strictEqual(h.activity.getTrellisInfo("codex:bbb").taskPath, ".trellis/tasks/shared");
   });
@@ -491,11 +492,11 @@ describe("trellis-activity pointer binding", () => {
 });
 
 describe("trellis-activity implement.md checklist", () => {
-  function checklistHarness(implementMd, taskJson) {
+  function checklistHarness(implementMd, taskJson, prd = true) {
     const h = makeHarness({
       sessions: new Map([["pi:s1", { agentId: "pi", cwd: CWD }]]),
     });
-    addTask(h.fakeFs, "task-a", taskJson || IN_PROGRESS_TASK, { prd: true, implementMd });
+    addTask(h.fakeFs, "task-a", taskJson || IN_PROGRESS_TASK, { prd, implementMd });
     addPointer(
       h.fakeFs,
       "pi_s1.json",
@@ -523,6 +524,26 @@ describe("trellis-activity implement.md checklist", () => {
     const info = h.activity.getTrellisInfo("pi:s1");
     assert.strictEqual(Array.from(info.nextStep).length, 41); // 40 + ellipsis
     assert.ok(info.nextStep.endsWith("…"));
+  });
+
+  it("PRD-only task (no implement.md checkboxes) falls back to the prd.md acceptance checklist", async () => {
+    const h = checklistHarness(null, undefined, "# PRD\n\n## Acceptance Criteria\n\n- [x] spec index exists\n- [ ] guide has a real example\n");
+    h.activity.start();
+    await h.timers.runDue();
+
+    const info = h.activity.getTrellisInfo("pi:s1");
+    assert.deepStrictEqual(info.progress, { done: 1, total: 2 });
+    assert.strictEqual(info.nextStep, "guide has a real example");
+  });
+
+  it("implement.md with checkboxes wins over a checkbox-bearing prd.md", async () => {
+    const h = checklistHarness("# plan\n\n- [x] only step\n", undefined, "# PRD\n\n- [ ] prd item\n- [ ] another\n");
+    h.activity.start();
+    await h.timers.runDue();
+
+    const info = h.activity.getTrellisInfo("pi:s1");
+    assert.deepStrictEqual(info.progress, { done: 1, total: 1 });
+    assert.strictEqual("nextStep" in info, false);
   });
 
   it("fully ticked checklist → check phase, no nextStep key", async () => {
