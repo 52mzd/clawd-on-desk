@@ -17,13 +17,28 @@
 
 ## Acceptance Criteria
 
-- [ ] planning 任务气泡/HUD 与 working 有可见区分
-- [ ] 打开详情默认收起，展开一段后滚动位置不跳
-- [ ] progress=3/7 的任务显示数字 + 7 格刻度条，3 格填充
-- [ ] 无 progress 任务不出现刻度条
-- [ ] 全量 npm test 与基线 diff=0
+- [x] planning 任务气泡/HUD 与 working 有可见区分（预存彩色 phase 徽标 + one-shot 气泡，见 Revision）
+- [x] 打开详情默认收起，展开一段后滚动位置不跳（预存 tab 化已覆盖，见 Revision）
+- [x] progress=3/7 的任务显示数字 + 7 格刻度条，3 格填充（appendTrellisProgressWithTicks，≤12 直格、超限按比例）
+- [x] 无 progress 任务不出现刻度条（buildTrellisProgressTicks 返回 null）
+- [x] 全量 npm test 与基线 diff=0（39 预存红两次全量比对一致；codex-log-monitor 单跑 125 全绿确认为并发 flaky）
 
 ## Non-Goals
 
 - 不做跨会话折叠状态持久化
 - 不做 waiting 的动画态（纯静态视觉区分）
+
+## Revision (2026-09-24, pre-implementation audit)
+
+开工前核查发现 R1/R2 的预设已不成立：
+
+- **R1 已被覆盖**：HUD 与 Dashboard 行内均已有彩色 phase 徽标
+  （`trellis-plan` 蓝 / `trellis-check` 紫 / `trellis-done` 灰，
+  session-hud.html L271-292 + TRELLIS_PHASE_BADGE）；phase 变化另有
+  one-shot 气泡 + 10s 去重。planning 与 working 的可见区分已存在。
+- **R2 已被覆盖**：详情文档早已 tab 化（activeTab，一次只显示一个
+  文档），不存在「全文铺开」。
+
+本任务范围收窄为 **仅 R3 刻度条**（真实差距）：活跃行/归档行/详情
+overview 的 `2/5` 数字旁加微型刻度条，无 progress 不渲染。R1/R2 的
+验收条目按已覆盖处理，不重复实现。

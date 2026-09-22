@@ -1174,6 +1174,48 @@ function createTrellisSessionChip(binding) {
   return chip;
 }
 
+// v4-c R3: mini tick bar next to the numeric progress. Totals above the
+// tick cap degrade proportionally (12 ticks, filled = ratio) so a 40-step
+// checklist cannot blow up the row width. Returns null when there is
+// nothing meaningful to draw (no progress / zero total).
+const TRELLIS_PROGRESS_TICK_MAX = 12;
+
+function buildTrellisProgressTicks(progress) {
+  if (!progress || typeof progress.done !== "number" || typeof progress.total !== "number") {
+    return null;
+  }
+  if (progress.total <= 1) return null;
+  const ticks = Math.min(progress.total, TRELLIS_PROGRESS_TICK_MAX);
+  const filled = ticks === progress.total
+    ? Math.min(progress.done, ticks)
+    : Math.min(Math.round((progress.done / progress.total) * ticks), ticks);
+  const wrap = document.createElement("span");
+  wrap.className = "trellis-progress-ticks";
+  wrap.setAttribute("role", "img");
+  wrap.setAttribute("aria-label", `${progress.done}/${progress.total}`);
+  for (let i = 0; i < ticks; i++) {
+    const tick = document.createElement("span");
+    tick.className = i < filled ? "trellis-progress-tick is-filled" : "trellis-progress-tick";
+    wrap.appendChild(tick);
+  }
+  return wrap;
+}
+
+function appendTrellisProgressWithTicks(main, progress) {
+  if (!progress) return;
+  const text = createText("span", "trellis-task-progress", `${progress.done}/${progress.total}`);
+  const ticks = buildTrellisProgressTicks(progress);
+  if (ticks) {
+    const group = document.createElement("span");
+    group.className = "trellis-progress-cell";
+    group.appendChild(ticks);
+    group.appendChild(text);
+    main.appendChild(group);
+  } else {
+    main.appendChild(text);
+  }
+}
+
 function createTrellisTaskRow(groupRow) {
   const task = groupRow.task;
   const row = document.createElement("div");
@@ -1202,11 +1244,7 @@ function createTrellisTaskRow(groupRow) {
         .replace("{total}", String(groupRow.childSummary.total))
     ));
   } else if (task.progress) {
-    main.appendChild(createText(
-      "span",
-      "trellis-task-progress",
-      `${task.progress.done}/${task.progress.total}`
-    ));
+    appendTrellisProgressWithTicks(main, task.progress);
   }
   if (task.sessions.length > 1) {
     main.appendChild(createText(
@@ -1586,11 +1624,7 @@ function createTrellisTreeNodeRow(node, projectLabel) {
           .replace("{total}", String(node.childSummary.total))
       ));
     } else if (task.progress) {
-      main.appendChild(createText(
-        "span",
-        "trellis-task-progress",
-        `${task.progress.done}/${task.progress.total}`
-      ));
+      appendTrellisProgressWithTicks(main, task.progress);
     }
   }
 
