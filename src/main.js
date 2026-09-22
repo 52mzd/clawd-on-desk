@@ -2669,23 +2669,12 @@ async function expandTrellisPickToRoots(picked) {
 // chosen in a native dialog and resolved towards the nearest .trellis here
 // in main — the renderer only ever triggers, never supplies a path.
 
-// Bookkeeping for multi-root picks: the folder the user chose -> the
-// project roots that were actually registered from it. Removing the
-// bookkeeping entry removes all of its roots in one action.
-const _trellisRootsPicks = new Map(); // picked folder -> Set(project roots)
-
+// Bookkeeping for user picks lives in the roots store itself
+// (`picks` in ~/.clawd/trellis-roots.json) — persisted with the roots, so
+// pick rows survive restarts. Removing one pick removes all of its roots
+// in a single action.
 function recordTrellisPick(picked, registeredRoots) {
-  if (typeof picked !== "string" || !picked.trim()) return;
-  if (!Array.isArray(registeredRoots) || registeredRoots.length === 0) return;
-  const key = path.normalize(picked);
-  let set = _trellisRootsPicks.get(key);
-  if (!set) {
-    set = new Set();
-    _trellisRootsPicks.set(key, set);
-  }
-  for (const root of registeredRoots) {
-    if (typeof root === "string" && root) set.add(path.normalize(root));
-  }
+  _trellisRootsStore.recordPick(picked, registeredRoots);
 }
 
 async function pickAndRegisterTrellisRoot() {
@@ -2752,16 +2741,9 @@ function removeRegisteredTrellisRoot(root) {
 
 // Remove one bookkeeping pick and every still-registered root it produced.
 function removeTrellisPick(picked) {
-  if (typeof picked !== "string" || !picked.trim()) return { status: "invalid" };
-  const key = path.normalize(picked);
-  const set = _trellisRootsPicks.get(key);
-  if (!set) return { status: "not-found" };
-  _trellisRootsPicks.delete(key);
-  for (const root of set) {
-    _trellisRootsStore.remove(root);
-  }
-  syncTrellisPersistedRoots();
-  return { status: "ok", roots: _trellisRootsStore.list(), removed: [...set] };
+  const result = _trellisRootsStore.removePick(picked);
+  if (result.status === "ok") syncTrellisPersistedRoots();
+  return result;
 }
 
 displayedVisualProjection = createDisplayedVisualProjection({
@@ -5440,10 +5422,7 @@ registerSessionIpc({
     // One entry per user pick: the folder they chose plus the roots that
     // were registered from it. The UI lists picks (single remove per pick);
     // roots is kept for backwards compatibility / diagnostics.
-    picks: [..._trellisRootsPicks.entries()].map(([picked, rootSet]) => ({
-      picked,
-      roots: [...rootSet],
-    })),
+    picks: _trellisRootsStore.listPicks(),
   }),
   addTrellisRoot: () => pickAndRegisterTrellisRoot(),
   removeTrellisRoot: (root) => removeRegisteredTrellisRoot(root),

@@ -83,7 +83,10 @@ describe("trellis-roots store", () => {
       ["write", expectTmp(fs.ops, filePath)],
       ["rename", expectTmp(fs.ops, filePath), filePath],
     ]);
-    assert.deepStrictEqual(JSON.parse(fs.files.get(filePath)), [path.join("/proj", "one")]);
+    assert.deepStrictEqual(
+      JSON.parse(fs.files.get(filePath)),
+      { version: 1, roots: [path.join("/proj", "one")], picks: [] },
+    );
 
     fs.ops.length = 0;
     assert.strictEqual(store.add("/proj/one/").status, "duplicate");
@@ -98,7 +101,16 @@ describe("trellis-roots store", () => {
     fs.ops.length = 0;
     assert.strictEqual(store.remove("/proj/b").status, "ok");
     assert.deepStrictEqual(store.list(), [path.join("/proj", "a")]);
-    assert.deepStrictEqual(JSON.parse(fs.files.get(filePath)), [path.join("/proj", "a")]);
+    // legacy-array load inferred one pick per parent dir; removing /proj/b
+    // pruned its inferred pick, /proj/a's stays
+    assert.deepStrictEqual(
+      JSON.parse(fs.files.get(filePath)),
+      {
+        version: 1,
+        roots: [path.join("/proj", "a")],
+        picks: [{ picked: path.join("/proj"), roots: [path.join("/proj", "a")] }],
+      },
+    );
 
     fs.ops.length = 0;
     assert.strictEqual(store.remove("/proj/zzz").status, "not-found");
@@ -113,6 +125,95 @@ describe("trellis-roots store", () => {
     }
     assert.strictEqual(store.add("/proj/overflow").status, "limit");
     assert.strictEqual(store.list().length, TRELLIS_ROOTS_MAX);
+  });
+
+  it("recordPick persists bookkeeping; picks survive a reload", () => {
+    const { store, fs, filePath } = makeHarness();
+    store.load();
+    store.add(path.join("/codes", "alpha"));
+    store.add(path.join("/codes", "beta"));
+
+    assert.strictEqual(store.recordPick("/codes", [path.join("/codes", "alpha"), path.join("/codes", "beta")]).status, "ok");
+    assert.deepStrictEqual(store.listPicks(), [
+      { picked: path.join("/codes"), roots: [path.join("/codes", "alpha"), path.join("/codes", "beta")] },
+    ]);
+
+    // Fresh store over the same file — the pick row must still be there.
+    const reloaded = createTrellisRootsStore({ fs, filePath, warn: () => {} });
+    reloaded.load();
+    assert.deepStrictEqual(reloaded.listPicks(), store.listPicks());
+
+    // Invalid payloads never write.
+    fs.ops.length = 0;
+    assert.strictEqual(store.recordPick("", ["/x"]).status, "invalid");
+    assert.strictEqual(store.recordPick("/y", []).status, "invalid");
+    assert.strictEqual(store.recordPick("/y", ["/not/registered"]).status, "invalid");
+    assert.deepStrictEqual(fs.ops, []);
+  });
+
+  it("removePick removes the pick and every root it produced in one action", () => {
+    const { store } = makeHarness();
+    store.load();
+    store.add(path.join("/codes", "alpha"));
+    store.add(path.join("/codes", "beta"));
+    store.add(path.join("/solo", "only"));
+    store.recordPick("/codes", [path.join("/codes", "alpha"), path.join("/codes", "beta")]);
+    store.recordPick("/solo", [path.join("/solo", "only")]);
+
+    const result = store.removePick("/codes/");
+    assert.strictEqual(result.status, "ok");
+    assert.deepStrictEqual(result.removed, [path.join("/codes", "alpha"), path.join("/codes", "beta")]);
+    assert.deepStrictEqual(store.list(), [path.join("/solo", "only")]);
+    assert.deepStrictEqual(store.listPicks(), [{ picked: path.join("/solo"), roots: [path.join("/solo", "only")] }]);
+
+    assert.strictEqual(store.removePick("/nope").status, "not-found");
+    assert.strictEqual(store.removePick(42).status, "invalid");
+  });
+
+  it("per-root remove prunes pick bookkeeping; exhausted picks drop out", () => {
+    const { store } = makeHarness();
+    store.load();
+    store.add(path.join("/codes", "alpha"));
+    store.add(path.join("/codes", "beta"));
+    store.recordPick("/codes", [path.join("/codes", "alpha"), path.join("/codes", "beta")]);
+
+    store.remove(path.join("/codes", "alpha"));
+    assert.deepStrictEqual(store.listPicks(), [
+      { picked: path.join("/codes"), roots: [path.join("/codes", "beta")] },
+    ]);
+
+    store.remove(path.join("/codes", "beta"));
+    assert.deepStrictEqual(store.listPicks(), []);
+    assert.deepStrictEqual(store.list(), []);
+  });
+
+  it("legacy array without picks infers one pick per parent dir", () => {
+    const { store } = makeHarness({
+      initial: JSON.stringify([path.join("/codes", "alpha"), path.join("/codes", "beta"), path.join("/misc", "solo")]),
+    });
+    store.load();
+    assert.deepStrictEqual(store.listPicks(), [
+      { picked: path.join("/codes"), roots: [path.join("/codes", "alpha"), path.join("/codes", "beta")] },
+      { picked: path.join("/misc"), roots: [path.join("/misc", "solo")] },
+    ]);
+  });
+
+  it("v1 picks keep only still-registered roots; stale entries drop", () => {
+    const { store } = makeHarness({
+      initial: JSON.stringify({
+        version: 1,
+        roots: [path.join("/codes", "alpha")],
+        picks: [
+          { picked: path.join("/codes"), roots: [path.join("/codes", "alpha"), path.join("/gone", "x")] },
+          { picked: "   ", roots: [path.join("/codes", "alpha")] },
+          "garbage",
+        ],
+      }),
+    });
+    store.load();
+    assert.deepStrictEqual(store.listPicks(), [
+      { picked: path.join("/codes"), roots: [path.join("/codes", "alpha")] },
+    ]);
   });
 });
 
