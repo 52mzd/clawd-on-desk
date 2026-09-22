@@ -280,3 +280,27 @@ v3 验收后续两修：① c13afbd1 面板执行步骤 0/0——readChecklist �
 ### Status
 
 [OK] **Completed**
+
+
+## Session 11: 创意池 v4 三件全落地：规范地图 + 关联网络 + 进度刻度条
+
+**Date**: 2026-09-23
+**Task**: 创意池 v4 三件全落地：规范地图 + 关联网络 + 进度刻度条
+**Branch**: `main`
+
+### Summary
+
+对齐 trellis-card 关联视图缺口：① f4bd8b82 v4-a 规范地图——Trellis 视图新增「规范地图」按钮 + overlay（左 spec 文件分组列表 / 右白名单 GFM 渲染），新通道 trellis-spec-tree/doc（relPath 逐段 listing 白名单，穿越/反斜杠/深度溢出 fail-closed），多 root chip 切换，缓存随关闭全清；② 22a1fbe2 v4-b 关联网络——任务行 ⛓ 入口（仅 parent/children 存在时），readTaskNetwork 解析 task.json 结构化关联（sibling 目录优先、archive 兜底、ref 点击跳详情），children 帽 20 + truncated 提示，行级 hasChildren flag（活跃行+归档 entry）；③ d42385b8 v4-c 进度刻度条——开工审计发现 R1 waiting/R2 折叠已被预存能力覆盖（彩色 phase 徽标、文档 tab 化），PRD 记 Revision 收窄为 R3：行内 progress 数字旁 12 格微型刻度条（超限按比例），无 progress 不渲染。spec 补 §4.6c/§4.6d 7 段式。全量 npm test 两次与基线 diff=0（39 预存红；codex-log-monitor 单跑全绿确认并发 flaky）。dev app 已重启（ownerPid 32045）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f4bd8b82` | (see git log) |
+| `0e1a56c4` | (see git log) |
+| `22a1fbe2` | (see git log) |
+| `d42385b8` | (see git log) |
+
+### Status
+
+[OK] **Completed**
