@@ -159,6 +159,33 @@ Rendering code may format fields, but it must not redefine the payload contract.
 
 ---
 
+### Mistake 8: Derived Bookkeeping Shorter-Lived Than Its Authoritative Store
+
+When the authoritative data is persisted (e.g. project roots in
+`~/.clawd/trellis-roots.json`) but bookkeeping ABOUT that data — the
+basis of a user-visible behavior like "one removable row per picked
+folder" — lives in a process-local Map, the feature silently
+degrades after every relaunch. Real case: pick rows worked until
+restart, then the UI regressed to per-root removal (f853b513).
+
+Rules:
+
+- Bookkeeping that a user-visible operation depends on must live at
+  least as long as the data it describes — i.e. in the SAME store,
+  persisted in the SAME atomic write, not a parallel process-local
+  structure
+- Loading legacy on-disk data that lacks the bookkeeping may INFER it
+  (one pick per distinct parent directory) — inference is legal on
+  persisted data at load time; it stays illegal on explicit user
+  input (Mistake 7)
+- Any "survives a restart" UI promise needs a reload smoke assertion:
+  create a fresh store over the same file and assert the bookkeeping
+  is still there
+
+**Check yourself**: "If the process died right now and restarted,
+would the user still see this behavior?" If the answer depends on a
+Map in main, move it into the persisted store.
+
 ## Checklist for Cross-Layer Features
 
 Before implementation:
