@@ -864,6 +864,40 @@ h1 {
   min-height: 0;
 }
 
+.trellis-network-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 0 6px;
+}
+
+.trellis-network-ref {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  font-size: 12.5px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  cursor: pointer;
+  color: inherit;
+}
+
+.trellis-network-ref:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.trellis-network-ref-badge {
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--hover, rgba(127, 127, 127, 0.15));
+  opacity: 0.8;
+}
+
 .trellis-spec-roots {
   display: flex;
   flex-wrap: wrap;
@@ -1867,6 +1901,7 @@ button:disabled {
   </div>
   <div id="trellisDetailOverlay" class="trellis-detail-overlay" role="dialog" hidden></div>
   <div id="trellisSpecOverlay" class="trellis-detail-overlay" role="dialog" hidden></div>
+  <div id="trellisNetworkOverlay" class="trellis-detail-overlay" role="dialog" hidden></div>
   <script src="./session-focus-unavailable.js"></script>
   <script src="./dashboard-trellis-panel.js"></script>
   <script src="./trellis-doc-renderer.js"></script>

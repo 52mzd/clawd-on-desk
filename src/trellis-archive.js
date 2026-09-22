@@ -89,12 +89,14 @@ function listArchivedTasks(fsApi, archiveBase, options) {
       const parent = typeof taskJson.parent === "string" && taskJson.parent.trim()
         ? taskJson.parent.trim()
         : null;
+      const hasChildren = Array.isArray(taskJson.children) && taskJson.children.length > 0;
       entries.push(Object.freeze({
         name,
         month,
         dir,
         title,
         parent,
+        hasChildren,
         createdAt: isValidDateString(taskJson.createdAt) ? taskJson.createdAt : null,
         completedAt,
         completedAtMs,

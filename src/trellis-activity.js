@@ -704,6 +704,12 @@ function createTrellisActivity(options) {
       if (typeof taskJson.value.parent === "string" && taskJson.value.parent.trim()) {
         info.parent = taskJson.value.parent;
       }
+      // v4-b network signal: the row-level "links" affordance needs to
+      // know whether this task has children. Same never-empty-when-absent
+      // contract as parent.
+      if (Array.isArray(taskJson.value.children) && taskJson.value.children.length > 0) {
+        info.hasChildren = true;
+      }
       // Only attach nextStep when there is one, so tasks without a usable
       // checklist keep the exact TrellisInfo shape they had before.
       if (checklist.nextUncheckedText) {
@@ -1047,6 +1053,79 @@ function createTrellisActivity(options) {
     return { status: "ok", relPath, size, truncated: true, content: truncatedContent };
   }
 
+  // v4-b task network: one-shot on-demand read of ONE task's structured
+  // linkage — parent / children from task.json — resolved against the same
+  // trusted-task-dir gate as the detail read. Refs carry a taskPath the
+  // detail channel accepts (snapshot-relative posix), a display title, and
+  // an archived flag; unknown ids degrade to {missing} rows instead of
+  // failing the whole payload. Evidence source is task.json only.
+  const NETWORK_REF_MAX = 20;
+
+  function taskRefPathFromAbs(absTaskDir) {
+    const marker = `${path.sep}.trellis${path.sep}`;
+    const idx = absTaskDir.lastIndexOf(marker);
+    if (idx === -1) return null;
+    // Keep the leading ".trellis/" — the detail channel's taskPath prefix.
+    return absTaskDir.slice(idx + 1).split(path.sep).join("/");
+  }
+
+  async function readTaskNetwork(cwd, taskPath) {
+    const resolved = await resolveTaskDir(cwd, taskPath);
+    if (!resolved) return { status: "missing" };
+    const { absDir } = resolved;
+    const taskJson = await readJsonObject(path.join(absDir, "task.json"));
+    // readJsonObject wraps as {ok, value} — a corrupt file cannot answer
+    // any linkage and degrades to missing.
+    if (!taskJson.ok) return { status: "missing" };
+    const value = taskJson.value;
+
+    async function refFor(taskName) {
+      if (typeof taskName !== "string" || !taskName.trim() || taskName.includes("/") || taskName.includes("\\")) {
+        return { name: String(taskName), missing: true };
+      }
+      // Siblings of an active task sit in <root>/.trellis/tasks; siblings
+      // of an archived task sit in its archive month dir — dirname covers
+      // both without knowing which one we are.
+      const siblingDir = path.join(path.dirname(absDir), taskName);
+      const siblingStat = await statQuiet(siblingDir);
+      if (siblingStat && siblingStat.isDirectory()) {
+        const json = await readJsonObject(path.join(siblingDir, "task.json"));
+        return {
+          taskPath: taskRefPathFromAbs(siblingDir),
+          title: pickTitle(json.ok ? json.value : null, siblingDir),
+          archived: false,
+        };
+      }
+      const archiveRoot = path.join(path.dirname(absDir), "archive");
+      const archivedDir = await findArchivedTaskDir(archiveRoot, taskName);
+      if (archivedDir) {
+        const json = await readJsonObject(path.join(archivedDir, "task.json"));
+        return {
+          taskPath: taskRefPathFromAbs(archivedDir),
+          title: pickTitle(json.ok ? json.value : null, archivedDir),
+          archived: true,
+        };
+      }
+      return { name: taskName, missing: true };
+    }
+
+    function cap(list) {
+      return list.slice(0, NETWORK_REF_MAX);
+    }
+
+    let parent = null;
+    if (typeof value.parent === "string" && value.parent.trim()) {
+      parent = await refFor(value.parent);
+    }
+    const rawChildren = Array.isArray(value.children) ? value.children : [];
+    const childrenTruncated = rawChildren.length > NETWORK_REF_MAX;
+    const children = [];
+    for (const name of cap(rawChildren)) {
+      children.push(await refFor(name));
+    }
+    return { status: "ok", parent, children, childrenTruncated };
+  }
+
   // On-demand read of the most recently archived tasks for the Dashboard's
   // independent Trellis view. The data source is the known-root set
   // (registered roots + cwds that positively resolved a .trellis root this
@@ -1100,6 +1179,7 @@ function createTrellisActivity(options) {
         taskPath: `.trellis/tasks/archive/${entry.month}/${entry.name}`,
         title: entry.title || entry.name,
         parent: entry.parent,
+        hasChildren: entry.hasChildren === true,
         createdAt: entry.createdAt,
         completedAt: entry.completedAt,
         completedAtMs: entry.completedAtMs,
@@ -1147,6 +1227,7 @@ function createTrellisActivity(options) {
           phase: info.phase,
           progress: info.progress,
           parent: typeof info.parent === "string" ? info.parent : null,
+          hasChildren: info.hasChildren === true,
           cwd,
         };
         if (info.nextStep) task.nextStep = info.nextStep;
@@ -1198,6 +1279,7 @@ function createTrellisActivity(options) {
     readTaskDoc,
     readSpecTree,
     readSpecDoc,
+    readTaskNetwork,
     readArchiveList,
     readActiveList,
   };

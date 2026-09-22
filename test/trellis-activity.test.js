@@ -1703,6 +1703,42 @@ describe("trellis-activity readArchiveList", () => {
     assert.deepStrictEqual(h.fakeFs.writeOps, [], "spec tree stays read-only");
   });
 
+  it("readTaskNetwork resolves parent and children refs from task.json", async () => {
+    const h = makeHarness({ sessions: new Map([["pi:net", { agentId: "pi", cwd: CWD }]]) });
+    addTask(h.fakeFs, "task-parent", { title: "父任务", status: "in_progress", subtasks: [] });
+    addTask(h.fakeFs, "task-a", {
+      title: "子任务A", status: "in_progress", subtasks: [],
+      parent: "task-parent", children: ["task-parent", "ghost-task"],
+    });
+    h.activity.setPersistedRoots([PROJECT]);
+
+    const result = await h.activity.readTaskNetwork(CWD, ".trellis/tasks/task-a");
+    assert.strictEqual(result.status, "ok");
+    assert.strictEqual(result.parent.taskPath, ".trellis/tasks/task-parent");
+    assert.strictEqual(result.parent.archived, false);
+    assert.strictEqual(result.children.length, 2);
+    assert.strictEqual(result.children[0].title, "父任务");
+    assert.strictEqual(result.children[1].missing, true);
+    assert.strictEqual(result.childrenTruncated, false);
+    assert.deepStrictEqual(h.fakeFs.writeOps, [], "network read stays read-only");
+  });
+
+  it("readTaskNetwork degrades missing dirs and caps children", async () => {
+    const h = makeHarness({ sessions: new Map([["pi:net2", { agentId: "pi", cwd: CWD }]]) });
+    const many = Array.from({ length: 25 }, (_, i) => `child-${i}`);
+    addTask(h.fakeFs, "task-b", { title: "B", status: "in_progress", subtasks: [], children: many });
+    h.activity.setPersistedRoots([PROJECT]);
+
+    const result = await h.activity.readTaskNetwork(CWD, ".trellis/tasks/task-b");
+    assert.strictEqual(result.status, "ok");
+    assert.strictEqual(result.children.length, 20);
+    assert.strictEqual(result.childrenTruncated, true);
+    assert.strictEqual(result.parent, null);
+
+    assert.strictEqual((await h.activity.readTaskNetwork(PROJECT, ".trellis/tasks/nope")).status, "missing");
+    assert.strictEqual((await h.activity.readTaskNetwork("/untrusted", ".trellis/tasks/task-b")).status, "missing");
+  });
+
   it("readSpecTree rejects untrusted roots and tolerates a missing spec dir", async () => {
     const h = makeArchiveHarness();
     h.activity.setPersistedRoots([PROJECT]);
@@ -1767,6 +1803,7 @@ describe("trellis-activity readArchiveList", () => {
       taskPath: ".trellis/tasks/archive/2026-09/newer",
       title: "Newer task",
       parent: null,
+      hasChildren: false,
       createdAt: "2026-09-18",
       completedAt: "2026-09-20",
       completedAtMs: Date.parse("2026-09-20"),
@@ -1923,6 +1960,7 @@ describe("trellis-activity readActiveList", () => {
       phase: "plan",
       progress: null,
       parent: null,
+      hasChildren: false,
       cwd: PROJECT,
     });
     const running = byName.get("Running");

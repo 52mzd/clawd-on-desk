@@ -50,6 +50,7 @@ const quotaSummaryEl = document.getElementById("quotaSummary");
 const trellisPanelEl = document.getElementById("trellisPanel");
 const trellisDetailOverlayEl = document.getElementById("trellisDetailOverlay");
 const trellisSpecOverlayEl = document.getElementById("trellisSpecOverlay");
+const trellisNetworkOverlayEl = document.getElementById("trellisNetworkOverlay");
 // Independent Trellis view: a second scrolling main plus the header tab.
 const trellisViewEl = document.getElementById("trellisView");
 const viewSessionsTabEl = document.getElementById("viewSessionsTab");
@@ -1604,6 +1605,29 @@ function createTrellisTreeNodeRow(node, projectLabel) {
     openTrellisDetailFromNode(node);
   });
   main.appendChild(detailBtn);
+
+  // v4-b: structured linkage affordance — only when the row's task.json
+  // actually declares a parent or children (activity flags it).
+  const wantsLinks = node.archived
+    ? (task.parent || task.hasChildren)
+    : (task.parent || task.hasChildren);
+  if (wantsLinks) {
+    const linksBtn = document.createElement("button");
+    linksBtn.type = "button";
+    linksBtn.className = "trellis-task-detail-btn";
+    linksBtn.textContent = "⛓";
+    linksBtn.title = t("dashboardTrellisLinksOpen");
+    linksBtn.setAttribute("aria-label", t("dashboardTrellisLinksOpen"));
+    linksBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openTrellisNetwork({
+        taskPath: task.taskPath,
+        title: task.title || "",
+        cwd: task.cwd || "",
+      });
+    });
+    main.appendChild(linksBtn);
+  }
   row.appendChild(main);
 
   row.addEventListener("click", () => {
@@ -2101,6 +2125,183 @@ const trellisDetail = {
 // session-memory only: the cache dies with closeTrellisDetail() — never
 // persisted, never logged (PRD: document contents are ephemeral).
 const trellisDetailDocs = new Map(); // "taskPath\u0000doc" → { loading, result }
+// ── v4-b task network ───────────────────────────────────────────────────
+// Third overlay on the shared pattern: one task's structured linkage
+// (parent / children from task.json) as clickable refs that jump straight
+// into the task-detail overlay. Ephemeral; closing drops everything.
+const trellisNetwork = {
+  open: false,
+  loading: false,
+  seq: 0,
+  request: null, // { taskPath, title, cwd }
+  result: null, // { status, parent, children, childrenTruncated }
+};
+let lastTrellisNetworkSignature = null;
+
+function openTrellisNetwork(request) {
+  if (!request || typeof request.taskPath !== "string" || !request.taskPath) return;
+  trellisNetwork.open = true;
+  trellisNetwork.loading = true;
+  trellisNetwork.seq += 1;
+  trellisNetwork.request = {
+    taskPath: request.taskPath,
+    title: typeof request.title === "string" ? request.title : "",
+    cwd: typeof request.cwd === "string" ? request.cwd : "",
+  };
+  trellisNetwork.result = null;
+  lastTrellisNetworkSignature = null;
+  renderTrellisNetwork();
+  void fetchTrellisNetwork();
+}
+
+function closeTrellisNetwork() {
+  if (!trellisNetwork.open) return;
+  trellisNetwork.open = false;
+  trellisNetwork.loading = false;
+  trellisNetwork.request = null;
+  trellisNetwork.result = null;
+  lastTrellisNetworkSignature = null;
+  renderTrellisNetwork();
+}
+
+async function fetchTrellisNetwork() {
+  const seq = trellisNetwork.seq;
+  const request = trellisNetwork.request;
+  if (!request || typeof window.dashboardAPI.getTrellisTaskNetwork !== "function") return;
+  let result = null;
+  try {
+    result = await window.dashboardAPI.getTrellisTaskNetwork({
+      taskPath: request.taskPath,
+      cwd: request.cwd,
+    });
+  } catch {
+    result = null;
+  }
+  if (!trellisNetwork.open || trellisNetwork.seq !== seq) return;
+  trellisNetwork.loading = false;
+  trellisNetwork.result = result && typeof result === "object" ? result : { status: "error" };
+  lastTrellisNetworkSignature = null;
+  renderTrellisNetwork();
+}
+
+function trellisNetworkRefButton(ref) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "trellis-network-ref";
+  if (ref && ref.taskPath && !ref.missing) {
+    btn.appendChild(document.createTextNode(ref.title || ref.taskPath));
+    if (ref.archived) {
+      const badge = document.createElement("span");
+      badge.className = "trellis-network-ref-badge";
+      badge.appendChild(document.createTextNode(t("dashboardTrellisLinksArchived")));
+      btn.appendChild(badge);
+    }
+    btn.addEventListener("click", () => {
+      const request = trellisNetwork.request;
+      closeTrellisNetwork();
+      if (!request) return;
+      void openTrellisDetail({
+        taskPath: ref.taskPath,
+        title: ref.title || "",
+        cwd: request.cwd,
+        sessions: [],
+        progress: null,
+      });
+    });
+  } else {
+    btn.disabled = true;
+    btn.appendChild(document.createTextNode((ref && (ref.title || ref.name)) || "?"));
+    const badge = document.createElement("span");
+    badge.className = "trellis-network-ref-badge";
+    badge.appendChild(document.createTextNode(t("dashboardTrellisLinksMissing")));
+    btn.appendChild(badge);
+  }
+  return btn;
+}
+
+function buildTrellisNetworkCard() {
+  const card = document.createElement("div");
+  card.className = "trellis-detail-card";
+
+  const header = document.createElement("div");
+  header.className = "trellis-detail-header";
+  header.appendChild(createText(
+    "h3",
+    "trellis-detail-title",
+    (trellisNetwork.request && trellisNetwork.request.title) || t("dashboardTrellisLinksTitle")
+  ));
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "trellis-detail-close";
+  close.textContent = "✕";
+  close.title = t("dashboardTrellisDetailClose");
+  close.setAttribute("aria-label", t("dashboardTrellisDetailClose"));
+  close.addEventListener("click", closeTrellisNetwork);
+  header.appendChild(close);
+  card.appendChild(header);
+
+  if (trellisNetwork.loading || !trellisNetwork.result) {
+    card.appendChild(createText("div", "trellis-detail-hint", "…"));
+    return card;
+  }
+  const result = trellisNetwork.result;
+  if (result.status !== "ok") {
+    card.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksFailed")));
+    return card;
+  }
+
+  const hasParent = result.parent && !result.parent.missing;
+  const children = Array.isArray(result.children) ? result.children : [];
+  const liveChildren = children.filter((c) => c && !c.missing);
+  if (!hasParent && liveChildren.length === 0 && children.length === 0) {
+    card.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksEmpty")));
+    return card;
+  }
+
+  if (hasParent) {
+    card.appendChild(createText("div", "trellis-spec-group-label", t("dashboardTrellisLinksParent")));
+    const wrap = document.createElement("div");
+    wrap.className = "trellis-network-group";
+    wrap.appendChild(trellisNetworkRefButton(result.parent));
+    card.appendChild(wrap);
+  }
+  if (children.length > 0) {
+    card.appendChild(createText("div", "trellis-spec-group-label", t("dashboardTrellisLinksChildren") + ` (${children.length})`));
+    const wrap = document.createElement("div");
+    wrap.className = "trellis-network-group";
+    for (const child of children) {
+      wrap.appendChild(trellisNetworkRefButton(child));
+    }
+    if (result.childrenTruncated) {
+      card.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksTruncated")));
+    }
+    card.appendChild(wrap);
+  }
+  return card;
+}
+
+function renderTrellisNetwork() {
+  if (!trellisNetworkOverlayEl) return;
+  if (!trellisNetwork.open) {
+    trellisNetworkOverlayEl.hidden = true;
+    trellisNetworkOverlayEl.replaceChildren();
+    return;
+  }
+  const signature = JSON.stringify([
+    trellisNetwork.loading,
+    trellisNetwork.request,
+    trellisNetwork.result && trellisNetwork.result.status,
+    trellisNetwork.result && trellisNetwork.result.parent,
+    trellisNetwork.result && trellisNetwork.result.children,
+    trellisNetwork.result && trellisNetwork.result.childrenTruncated,
+  ]);
+  if (signature === lastTrellisNetworkSignature) return;
+  lastTrellisNetworkSignature = signature;
+  trellisNetworkOverlayEl.replaceChildren(buildTrellisNetworkCard());
+  trellisNetworkOverlayEl.hidden = false;
+}
+// ── end task network ──────────────────────────────────────────────────────
+
 let lastTrellisDetailSignature = null;
 
 // ── v4-a spec map ──────────────────────────────────────────────────────────
@@ -3776,12 +3977,18 @@ async function init() {
   // key) and a click on the dimmed backdrop outside the card.
   if (typeof document.addEventListener === "function") {
     document.addEventListener("keydown", (event) => {
-      if (!trellisDetail.open && !trellisSpec.open) return;
+      if (!trellisDetail.open && !trellisSpec.open && !trellisNetwork.open) return;
       if (quick.active || quick.pending) return;
       if (event.key === "Escape") {
         if (trellisSpec.open) closeTrellisSpec();
+        else if (trellisNetwork.open) closeTrellisNetwork();
         else closeTrellisDetail();
       }
+    });
+  }
+  if (trellisNetworkOverlayEl && typeof trellisNetworkOverlayEl.addEventListener === "function") {
+    trellisNetworkOverlayEl.addEventListener("click", (event) => {
+      if (event.target === trellisNetworkOverlayEl) closeTrellisNetwork();
     });
   }
   if (trellisSpecOverlayEl && typeof trellisSpecOverlayEl.addEventListener === "function") {

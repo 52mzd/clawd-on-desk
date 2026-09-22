@@ -962,3 +962,49 @@ for (const [dir, relPath] of taskRelPaths) {
 - Wrong：`path.normalize(relPath)` 后 `startsWith("spec/")` 就读 —— normalize
   无法证明该文件在实时目录里存在，symlink/手改文件仍可逃逸
 - Correct：逐段 listing 白名单 —— 文件只有在它的父目录刚刚列出它时才可读
+
+---
+
+#### §4.6d 通道契约：dashboard:trellis-task-network（7 段式，v4-b）
+
+**1. Scope / Trigger**：任务行「⛓ 关联」入口的只读一次性通道——读取单个
+task.json 的结构化关联（parent / children）。证据源**只有 task.json**；
+implement.jsonl/check.jsonl 实测不存在，明确不作证据源。
+
+**2. Signatures**：
+- activity：`readTaskNetwork(cwd, taskPath)` → `{status:"ok", parent,
+  children, childrenTruncated}` / `{status:"missing"}`。parent 为单个 ref 或
+  null；children ref 形态 `{taskPath, title, archived}` 或 `{name, missing:true}`。
+- 帽：`NETWORK_REF_MAX = 20`（children 截断标 `childrenTruncated`）。
+- main api 表 `getTrellisTaskNetwork`（activity 缺失 → 既有 error envelope）。
+
+**3. Contracts**：
+- payload 严格双键 `{cwd:string, taskPath:string}`（与 task-detail 同形）。
+- taskPath 过 `resolveTaskDir` 同一信任面（registered root / live cwd /
+  正向解析）；行级入口 flag：活跃行 `readTaskInfo` 附 `hasChildren:true`
+  （children 非空时）；归档行 entry 附 `hasChildren`（trellis-archive 扫描）。
+- ref 的 taskPath 由 `taskRefPathFromAbs` 生成：含前导 `.trellis/`，与
+  detail 通道的 taskPath 前缀直接兼容（点击 ref = 跳转 detail）。
+
+**4. Validation & Error Matrix**：
+- untrusted sender → error envelope；payload 形状错 → `{status:"invalid"}`
+- resolveTaskDir 不认识 → `{status:"missing"}`
+- task.json 损坏 → `{status:"missing"}`（readJsonObject `{ok}` 包裹）
+- ref 名字含 `/` `\` 或空白 → `{name, missing:true}` 行内降级，不整体失败
+- sibling 目录不存在 → 先查活跃兄弟目录，再查 archive；都无 → missing 行
+
+**5. Good/Base/Bad Cases**：
+- Good：v4 父任务 → parent null + children 3 个 ref 各带标题与状态
+- Base：children 25 个 → 前 20 渲染 + truncated 提示
+- Bad：parent 指向已删除任务 → 单行 missing 徽标，其余 children 正常
+
+**6. Tests Required**：
+- activity：正常解析（parent+children+missing 混合）/ cap+truncated /
+  missing taskPath / untrusted cwd / 只读断言
+- session-ipc：信任帧 + 双键严格矩阵 + `calls==[]`
+
+**7. Wrong vs Correct**：
+- Wrong：把 children 名字直接 `path.join(root, name)` 读——名字来自磁盘上
+  可变 json，含 `/` 时可逃出 tasks 目录
+- Correct：名字形状先验证（无分隔符/非空），再 join 同级目录 stat 确认，
+  archive 扫描走 findArchivedTaskDir；任何失败都是单行 missing，不放大

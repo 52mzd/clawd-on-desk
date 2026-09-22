@@ -48,6 +48,10 @@ function registerSessionIpc(options = {}) {
     options.getTrellisTaskDetail,
     "getTrellisTaskDetail"
   );
+  const getTrellisTaskNetwork = requiredDependency(
+    options.getTrellisTaskNetwork,
+    "getTrellisTaskNetwork"
+  );
   const getTrellisTaskDoc = requiredDependency(
     options.getTrellisTaskDoc,
     "getTrellisTaskDoc"
@@ -190,6 +194,29 @@ function registerSessionIpc(options = {}) {
       return { status: "invalid" };
     }
     return getTrellisTaskDetail(payload);
+  });
+
+  // v4-b task network: one-shot read of one task's structured linkage
+  // (parent/children from task.json). Same trusted-frame gate and the
+  // same cwd/taskPath validation as the detail read.
+  handle("dashboard:trellis-task-network", (event, payload) => {
+    const rejected = rejectUntrustedDashboardEvent(event);
+    if (rejected) return rejected;
+    const keys = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? Object.keys(payload).sort()
+      : [];
+    if (
+      keys.length !== 2
+      || keys[0] !== "cwd"
+      || keys[1] !== "taskPath"
+      || typeof payload.cwd !== "string"
+      || !payload.cwd
+      || typeof payload.taskPath !== "string"
+      || !payload.taskPath
+    ) {
+      return { status: "invalid" };
+    }
+    return getTrellisTaskNetwork(payload);
   });
 
   // One-shot on-demand read of ONE markdown document of a Trellis task —
