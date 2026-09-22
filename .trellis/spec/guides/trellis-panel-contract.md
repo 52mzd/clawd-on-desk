@@ -915,3 +915,50 @@ for (const [dir, relPath] of taskRelPaths) {
   if (archivedDir) onCelebration(relPath);   // 显式 done，不依赖中间态
 }
 ```
+
+---
+
+#### §4.6c 通道契约：dashboard:trellis-spec-tree / dashboard:trellis-spec-doc（7 段式，v4-a）
+
+**1. Scope / Trigger**：Dashboard Trellis 视图「规范地图」overlay 的两个只读
+一次性通道（f4bd8b82）。复刻 `dashboard:trellis-task-doc` 四层链路。
+
+**2. Signatures**：
+- activity：`readSpecTree(root)` → `{status:"ok", files:[{relPath,group}], truncated}` 或
+  `{status:"missing"}`；`readSpecDoc(root, relPath)` → `{status:"ok", relPath, size,
+  truncated, content}` / `{status:"missing"}`。深度帽 3、文件帽 200、大小帽复用
+  `TASK_DOC_MAX_BYTES`（不新造数字）。
+- main api 表：`getTrellisSpecTree/getTrellisSpecDoc`（activity 缺失 →
+  `{status:"error", message:"trellis-activity-unavailable"}`）。
+
+**3. Contracts**：
+- spec-tree payload 严格单键 `{root:string}`；spec-doc 严格双键
+  `{root:string, relPath:string}`，多键/少键/类型错 → `{status:"invalid"}`，
+  绝不触达 fs-reading owner。
+- root 必须过 `isTrustedTrellisCwd`（注册 root / 活跃 cwd / 本进程正向解析）。
+- relPath 只信分段白名单：每个目录段必须出现在其父目录的**实时 listing** 里
+  才继续下钻；`..`、空段、反斜杠、非 `.md`、深度溢出 → `missing`，穿越
+  永远到不了 `path.join`。
+
+**4. Validation & Error Matrix**：
+- untrusted sender → `{status:"error", reason:"untrusted-dashboard-sender"}`
+- payload 形状非法 → `{status:"invalid"}`
+- root 未注册/非信任 → `{status:"missing"}`
+- relPath 合法形状但目录里不存在 → `{status:"missing"}`（与形状错同象，安全）
+- spec 目录缺失 → tree 仍 `{status:"ok", files:[]}`（空态不是错误）
+
+**5. Good/Base/Bad Cases**：
+- Good：`{root:"/proj"}` → 该 root spec 全量分组列表；点击 `guides/cross-layer-thinking-guide.md` 渲染全文
+- Base：无 spec 目录的项目 → 空态文案（dashboardTrellisSpecEmpty）
+- Bad：relPath `"../tasks/x/task.json"` → `missing`，无读取发生
+
+**6. Tests Required**：
+- test/trellis-activity.test.js：分组列表/隐藏文件过滤/非 md 过滤/未信任
+  root/空目录容忍/穿越拒绝矩阵/只读断言（writeOps=[]）
+- test/session-ipc.test.js：信任帧 + 单键/双键严格校验矩阵 + `calls==[]`
+  （invalid 不触达 owner）
+
+**7. Wrong vs Correct**：
+- Wrong：`path.normalize(relPath)` 后 `startsWith("spec/")` 就读 —— normalize
+  无法证明该文件在实时目录里存在，symlink/手改文件仍可逃逸
+- Correct：逐段 listing 白名单 —— 文件只有在它的父目录刚刚列出它时才可读
