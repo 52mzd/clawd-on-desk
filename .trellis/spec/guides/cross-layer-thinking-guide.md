@@ -186,6 +186,36 @@ Rules:
 would the user still see this behavior?" If the answer depends on a
 Map in main, move it into the persisted store.
 
+### Mistake 9: Writing Callers Against Unverified Contract Guesses
+
+Real case (v4-b readTaskNetwork): the test + implementation went
+through SIX red-green round trips, each one exposing a single
+unverified assumption about the module being called — a harness
+helper that did not exist, a return field name (`absTaskDir` vs
+`absDir`), which of two path constants the trust surface actually
+used, a `{ok, value}` wrapper treated as a bare object, and an
+off-by-one slice offset. None of these were exotic; all of them
+were written down in the module's own existing tests, unread.
+
+Rules:
+
+- Before writing ANY caller of an in-repo helper, read two things:
+  the helper's actual return statement and ONE existing test that
+  exercises it (10 seconds). Guessing contract details and letting
+  the test runner refute them one at a time is the slowest possible
+  discovery loop.
+- When a fix corrects one assumption, immediately audit the
+  remaining code you wrote for OTHER assumptions of the same kind —
+  do not wait for the next red.
+- Bulk edits via string replace must anchor on a multi-line block
+  (3+ lines of context), never a bare single-line pattern — an
+  unanchored `replace('setPersistedRoots([CWD])', ...)` once leaked
+  into an unrelated trust-surface test and sent debugging in the
+  wrong direction.
+
+**Check yourself**: "Am I about to name a helper, field, or wrapper
+shape I have not seen with my own eyes?" If yes, look it up first.
+
 ## Checklist for Cross-Layer Features
 
 Before implementation:

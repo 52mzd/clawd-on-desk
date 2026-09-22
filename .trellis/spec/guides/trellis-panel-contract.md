@@ -980,6 +980,8 @@ implement.jsonl/check.jsonl 实测不存在，明确不作证据源。
 
 **3. Contracts**：
 - payload 严格双键 `{cwd:string, taskPath:string}`（与 task-detail 同形）。
+- task.json 读取统一走 `readJsonObject`（返回 `{ok, value}` 包裹，非裸
+  对象）；corrupt 文件 `ok:false` → `{status:"missing"}`，不做部分解析
 - taskPath 过 `resolveTaskDir` 同一信任面（registered root / live cwd /
   正向解析）；行级入口 flag：活跃行 `readTaskInfo` 附 `hasChildren:true`
   （children 非空时）；归档行 entry 附 `hasChildren`（trellis-archive 扫描）。
