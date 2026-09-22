@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 9
-- **Last Active**: 2026-09-22
+- **Total Sessions**: 10
+- **Last Active**: 2026-09-23
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~257 | Active |
+| `journal-1.md` | ~282 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 10 | 2026-09-23 | 验收反馈双修：PRD-only 步骤回退 + pick 簿记持久化，spec 三连收口 | `c13afbd1`, `f853b513`, `c81bac3b`, `d44a3f78`, `a568be93` | `main` |
 | 9 | 2026-09-22 | 创意池 v3 验收反馈三连修：picker 爬根 / pick 一行制 / 树视觉 + spec 收口 | `e560ac76`, `aeba090e`, `67f62d6c`, `5faf4343`, `2b5c81fb`, `a07ca08f`, `d2068309` | `main` |
 | 8 | 2026-09-21 | 创意池 v3 五件全落地：独立视图+多项目+文档阅读+任务树+生命周期感知 | `6ed0faf3`, `4af5543c`, `7ceebbd8`, `1457571f`, `07f93a60`, `2767b056` | `main` |
 | 7 | 2026-09-21 | 创意池 v2 四件全落地：气泡具体化 + 等待态 + 详情视图 + 归档分组 | - | `main` |

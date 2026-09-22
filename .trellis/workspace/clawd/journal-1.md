@@ -255,3 +255,28 @@ v3 交付后真机验收暴露三问题全修：① e560ac76 选父目录批量�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 10: 验收反馈双修：PRD-only 步骤回退 + pick 簿记持久化，spec 三连收口
+
+**Date**: 2026-09-23
+**Task**: 验收反馈双修：PRD-only 步骤回退 + pick 簿记持久化，spec 三连收口
+**Branch**: `main`
+
+### Summary
+
+v3 验收后续两修：① c13afbd1 面板执行步骤 0/0——readChecklist 只读 implement.md，PRD-only 轻量任务回退 prd.md 验收 checkbox（progress 三级链：implement → prd → subtasks），00-bootstrap 真机冒烟 1/2 显示正常；② f853b513 重启后退回逐根移除——pick 簿记原是进程内存 Map，迁入 trellis-roots.json v1 形态 {version,roots,picks}，legacy 数组按父目录推断 pick 行、per-root remove 剪枝簿记、重启 reload 冒烟断言；spec 收口：c81bac3b §4.5 store v1 签名+§4.6b removePick 单次原子、d44a3f78 Mistake 8（派生簿记存活期≥权威 store）、a568be93 progress 链口径。trellis-roots 新增 5 用例（recordPick 持久化/reload、removePick 单动作、per-root 剪枝、legacy 推断、v1 stale 剪除）；全量 npm test 失败集与 stash 基线 diff=0（37 预存）。dev app 已重启跑最新代码；待用户真机确认重启后 roots 一行制与 PRD-only 步骤进度。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c13afbd1` | (see git log) |
+| `f853b513` | (see git log) |
+| `c81bac3b` | (see git log) |
+| `d44a3f78` | (see git log) |
+| `a568be93` | (see git log) |
+
+### Status
+
+[OK] **Completed**
