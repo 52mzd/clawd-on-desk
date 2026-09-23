@@ -3592,6 +3592,28 @@ function buildTrellisDetailCard() {
   close.setAttribute("aria-label", t("dashboardTrellisDetailClose"));
   close.addEventListener("click", closeTrellisDetail);
   header.appendChild(close);
+
+  // ⛓ task network: same entry the tree rows had (v7 R2). readTaskNetwork
+  // derives parent/children server-side and always renders at least the
+  // task's own node, so the button is unconditional; cwd was frozen into
+  // the request at open time (archived rows carry their scan cwd, live rows
+  // the first bound session cwd) — exactly what the row entry passes on.
+  if (request.taskPath) {
+    const links = document.createElement("button");
+    links.type = "button";
+    links.className = "trellis-detail-links";
+    links.textContent = "⛓";
+    links.title = t("dashboardTrellisLinksOpen");
+    links.setAttribute("aria-label", t("dashboardTrellisLinksOpen"));
+    links.addEventListener("click", () => {
+      openTrellisNetwork({
+        taskPath: request.taskPath,
+        title: (detail && detail.title) || request.title || "",
+        cwd: typeof request.cwd === "string" ? request.cwd : "",
+      });
+    });
+    header.appendChild(links);
+  }
   card.appendChild(header);
 
   if (trellisDetail.loading) {

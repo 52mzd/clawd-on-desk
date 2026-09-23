@@ -1740,6 +1740,27 @@ h1 {
   color: var(--text);
 }
 
+/* ⛓ task network entry in the detail card header (v7 R2) — same ghost
+   style family as the close button, sits before it. */
+.trellis-detail-links {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.trellis-detail-links:hover {
+  background: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 45%, transparent);
+  color: var(--text);
+}
+
 .trellis-detail-meta {
   display: flex;
   flex-wrap: wrap;
