@@ -213,34 +213,6 @@ describe("dashboard trellis project filter (pure)", () => {
   });
 });
 
-describe("dashboard trellis board bucketing (pure)", () => {
-  it("buckets tasks into the five flow columns; archived always done", () => {
-    const active = [
-      { taskPath: "a", phase: "plan" },
-      { taskPath: "b", phase: "execute" },
-      { taskPath: "c", phase: "check" },
-      { taskPath: "d", phase: "finish" },
-      { taskPath: "e", phase: "nonsense" },   // unknown → execute
-      { taskPath: "f", phase: "done" },        // done-but-active → done
-      { taskPath: "g" },                        // missing phase → execute
-    ];
-    const archived = [{ taskPath: "h", completedAt: "2026-09-24", phase: "plan" }];
-    const byPhase = bucketByBoardPhase(active, archived);
-    assert.deepEqual([...byPhase.keys()], ["plan", "execute", "check", "finish", "done"]);
-    assert.deepEqual(byPhase.get("plan").map((t) => t.taskPath), ["a"]);
-    assert.deepEqual(byPhase.get("execute").map((t) => t.taskPath), ["b", "e", "g"]);
-    assert.deepEqual(byPhase.get("check").map((t) => t.taskPath), ["c"]);
-    assert.deepEqual(byPhase.get("finish").map((t) => t.taskPath), ["d"]);
-    assert.deepEqual(byPhase.get("done").map((t) => t.taskPath), ["f", "h"]);
-  });
-
-  it("degrades on malformed input without throwing", () => {
-    const byPhase = bucketByBoardPhase(null, undefined);
-    for (const tasks of byPhase.values()) assert.deepEqual(tasks, []);
-    assert.strictEqual(boardPhaseFor(null), "execute");
-    assert.strictEqual(boardPhaseFor("x"), "execute");
-  });
-});
 
 describe("dashboard trellis panel grouping (pure)", () => {
   function task(path, extra = {}) {
@@ -336,237 +308,6 @@ describe("dashboard trellis panel grouping (pure)", () => {
   });
 });
 
-describe("dashboard trellis tree building (pure)", () => {
-  function active(taskPath, extra = {}) {
-    return {
-      taskPath,
-      title: taskPath,
-      phase: "execute",
-      progress: null,
-      parent: null,
-      cwd: "/proj",
-      ...extra,
-    };
-  }
-
-  function archived(taskPath, extra = {}) {
-    return {
-      taskPath,
-      title: taskPath,
-      parent: null,
-      createdAt: "2026-09-01",
-      completedAt: "2026-09-20",
-      completedAtMs: Date.parse("2026-09-20"),
-      durationMs: null,
-      cwd: "/proj",
-      ...extra,
-    };
-  }
-
-  // Depth-first path projection of a tree: one "[A]/path@depth" per node.
-  function paths(roots) {
-    const out = [];
-    const walk = (nodes) => {
-      for (const node of nodes) {
-        out.push(`${node.archived ? "[A]" : ""}${node.task.taskPath}@${node.depth}`);
-        walk(node.children);
-      }
-    };
-    walk(roots);
-    return out;
-  }
-
-  it("nests active tasks arbitrarily deep via the same-directory parent rule", () => {
-    const tree = buildTrellisTree([
-      active(".trellis/tasks/top", { progress: { done: 1, total: 2 } }),
-      active(".trellis/tasks/mid", { parent: "top", progress: { done: 1, total: 4 } }),
-      active(".trellis/tasks/leaf", { parent: "mid", progress: { done: 2, total: 2 } }),
-      active(".trellis/tasks/solo"),
-    ], []);
-    assert.deepEqual(paths(tree.roots), [
-      ".trellis/tasks/top@0",
-      ".trellis/tasks/mid@1",
-      ".trellis/tasks/leaf@2",
-      ".trellis/tasks/solo@0",
-    ]);
-    assert.deepEqual(tree.roots[0].childSummary, { done: 3, total: 6 },
-      "subtree summary sums every descendant's progress (not the node's own)");
-    assert.deepEqual(tree.roots[0].children[0].childSummary, { done: 2, total: 2 });
-    assert.equal(tree.roots[0].children[0].children[0].childSummary, null);
-  });
-
-  it("nests an active child under its unique archived parent", () => {
-    const tree = buildTrellisTree(
-      [active(".trellis/tasks/late-kid", { parent: "done-parent" })],
-      [archived(".trellis/tasks/archive/2026-09/done-parent")],
-    );
-    assert.deepEqual(paths(tree.roots), [
-      "[A].trellis/tasks/archive/2026-09/done-parent@0",
-      ".trellis/tasks/late-kid@1",
-    ]);
-  });
-
-  it("nests archived children: same month first, then a unique cross-month match", () => {
-    const tree = buildTrellisTree([], [
-      archived(".trellis/tasks/archive/2026-09/parent-a"),
-      archived(".trellis/tasks/archive/2026-08/parent-b"),
-      archived(".trellis/tasks/archive/2026-09/kid-same", { parent: "parent-a" }),
-      archived(".trellis/tasks/archive/2026-08/kid-cross", { parent: "parent-b" }),
-      archived(".trellis/tasks/archive/2026-07/kid-crosser", { parent: "parent-b" }),
-    ]);
-    assert.deepEqual(paths(tree.roots), [
-      "[A].trellis/tasks/archive/2026-09/parent-a@0",
-      "[A].trellis/tasks/archive/2026-09/kid-same@1",
-      "[A].trellis/tasks/archive/2026-08/parent-b@0",
-      "[A].trellis/tasks/archive/2026-08/kid-cross@1",
-      "[A].trellis/tasks/archive/2026-07/kid-crosser@1",
-    ]);
-  });
-
-  it("flattens ambiguous archive parents instead of guessing", () => {
-    // Same parent NAME in two different months, child in a third month.
-    const tree = buildTrellisTree([], [
-      archived(".trellis/tasks/archive/2026-07/dup"),
-      archived(".trellis/tasks/archive/2026-08/dup"),
-      archived(".trellis/tasks/archive/2026-09/kid", { parent: "dup" }),
-      // Two same-name candidates inside the child's OWN month are equally
-      // ambiguous — no cross-month fallback may rescue a guess.
-      archived(".trellis/tasks/archive/2026-09/pair"),
-      archived(".trellis/tasks/archive/2026-09/pair", { title: "pair (other root)" }),
-      archived(".trellis/tasks/archive/2026-09/kid-pair", { parent: "pair" }),
-    ]);
-    assert.equal(tree.roots.length, 6);
-    assert.ok(tree.roots.every((node) => node.depth === 0 && node.children.length === 0),
-      "ambiguous parents leave the children flat");
-  });
-
-  it("nests an archived child under its still-active parent", () => {
-    const tree = buildTrellisTree(
-      [active(".trellis/tasks/live-parent", { progress: { done: 3, total: 5 } })],
-      [archived(".trellis/tasks/archive/2026-09/done-kid", { parent: "live-parent" })],
-    );
-    assert.deepEqual(paths(tree.roots), [
-      ".trellis/tasks/live-parent@0",
-      "[A].trellis/tasks/archive/2026-09/done-kid@1",
-    ]);
-    // Archived children carry no progress, so they never skew the sum.
-    assert.equal(tree.roots[0].childSummary, null);
-  });
-
-  it("keeps cycles, self-parents and unknown parents flat without dropping rows", () => {
-    const tree = buildTrellisTree([
-      active(".trellis/tasks/cyc-a", { parent: "cyc-b" }),
-      active(".trellis/tasks/cyc-b", { parent: "cyc-a" }),
-      active(".trellis/tasks/self", { parent: "self" }),
-      active(".trellis/tasks/orphan", { parent: "ghost" }),
-      active(".trellis/tasks/bad", { parent: 42 }),
-    ], []);
-    const flat = paths(tree.roots);
-    assert.equal(flat.length, 5, "every task still renders exactly once");
-    assert.deepEqual(flat, [
-      ".trellis/tasks/self@0",
-      ".trellis/tasks/orphan@0",
-      ".trellis/tasks/bad@0",
-      ".trellis/tasks/cyc-a@0", // cycle members flatten after the rooted rows
-      ".trellis/tasks/cyc-b@1", // the cycle partner follows the first-emitted member
-    ]);
-    const archivedCycle = buildTrellisTree([], [
-      archived(".trellis/tasks/archive/2026-09/rx", { parent: "ry" }),
-      archived(".trellis/tasks/archive/2026-09/ry", { parent: "rx" }),
-    ]);
-    assert.equal(archivedCycle.roots.reduce((n, node) => n + 1 + node.children.length, 0), 2);
-  });
-
-  it("pushes nesting past the depth cap down to flat roots", () => {
-    const chain = [];
-    for (let i = 0; i < TRELLIS_TREE_DEPTH_CAP + 5; i++) {
-      chain.push(active(`.trellis/tasks/n${i}`, i === 0 ? {} : { parent: `n${i - 1}` }));
-    }
-    const tree = buildTrellisTree(chain, []);
-    let deepest = 0;
-    let count = 0;
-    const walk = (nodes) => {
-      for (const node of nodes) {
-        count += 1;
-        deepest = Math.max(deepest, node.depth);
-        walk(node.children);
-      }
-    };
-    walk(tree.roots);
-    assert.equal(count, chain.length, "no task is dropped at the cap");
-    assert.equal(deepest, TRELLIS_TREE_DEPTH_CAP,
-      "the overflow tail re-roots at depth 0 instead of nesting deeper");
-  });
-
-  it("builds a 200-task forest with random parents without dropping or duplicating rows", () => {
-    let seed = 42;
-    const rand = () => {
-      seed = (seed * 1103515245 + 12345) % 2147483648;
-      return seed / 2147483648;
-    };
-    const actives = [];
-    for (let i = 0; i < 120; i++) {
-      const parent = i > 0 && rand() < 0.7 ? `n${Math.floor(rand() * i)}` : null;
-      actives.push(active(`.trellis/tasks/n${i}`, { parent }));
-    }
-    const archives = [];
-    for (let i = 0; i < 80; i++) {
-      const roll = rand();
-      const parent = roll < 0.4 ? `n${Math.floor(rand() * 120)}`
-        : roll < 0.8 ? `a${Math.floor(rand() * 80)}`
-        : null;
-      archives.push(archived(`.trellis/tasks/archive/2026-0${9 - (i % 3)}/a${i}`, { parent }));
-    }
-    const tree = buildTrellisTree(actives, archives);
-    const seen = new Set();
-    let count = 0;
-    const walk = (nodes) => {
-      for (const node of nodes) {
-        count += 1;
-        assert.ok(!seen.has(node.task), "each task object appears exactly once");
-        seen.add(node.task);
-        walk(node.children);
-      }
-    };
-    walk(tree.roots);
-    assert.equal(count, 200);
-  });
-
-  it("dedupes duplicate active taskPaths (first wins) but keeps duplicate archive rows", () => {
-    const tree = buildTrellisTree([
-      active(".trellis/tasks/dup", { title: "first" }),
-      active(".trellis/tasks/dup", { title: "second" }),
-    ], [
-      archived(".trellis/tasks/archive/2026-09/dup"),
-      archived(".trellis/tasks/archive/2026-09/dup", { title: "other root" }),
-    ]);
-    assert.equal(tree.roots.length, 3);
-    assert.equal(tree.roots[0].task.title, "first");
-  });
-
-  it("extracts the month from the /archive/ segment and groups months descending", () => {
-    assert.equal(trellisArchiveMonthOf(".trellis/tasks/archive/2026-09/name"), "2026-09");
-    assert.equal(trellisArchiveMonthOf(".trellis/tasks/archive/2026-09/deep/name"), "2026-09");
-    assert.equal(trellisArchiveMonthOf(".trellis/tasks/archive/nope"), "");
-    assert.equal(trellisArchiveMonthOf("2026-09/name"), "", "legacy archive-relative shapes have no /archive/ segment");
-    const groups = groupTrellisArchiveByMonth([
-      { taskPath: ".trellis/tasks/archive/2026-09/a" },
-      { taskPath: ".trellis/tasks/archive/2026-08/b" },
-      { taskPath: ".trellis/tasks/archive/2026-09/c" },
-      { taskPath: ".trellis/tasks/weird" },
-    ]);
-    assert.deepEqual(groups.map((g) => [g.month, g.tasks.length]), [
-      ["2026-09", 2],
-      ["2026-08", 1],
-      ["", 1],
-    ]);
-  });
-
-  it("tolerates junk input without throwing", () => {
-    assert.deepEqual(buildTrellisTree(null, null).roots, []);
-    assert.deepEqual(buildTrellisTree([null, {}, { taskPath: "x" }], [null]).roots.length > 0, true);
-  });
-});
 
 // ── Renderer-side harness ───────────────────────────────────────────────────
 
@@ -602,7 +343,8 @@ class FakeElement {
     this.textContent = "";
     this.hidden = false;
     this.disabled = false;
-    this.style = {};
+    this.style = { setProperty() {} };
+    this.dataset = {};
   }
   appendChild(child) { this.children.push(child); return child; }
   replaceChildren(...children) { this.children = children; }
@@ -640,6 +382,12 @@ const flush = async () => {
   await Promise.resolve();
   await new Promise((resolve) => setImmediate(resolve));
 };
+
+async function switchToTrellis(app) {
+  await app.trellisTab.dispatch("click");
+  await flush();
+}
+
 
 function loadDashboard({
   sessions = [],
@@ -1392,10 +1140,10 @@ describe("dashboard trellis panel grouping (rendering)", () => {
 });
 
 describe("dashboard trellis independent view", () => {
-  async function switchToTrellis(app) {
-    await app.trellisTab.dispatch("click");
-    await flush();
-  }
+
+
+
+
 
   it("switches views on the tab and loads roots, active tasks and archive in one round", async () => {
     const app = loadDashboard({
@@ -1418,7 +1166,6 @@ describe("dashboard trellis independent view", () => {
     assert.equal(app.view.hidden, true, "starts on the sessions view");
     assert.equal(app.headerExtras.hidden, false);
     assert.equal(app.archiveCalls.length, 0, "nothing is fetched before the switch");
-
     await switchToTrellis(app);
     assert.equal(app.view.hidden, false);
     assert.equal(app.content.classList.contains("hidden"), true);
@@ -1430,16 +1177,37 @@ describe("dashboard trellis independent view", () => {
     assert.equal(rows.length, 1);
     assert.ok(textOf(rows[0]).includes("/proj/s1"));
 
-    const activeRows = byClass(app.view, "trellis-task-row");
+    const activeRows = byClass(app.view, "trellis-split-row");
     assert.equal(activeRows.length, 1);
     assert.ok(textOf(app.view).includes("Disk task"));
     assert.ok(textOf(app.view).includes("1/2"));
 
-    assert.ok(textOf(app.view).includes(
-      `${i18n.en.dashboardTrellisArchiveTitle} (1)`
-    ), "the archive section header carries the loaded count");
-    assert.equal(byClass(app.view, "trellis-archive-row").length, 1,
-      "the newest month is open by default");
+    // Archive group starts COLLAPSED (v7): the collapsed head is a
+    // button carrying the phase label + root count + refresh.
+    const collapsedHeads = byClass(app.view, "trellis-split-group-head").filter(
+      (el) => el.classList.contains("is-collapsed"),
+    );
+    assert.equal(collapsedHeads.length, 1,
+      "the archive group renders one collapsed head");
+    assert.ok(textOf(collapsedHeads[0]).includes(
+      i18n.en.dashboardTrellisPhaseArchived
+    ), "the collapsed head carries the phase label");
+    assert.ok(textOf(collapsedHeads[0]).includes("1"),
+      "the collapsed head carries the loaded count");
+    assert.equal(
+      byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-archived")).length,
+      0,
+      "no archived rows render while collapsed"
+    );
+
+    // Expanding the archive opens the newest month by default.
+    await collapsedHeads[0].dispatch("click");
+    await flush();
+    const archivedRows = byClass(app.view, "trellis-split-row").filter(
+      (el) => el.classList.contains("is-archived"),
+    );
+    assert.equal(archivedRows.length, 1,
+      "the newest month is open by default after expanding");
     assert.ok(textOf(app.view).includes("Done thing"));
     assert.ok(textOf(app.view).includes(
       i18n.en.dashboardTrellisArchivedDurationDays.replace("{n}", "10")
@@ -1527,15 +1295,23 @@ describe("dashboard trellis independent view", () => {
     });
     await flush();
     await switchToTrellis(app);
-    await byClass(app.view, "trellis-archive-row")[0].dispatch("click");
+    // v7: archive group starts collapsed — expand it, then click the row.
+    const archiveHead = byClass(app.view, "trellis-split-group-head").find(
+      (el) => el.classList.contains("is-collapsed")
+    );
+    await archiveHead.dispatch("click");
+    await flush();
+    await byClass(app.view, "trellis-split-row")[0].dispatch("click");
     await flush();
     assert.deepEqual(app.detailCalls, [{
       taskPath: ".trellis/tasks/archive/2026-09/done-thing",
       cwd: "/proj/s1",
     }], "the archive row's taskPath and cwd feed the detail read");
-    assert.equal(app.overlay.hidden, false);
-    assert.ok(textOf(app.overlay).includes("Title from disk"));
-    assert.equal(byClass(app.overlay, "trellis-session-chip").length, 0,
+    // v7: the detail card renders in the embedded split pane; the shared
+    // overlay host stays hidden.
+    assert.equal(app.overlay.hidden, true);
+    assert.ok(textOf(app.view).includes("Title from disk"));
+    assert.equal(byClass(app.view, "trellis-session-chip").length, 0,
       "archived tasks have no bound sessions");
   });
 
@@ -1559,10 +1335,13 @@ describe("dashboard trellis independent view", () => {
     });
     await flush();
     await switchToTrellis(app);
-    await byClass(app.view, "trellis-task-detail-btn")[0].dispatch("click");
+    // v7: row click selects the task — the detail card opens embedded in
+    // the split pane (no overlay, no per-row ⓘ button anymore).
+    await byClass(app.view, "trellis-split-row")[0].dispatch("click");
     await flush();
     assert.deepEqual(app.detailCalls, [{ taskPath: ".trellis/tasks/t1", cwd: "/proj/s1" }]);
-    assert.equal(app.overlay.hidden, false);
+    assert.equal(app.overlay.hidden, true);
+    assert.ok(textOf(app.view).includes("Disk task"));
   });
 
   it("shows archive and active error states with retry buttons that refetch", async () => {
@@ -1584,18 +1363,30 @@ describe("dashboard trellis independent view", () => {
     await switchToTrellis(app);
     assert.ok(textOf(app.view).includes(i18n.en.dashboardTrellisActiveError));
     assert.ok(textOf(app.view).includes(i18n.en.dashboardTrellisArchivedError));
-    const retry = byClass(app.view, "trellis-archive-retry")[0];
-    assert.ok(retry);
+    // v7: retry buttons live inline in the group heads — the first one
+    // belongs to the first (non-done) group, the last one to the archive.
+    const retries = byClass(app.view, "trellis-split-retry");
+    assert.ok(retries.length >= 2);
+    const retry = retries[retries.length - 1];
 
     archiveFailing = false;
     activeFailing = false;
     await retry.dispatch("click");
     await flush();
     assert.equal(app.archiveCalls.length, 2);
-    assert.equal(byClass(app.view, "trellis-archive-row").length, 1);
-    // The archive retry only heals the archive section; the active section
-    // has its own refresh behind the same ↻ affordance.
-    await byClass(app.view, "trellis-active-refresh")[0].dispatch("click");
+    // The archive group starts collapsed — expand it to see the healed row.
+    const archiveHead = byClass(app.view, "trellis-split-group-head").find(
+      (el) => el.classList.contains("is-collapsed"),
+    );
+    await archiveHead.dispatch("click");
+    await flush();
+    assert.equal(
+      byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-archived")).length,
+      1,
+    );
+    // The archive retry only heals the archive list; the active list has
+    // its own retry in the first group head.
+    await byClass(app.view, "trellis-split-retry")[0].dispatch("click");
     await flush();
     assert.ok(!textOf(app.view).includes(i18n.en.dashboardTrellisActiveError));
   });
@@ -1609,25 +1400,27 @@ describe("dashboard trellis independent view", () => {
     });
     await flush();
     await switchToTrellis(app);
-    const month = byClass(app.view, "trellis-archive-month")[0];
+    // v7: the archive group starts collapsed — expand it first.
+    let archiveHead = byClass(app.view, "trellis-split-group-head").find(
+      (el) => el.classList.contains("is-collapsed"),
+    );
+    await archiveHead.dispatch("click");
+    await flush();
+    const month = byClass(app.view, "trellis-split-month-head")[0];
     assert.equal(month.attributes["aria-expanded"], "true", "newest month starts open");
 
     await month.dispatch("click");
-    assert.equal(byClass(app.view, "trellis-archive-row").length, 0,
+    assert.equal(byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-archived")).length, 0,
       "collapsing the month hides its rows");
-    await byClass(app.view, "trellis-archive-month")[0].dispatch("click");
-    assert.equal(byClass(app.view, "trellis-archive-row").length, 1);
+    await byClass(app.view, "trellis-split-month-head")[0].dispatch("click");
+    assert.equal(byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-archived")).length, 1);
 
-    // The active section's ↻ and the archive section's ↻ are distinct
-    // buttons; pick the archive one via its extra distinguishing class.
-    const archiveRefresh = descendants(app.view).find(
-      (el) => el.classList && el.classList.contains("trellis-archive-refresh")
-        && !el.classList.contains("trellis-active-refresh")
-    );
+    // The archive group head carries its own ↻ refresh button.
+    const archiveRefresh = byClass(app.view, "trellis-split-refresh")[0];
     await archiveRefresh.dispatch("click");
     await flush();
     assert.equal(app.archiveCalls.length, 2);
-    assert.equal(byClass(app.view, "trellis-archive-row").length, 1,
+    assert.equal(byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-archived")).length, 1,
       "the refresh keeps the month open");
   });
 
@@ -1645,6 +1438,12 @@ describe("dashboard trellis independent view", () => {
     });
     await flush();
     await switchToTrellis(app);
+    // v7: expand the collapsed archive group to render month rows.
+    const archiveHead = byClass(app.view, "trellis-split-group-head").find(
+      (el) => el.classList.contains("is-collapsed"),
+    );
+    await archiveHead.dispatch("click");
+    await flush();
     const text = textOf(app.view);
     assert.ok(text.includes(i18n.en.dashboardTrellisArchivedDurationMinutes.replace("{n}", "20")));
     assert.ok(text.includes(i18n.en.dashboardTrellisArchivedDurationHours.replace("{n}", "3")));
@@ -1656,7 +1455,7 @@ describe("dashboard trellis independent view", () => {
     ), "mtime-completed tasks render a localized date");
   });
 
-  it("nests active children under their parent and toggles the subtree on row click", async () => {
+  it("nests active children under their parent and toggles the subtree with the caret", async () => {
     const app = loadDashboard({
       sessions: [],
       rootsResult: { status: "ok", roots: ["/proj/s1"] },
@@ -1675,132 +1474,119 @@ describe("dashboard trellis independent view", () => {
     await flush();
     await switchToTrellis(app);
 
-    // Default: an active branch starts expanded — kid renders inside the
-    // parent's children container (CSS indent + connector line).
-    const kidsContainers = byClass(app.view, "trellis-tree-children");
-    assert.equal(kidsContainers.length, 1);
-    const kidRows = byClass(kidsContainers[0], "trellis-task-row");
+    // Default: an active branch starts expanded — the kid row renders
+    // indented (is-child modifier) after the parent row.
+    const kidRows = byClass(app.view, "trellis-split-row").filter(
+      (el) => el.classList.contains("is-child"),
+    );
     assert.equal(kidRows.length, 1);
     assert.ok(textOf(kidRows[0]).includes("Kid"));
-    const carets = byClass(app.view, "trellis-tree-caret");
+    const carets = byClass(app.view, "trellis-split-caret");
     assert.equal(carets.length, 1, "only the branch row carries a caret");
     assert.equal(carets[0].attributes["aria-expanded"], "true");
 
-    // Clicking the branch row (PRD acceptance) collapses the subtree and
-    // must NOT open the detail overlay — the ⓘ button stays for that.
-    const parentRow = byClass(app.view, "trellis-task-row")[0];
-    await parentRow.dispatch("click");
-    assert.equal(byClass(app.view, "trellis-tree-children").length, 0,
-      "collapsing drops the whole children container");
-    assert.equal(app.detailCalls.length, 0, "a branch row click toggles, it does not open details");
-    assert.equal(byClass(app.view, "trellis-tree-caret")[0].attributes["aria-expanded"], "false");
+    // v7: the caret is the only fold affordance; the branch row itself is
+    // selectable like any other row (split view renders into the pane).
+    await carets[0].dispatch("click");
+    assert.equal(
+      byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-child")).length,
+      0,
+      "folding the branch hides its child rows",
+    );
+    assert.equal(byClass(app.view, "trellis-split-caret")[0].attributes["aria-expanded"], "false");
 
-    await byClass(app.view, "trellis-tree-caret")[0].dispatch("click");
-    assert.equal(byClass(app.view, "trellis-tree-children").length, 1,
-      "the caret alone re-expands the subtree");
+    await byClass(app.view, "trellis-split-caret")[0].dispatch("click");
+    assert.equal(
+      byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-child")).length,
+      1,
+      "the caret alone re-expands the subtree",
+    );
 
-    // A leaf row keeps the v2 click semantics: open the detail overlay.
-    const leafRow = byClass(byClass(app.view, "trellis-tree-children")[0], "trellis-task-row")[0];
+    // A leaf row keeps the v2 click semantics: render its detail.
+    const leafRow = byClass(app.view, "trellis-split-row").filter(
+      (el) => el.classList.contains("is-child"),
+    )[0];
     await leafRow.dispatch("click");
     assert.deepEqual(app.detailCalls, [{ taskPath: ".trellis/tasks/kid", cwd: "/proj/s1" }]);
   });
 
   it("starts archive branches collapsed and wires the expand/collapse-all tools", async () => {
     const app = loadDashboard({
-      sessions: [],
-      rootsResult: { status: "ok", roots: ["/proj/s1"] },
+      rootsResult: { status: "ok", roots: ["/proj/one"] },
       activeResult: { status: "ok", tasks: [
-        {
-          taskPath: ".trellis/tasks/live", title: "Live", phase: "execute",
-          progress: null, parent: null, cwd: "/proj/s1",
-        },
-        {
-          taskPath: ".trellis/tasks/live-kid", title: "Live kid", phase: "plan",
-          progress: null, parent: "live", cwd: "/proj/s1",
-        },
+        { taskPath: ".trellis/tasks/a", title: "Task A", cwd: "/proj/one" },
+        { taskPath: ".trellis/tasks/kid", title: "Kid", parent: "a", cwd: "/proj/one" },
       ] },
       archiveResult: { status: "ok", tasks: [
-        archivedTask({ title: "Arch parent" }),
-        archivedTask({
-          taskPath: ".trellis/tasks/archive/2026-09/arch-kid",
-          title: "Arch kid",
-          parent: "done-thing",
-        }),
+        archivedTask({ taskPath: ".trellis/tasks/archive/2026-09/done-thing", title: "Done thing", cwd: "/proj/one" }),
       ] },
     });
     await flush();
     await switchToTrellis(app);
 
-    // Newest month is open by default, but archive BRANCHES start
-    // collapsed: only the parent row shows, no children container.
-    assert.equal(byClass(app.view, "trellis-archive-row").length, 1,
-      "only the archive parent row renders until it is expanded");
-    assert.equal(byClass(app.view, "trellis-tree-children").length, 1,
-      "the active branch still renders expanded");
+    const doneHead = () => {
+      const heads = byClass(app.view, "trellis-split-group-head");
+      return heads[heads.length - 1];
+    };
+    // v7 ships the archived group folded: the head carries the modifier and
+    // no archived row is materialized yet.
+    assert.ok(doneHead().classList.contains("is-collapsed"));
+    assert.equal(
+      byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-archived")).length,
+      0,
+      "a collapsed archived group renders no rows",
+    );
+    // ↻ refresh is a sibling of the fold toggle, never nested inside it.
+    assert.equal(byClass(doneHead(), "trellis-split-refresh").length, 1);
 
-    // The tools only exist where rows exist; the second pair belongs to
-    // the archive section (DOM order: active tools, then archive tools).
-    const tools = byClass(app.view, "trellis-tree-tool");
-    assert.equal(tools.length, 4, "each non-empty section carries expand + collapse");
-    await tools[2].dispatch("click");
-    assert.equal(tools[2].textContent, i18n.en.dashboardTrellisTreeExpandAll);
-    assert.equal(byClass(app.view, "trellis-archive-row").length, 2,
-      "expand-all reveals the nested archive child");
+    // The foot bar owns the bulk tools; they drive the same collapsedPaths
+    // set the per-row carets write to.
+    const tools = byClass(app.view, "trellis-split-foot-btn");
+    assert.deepEqual(tools.map(textOf), [
+      i18n.en.dashboardTrellisTreeExpandAll,
+      i18n.en.dashboardTrellisTreeCollapseAll,
+    ]);
 
-    await tools[3].dispatch("click");
-    assert.equal(tools[3].textContent, i18n.en.dashboardTrellisTreeCollapseAll);
-    assert.equal(byClass(app.view, "trellis-archive-row").length, 1,
-      "collapse-all on the archive section folds only its own branches");
-    assert.equal(byClass(app.view, "trellis-tree-children").length, 1,
-      "the active branch stays expanded — the tools are per section");
+    const childRows = () =>
+      byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-child"));
+    assert.equal(childRows().length, 1, "branches start expanded");
+
+    await tools[1].dispatch("click");
+    assert.equal(childRows().length, 0, "collapse-all folds every branch");
+
+    await tools[0].dispatch("click");
+    assert.equal(childRows().length, 1, "expand-all restores every branch");
   });
 
   it("shows an archived subtask under its still-active parent and keeps it out of the archive months", async () => {
     const app = loadDashboard({
-      sessions: [],
-      rootsResult: { status: "ok", roots: ["/proj/s1"] },
+      rootsResult: { status: "ok", roots: ["/proj/one"] },
       activeResult: { status: "ok", tasks: [
-        {
-          taskPath: ".trellis/tasks/live-parent", title: "Live parent", phase: "execute",
-          progress: null, parent: null, cwd: "/proj/s1",
-        },
+        { taskPath: ".trellis/tasks/live-parent", title: "Live parent", cwd: "/proj/one" },
       ] },
       archiveResult: { status: "ok", tasks: [
-        archivedTask({
-          taskPath: ".trellis/tasks/archive/2026-09/done-kid",
-          title: "Done kid",
-          parent: "live-parent",
-        }),
-        archivedTask({
-          taskPath: ".trellis/tasks/archive/2026-08/old-loner",
-          title: "Old loner",
-        }),
+        archivedTask({ taskPath: ".trellis/tasks/archive/2026-09/done-kid", title: "Done kid", parent: "live-parent" }),
+        archivedTask({ taskPath: ".trellis/tasks/archive/2026-08/old-loner", title: "Old loner" }),
       ] },
     });
     await flush();
     await switchToTrellis(app);
 
-    // The archived child renders grey (archive row) inside the active
-    // parent's subtree, with its completed date and duration.
-    const activeTree = byClass(app.view, "trellis-tree-children")[0];
-    const greyRows = byClass(activeTree, "trellis-archive-row");
-    assert.equal(greyRows.length, 1);
-    const grey = textOf(greyRows[0]);
-    assert.ok(grey.includes("Done kid"));
-    assert.ok(grey.includes(
-      i18n.en.dashboardTrellisDetailCompleted.replace("{date}", "2026-09-20")
-    ));
-    assert.ok(grey.includes(i18n.en.dashboardTrellisArchivedDurationDays.replace("{n}", "10")));
+    const heads = byClass(app.view, "trellis-split-group-head");
+    await heads[heads.length - 1].dispatch("click");
 
-    // The archive section counts both archived tasks but the newest month
-    // group only holds the rooted loner… wait, done-kid lives under the
-    // active parent so 2026-09 has NO rooted row at all.
-    assert.ok(textOf(app.view).includes(
-      `${i18n.en.dashboardTrellisArchiveTitle} (2)`
-    ), "the section header counts every archived task");
-    const monthLabels = byClass(app.view, "trellis-archive-month-label").map((el) => textOf(el));
-    assert.deepEqual(monthLabels, [`2026-08 · 1`],
-      "months with only nested-away tasks show no rooted rows; cross-month roots group by their own month");
+    const rows = byClass(app.view, "trellis-split-row");
+    const kid = rows.find((el) => textOf(el).includes("Done kid"));
+    assert.ok(kid, "the adopted archived task renders");
+    assert.ok(kid.classList.contains("is-child"), "it nests under its still-active parent");
+    assert.ok(
+      rows[rows.indexOf(kid) - 1].classList.contains("is-parent"),
+      "…and sits directly under the parent row",
+    );
+
+    // Only the orphan owns a month sub-group: the adopted task left its own.
+    assert.deepEqual(byClass(app.view, "trellis-split-month-label").map(textOf), ["2026-08 · 1"]);
+    assert.equal(byClass(app.view, "trellis-split-month-head").length, 1);
   });
 });
 
@@ -1822,8 +1608,8 @@ describe("dashboard trellis project filter (rendering)", () => {
       sessions: [],
       rootsResult: { status: "ok", roots: ["/proj/one", "/proj/two"] },
       activeResult: { status: "ok", tasks: [
-        activeTask({ taskPath: ".trellis/tasks/a", title: "Task A", cwd: "/proj/one" }),
-        activeTask({ taskPath: ".trellis/tasks/b", title: "Task B", cwd: "/proj/two/deep" }),
+        { taskPath: ".trellis/tasks/a", title: "Task A", cwd: "/proj/one" },
+        { taskPath: ".trellis/tasks/b", title: "Task B", cwd: "/proj/two/deep" },
       ] },
       archiveResult: { status: "ok", tasks: [
         archivedTask({ title: "Done one", cwd: "/proj/one" }),
@@ -1838,67 +1624,113 @@ describe("dashboard trellis project filter (rendering)", () => {
   }
 
   it("merges projects under All with per-root chips, counts and row origin tags", async () => {
-    const app = await loadTrellisView();
+    const app = loadDashboard({
+      rootsResult: { status: "ok", roots: ["/proj/one", "/proj/two/deep", "/proj/empty"] },
+      activeResult: { status: "ok", tasks: [
+        { taskPath: ".trellis/tasks/a", title: "Task A", cwd: "/proj/one" },
+        { taskPath: ".trellis/tasks/b", title: "Task B", cwd: "/proj/two/deep" },
+      ] },
+      archiveResult: { status: "ok", tasks: [
+        archivedTask({ taskPath: ".trellis/tasks/archive/2026-09/done-one", title: "Done one", cwd: "/proj/one" }),
+      ] },
+    });
+    await flush();
+    await switchToTrellis(app);
 
     const chips = byClass(app.view, "trellis-filter-chip");
-    assert.equal(chips.length, 3, "All + one chip per registered root");
-    assert.ok(textOf(chips[0]).includes(i18n.en.dashboardTrellisFilterAll));
-    assert.ok(textOf(chips[0]).includes("2"), "the All chip carries the merged active count");
-    assert.ok(textOf(chips[1]).includes("one"));
-    assert.ok(textOf(chips[1]).includes("1"), "per-root chips carry that root's active count");
-    assert.ok(textOf(chips[2]).includes("1"));
+    assert.equal(chips.length, 4, "All + one chip per registered root");
+    assert.deepEqual(
+      chips.map((el) => textOf(byClass(el, "trellis-filter-chip-label")[0])),
+      [i18n.en.dashboardTrellisFilterAll, "one", "deep", "empty"],
+    );
+    assert.deepEqual(
+      chips.map((el) => textOf(byClass(el, "trellis-filter-count")[0])),
+      ["2", "1", "1", "0"],
+      "counts are per-root live-task totals; the empty root stays at 0",
+    );
     assert.equal(chips[0].attributes["aria-pressed"], "true", "All is the default selection");
 
-    assert.equal(byClass(app.view, "trellis-filter-title")[0].textContent,
-      i18n.en.dashboardTrellisFilterAll);
-    assert.equal(byClass(app.view, "trellis-task-row").length, 2,
-      "both projects' tasks are merged in the All view");
-    // Cross-project rows say where they come from — the disambiguated
-    // root basename, both in the active list and the archive browser.
-    const tags = byClass(app.view, "trellis-task-project");
-    assert.equal(tags.length, 4, "one tag per active row and per archive row");
-    assert.ok(textOf(app.view).includes("Done one"));
-    assert.ok(textOf(app.view).includes("Done two"));
+    // Rows tag their origin only while several projects are merged.
+    assert.deepEqual(byClass(app.view, "trellis-task-project").map(textOf), ["one", "deep"]);
+    assert.equal(byClass(app.view, "trellis-split-row").length, 2, "All merges both live lists");
+
+    // The archived group follows the same selection and counts its rows.
+    const doneHead = () => {
+      const heads = byClass(app.view, "trellis-split-group-head");
+      return heads[heads.length - 1];
+    };
+    assert.equal(textOf(byClass(doneHead(), "trellis-split-group-count")[0]), "1");
   });
 
   it("selecting a chip narrows both lists and hides the origin tags", async () => {
-    const app = await loadTrellisView();
+    const app = loadDashboard({
+      rootsResult: { status: "ok", roots: ["/proj/one", "/proj/two"] },
+      activeResult: { status: "ok", tasks: [
+        { taskPath: ".trellis/tasks/a", title: "Task A", cwd: "/proj/one" },
+        { taskPath: ".trellis/tasks/b", title: "Task B", cwd: "/proj/two" },
+      ] },
+      archiveResult: { status: "ok", tasks: [
+        archivedTask({ taskPath: ".trellis/tasks/archive/2026-09/done-one", title: "Done one", cwd: "/proj/one" }),
+        archivedTask({ taskPath: ".trellis/tasks/archive/2026-09/done-two", title: "Done two", cwd: "/proj/two" }),
+      ] },
+    });
+    await flush();
+    await switchToTrellis(app);
 
     await byClass(app.view, "trellis-filter-chip")[1].dispatch("click");
-    assert.equal(byClass(app.view, "trellis-task-row").length, 1);
-    assert.ok(textOf(app.view).includes("Task A"));
-    assert.ok(!textOf(app.view).includes("Task B"),
-      "tasks owned by another root disappear");
-    assert.equal(byClass(app.view, "trellis-task-project").length, 0,
-      "the single-project view already names the project in the filter title");
-    assert.ok(byClass(app.view, "trellis-filter-title")[0].textContent.includes("one"));
+    const rows = () => byClass(app.view, "trellis-split-row");
+    assert.equal(rows().length, 1);
+    assert.ok(textOf(rows()[0]).includes("Task A"));
+    assert.ok(!textOf(app.view).includes("Task B"), "tasks owned by another root disappear");
+    assert.equal(
+      byClass(app.view, "trellis-task-project").length,
+      0,
+      "the single-project view already names the project in the filter title",
+    );
+    assert.equal(textOf(byClass(app.view, "trellis-filter-title")[0]), "one");
 
     const chips = byClass(app.view, "trellis-filter-chip");
     assert.equal(chips[1].attributes["aria-pressed"], "true");
     assert.equal(chips[0].attributes["aria-pressed"], "false");
 
-    // The archive honors the same selection: header count and rows.
-    assert.ok(textOf(app.view).includes(
-      `${i18n.en.dashboardTrellisArchiveTitle} (1)`
-    ), "the archive count follows the filter");
-    assert.equal(byClass(app.view, "trellis-archive-row").length, 1);
-    assert.ok(textOf(app.view).includes("Done one"));
+    // The archived group honors the same selection.
+    const doneHead = () => {
+      const heads = byClass(app.view, "trellis-split-group-head");
+      return heads[heads.length - 1];
+    };
+    await doneHead().dispatch("click");
+    assert.equal(textOf(byClass(doneHead(), "trellis-split-group-count")[0]), "1");
+    const archived = rows().filter((el) => el.classList.contains("is-archived"));
+    assert.equal(archived.length, 1);
+    assert.ok(textOf(archived[0]).includes("Done one"));
     assert.ok(!textOf(app.view).includes("Done two"));
 
     // Back to All: the merged view returns untouched (memory state only).
     await byClass(app.view, "trellis-filter-chip")[0].dispatch("click");
-    assert.equal(byClass(app.view, "trellis-task-row").length, 2);
-    assert.equal(byClass(app.view, "trellis-archive-row").length, 2);
+    assert.equal(
+      rows().filter((el) => !el.classList.contains("is-archived")).length,
+      2,
+      "both live lists come back",
+    );
+    assert.equal(
+      rows()
+        .filter((el) => !el.classList.contains("is-archived"))
+        .reduce((sum, el) => sum + byClass(el, "trellis-task-project").length, 0),
+      2,
+      "every live row tags its project again",
+    );
   });
 
   it("dims empty-project chips but keeps them clickable into the empty view", async () => {
-    const app = await loadTrellisView({
+    const app = loadDashboard({
       rootsResult: { status: "ok", roots: ["/proj/full", "/proj/void"] },
       activeResult: { status: "ok", tasks: [
-        activeTask({ taskPath: ".trellis/tasks/a", title: "Task A", cwd: "/proj/full" }),
+        { taskPath: ".trellis/tasks/a", title: "Task A", cwd: "/proj/full" },
       ] },
       archiveResult: { status: "ok", tasks: [] },
     });
+    await flush();
+    await switchToTrellis(app);
 
     const chips = byClass(app.view, "trellis-filter-chip");
     assert.equal(chips.length, 3);
@@ -1914,13 +1746,20 @@ describe("dashboard trellis project filter (rendering)", () => {
 
   it("falls back to All when the selected root gets unregistered", async () => {
     let registered = ["/proj/one", "/proj/two"];
-    const app = await loadTrellisView({
+    const app = loadDashboard({
       rootsResult: () => ({ status: "ok", roots: registered }),
       removeResult: { status: "ok", roots: ["/proj/one"] },
+      activeResult: { status: "ok", tasks: [
+        { taskPath: ".trellis/tasks/a", title: "Task A", cwd: "/proj/one" },
+        { taskPath: ".trellis/tasks/b", title: "Task B", cwd: "/proj/two" },
+      ] },
+      archiveResult: { status: "ok", tasks: [] },
     });
+    await flush();
+    await switchToTrellis(app);
 
     await byClass(app.view, "trellis-filter-chip")[2].dispatch("click");
-    assert.equal(byClass(app.view, "trellis-task-row").length, 1);
+    assert.equal(byClass(app.view, "trellis-split-row").length, 1);
 
     // Removing the selected root refreshes the roots list; the stale
     // selection must not silently filter everything out.
@@ -1928,21 +1767,29 @@ describe("dashboard trellis project filter (rendering)", () => {
     await byClass(app.view, "trellis-root-remove")[1].dispatch("click");
     await flush();
     assert.deepEqual(app.removeRootCalls, ["/proj/two"]);
-    assert.equal(byClass(app.view, "trellis-task-row").length, 2,
-      "an unregistered selection falls back to the merged All view");
-    assert.equal(byClass(app.view, "trellis-filter-chip").length, 2,
-      "the chip row follows the shrunken roots list");
+    assert.equal(
+      byClass(app.view, "trellis-split-row").length,
+      2,
+      "an unregistered selection falls back to the merged All view",
+    );
+    assert.equal(
+      byClass(app.view, "trellis-filter-chip").length,
+      2,
+      "the chip row follows the shrunken roots list",
+    );
   });
 
   it("disambiguates duplicate basenames in chips and row tags", async () => {
-    const app = await loadTrellisView({
+    const app = loadDashboard({
       rootsResult: { status: "ok", roots: ["/a/one/proj", "/b/two/proj"] },
       activeResult: { status: "ok", tasks: [
-        activeTask({ taskPath: ".trellis/tasks/a", title: "Task A", cwd: "/a/one/proj" }),
-        activeTask({ taskPath: ".trellis/tasks/b", title: "Task B", cwd: "/b/two/proj" }),
+        { taskPath: ".trellis/tasks/a", title: "Task A", cwd: "/a/one/proj" },
+        { taskPath: ".trellis/tasks/b", title: "Task B", cwd: "/b/two/proj" },
       ] },
       archiveResult: { status: "ok", tasks: [] },
     });
+    await flush();
+    await switchToTrellis(app);
 
     const chips = byClass(app.view, "trellis-filter-chip");
     assert.ok(textOf(chips[1]).includes("proj (one)"));

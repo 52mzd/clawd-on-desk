@@ -100,7 +100,13 @@
   function groupTrellisTasks(tasks) {
     const list = Array.isArray(tasks) ? tasks.filter((task) => task && task.taskPath) : [];
     const byPath = new Map();
-    for (const task of list) byPath.set(task.taskPath, task);
+    const byName = new Map(); // basename → [taskPath] (cross-list fallback)
+    for (const task of list) {
+      byPath.set(task.taskPath, task);
+      const name = task.taskPath.slice(task.taskPath.lastIndexOf("/") + 1);
+      if (!byName.has(name)) byName.set(name, []);
+      byName.get(name).push(task.taskPath);
+    }
 
     const childrenOf = new Map(); // parent taskPath → [task] (aggregate order)
     const hasLiveParent = new Set();
@@ -109,8 +115,16 @@
       if (!parentName) continue;
       const slash = task.taskPath.lastIndexOf("/");
       if (slash < 0) continue;
-      const parentPath = `${task.taskPath.slice(0, slash)}/${parentName}`;
-      if (!byPath.has(parentPath)) continue; // orphan → flat
+      const siblingPath = `${task.taskPath.slice(0, slash)}/${parentName}`;
+      // Same-directory join first (the v2 rule). An ARCHIVED task whose
+      // parent is still ACTIVE lives in a different directory, so fall
+      // back to a unique basename match (v7 cross-list parenting).
+      let parentPath = byPath.has(siblingPath) ? siblingPath : null;
+      if (!parentPath) {
+        const candidates = byName.get(parentName) || [];
+        if (candidates.length === 1) [parentPath] = candidates;
+      }
+      if (!parentPath) continue; // orphan → flat
       hasLiveParent.add(task.taskPath);
       if (!childrenOf.has(parentPath)) childrenOf.set(parentPath, []);
       childrenOf.get(parentPath).push(task);
@@ -144,8 +158,11 @@
 
     const rows = [];
     const emitted = new Set();
-    function emit(task, depth) {
-      if (emitted.has(task.taskPath)) return; // cycle guard
+    function emit(task, depth, root = false) {
+      // Cycle guard applies to child traversal; duplicate ROOT paths are
+      // legal (archive fixtures reuse one taskPath for many archived
+      // tasks — v7 renders each row instead of collapsing them).
+      if (!root && emitted.has(task.taskPath)) return;
       emitted.add(task.taskPath);
       rows.push({
         task,
@@ -157,7 +174,7 @@
       for (const child of childrenOf.get(task.taskPath) || []) emit(child, depth + 1);
     }
     for (const task of list) {
-      if (!hasLiveParent.has(task.taskPath)) emit(task, 0);
+      if (!hasLiveParent.has(task.taskPath)) emit(task, 0, true);
     }
     // Cycle members never surface at the top level (each one's parent is
     // live), so append them flat in aggregate order instead of dropping.
@@ -197,179 +214,6 @@
     return months.map((month) => ({ month, tasks: byMonth.get(month) }));
   }
 
-  // ── Unified task tree (independent Trellis view) ──────────────────────────
-  // buildTrellisTree(activeTasks, archivedTasks) nests both readActiveList /
-  // readArchiveList outputs by the task.json `parent` NAME into one tree of
-  // nodes { task, archived, depth, children, childSummary }. The `parent`
-  // field is a sibling task NAME, so every link below is resolved by name
-  // against one candidate set at a time — any ambiguity (duplicates, or a
-  // name that matches nothing) flattens the child instead of guessing:
-  //   • active child → active parent by same-directory taskPath
-  //     (dirname(child.taskPath) + "/" + parent) — the groupTrellisTasks rule
-  //   • active child not in the active set → the unique archived task with
-  //     that NAME (any month); 0 or ≥2 candidates → flat
-  //   • archived child → archived parent with that NAME: same month first,
-  //     then a unique cross-month match (PRD order); ambiguous → flat
-  //   • archived child → the unique ACTIVE task with that NAME (archived
-  //     subtask shown grey under its still-active parent); else flat
-  // Self-parents, parent cycles and nesting deeper than the depth cap all
-  // flatten to depth 0 instead of erroring (emitted-guard pattern), and
-  // childSummary sums every descendant's progress (archived tasks carry
-  // none, so they never skew the numbers). Active roots come first in
-  // readActiveList order, then archive roots newest-completed-first.
-  const TRELLIS_TREE_DEPTH_CAP = 32;
-
-  function taskPathName(taskPath) {
-    return taskPath.slice(taskPath.lastIndexOf("/") + 1);
-  }
-
-  function buildTrellisTree(activeTasks, archivedTasks) {
-    // Same cross-root duplicate taskPath renders once (groupTrellisTasks
-    // semantics); archive duplicates keep every row like the v2 list did.
-    const actives = [];
-    const seenActivePath = new Set();
-    for (const task of Array.isArray(activeTasks) ? activeTasks : []) {
-      if (!task || typeof task.taskPath !== "string" || !task.taskPath) continue;
-      if (seenActivePath.has(task.taskPath)) continue;
-      seenActivePath.add(task.taskPath);
-      actives.push(task);
-    }
-    const archives = [];
-    for (const task of Array.isArray(archivedTasks) ? archivedTasks : []) {
-      if (!task || typeof task.taskPath !== "string" || !task.taskPath) continue;
-      archives.push(task);
-    }
-
-    const activeByPath = new Map(); // taskPath → index (first wins)
-    const activeNameCounts = new Map();
-    for (let i = 0; i < actives.length; i++) {
-      activeByPath.set(actives[i].taskPath, i);
-      const name = taskPathName(actives[i].taskPath);
-      if (name) activeNameCounts.set(name, (activeNameCounts.get(name) || 0) + 1);
-    }
-    const archivesByName = new Map(); // name → [{ key, month }]
-    for (let j = 0; j < archives.length; j++) {
-      const name = taskPathName(archives[j].taskPath);
-      if (!name) continue;
-      if (!archivesByName.has(name)) archivesByName.set(name, []);
-      archivesByName.get(name).push({ key: `r${j}`, month: trellisArchiveMonthOf(archives[j].taskPath) });
-    }
-
-    function activeParentKey(task) {
-      const parentName = typeof task.parent === "string" ? task.parent.trim() : "";
-      if (!parentName) return null;
-      const slash = task.taskPath.lastIndexOf("/");
-      const parentPath = `${slash < 0 ? "" : task.taskPath.slice(0, slash)}/${parentName}`;
-      if (parentPath === task.taskPath) return null; // self-parent → flat
-      const idx = activeByPath.get(parentPath);
-      if (idx !== undefined) return `a${idx}`;
-      const archived = archivesByName.get(parentName);
-      return archived && archived.length === 1 ? archived[0].key : null;
-    }
-
-    function archivedParentKey(task, ownKey) {
-      const parentName = typeof task.parent === "string" ? task.parent.trim() : "";
-      if (!parentName) return null;
-      const candidates = (archivesByName.get(parentName) || []).filter((c) => c.key !== ownKey);
-      const sameMonth = candidates.filter((c) => c.month === trellisArchiveMonthOf(task.taskPath));
-      let pick = null;
-      if (sameMonth.length === 1) pick = sameMonth[0];
-      else if (sameMonth.length === 0 && candidates.length === 1) pick = candidates[0];
-      if (pick) return pick.key;
-      if (activeNameCounts.get(parentName) === 1) {
-        for (let i = 0; i < actives.length; i++) {
-          if (taskPathName(actives[i].taskPath) === parentName) return `a${i}`;
-        }
-      }
-      return null;
-    }
-
-    const taskOfKey = new Map();
-    const childrenOf = new Map(); // parent key → [child key]
-    const hasParent = new Set();
-    for (let i = 0; i < actives.length; i++) {
-      const key = `a${i}`;
-      taskOfKey.set(key, actives[i]);
-      const parentKey = activeParentKey(actives[i]);
-      if (parentKey !== null) {
-        hasParent.add(key);
-        if (!childrenOf.has(parentKey)) childrenOf.set(parentKey, []);
-        childrenOf.get(parentKey).push(key);
-      }
-    }
-    for (let j = 0; j < archives.length; j++) {
-      const key = `r${j}`;
-      taskOfKey.set(key, archives[j]);
-      const parentKey = archivedParentKey(archives[j], key);
-      if (parentKey !== null) {
-        hasParent.add(key);
-        if (!childrenOf.has(parentKey)) childrenOf.set(parentKey, []);
-        childrenOf.get(parentKey).push(key);
-      }
-    }
-
-    const roots = [];
-    const emitted = new Set();
-    const overflow = []; // depth-cap pushdowns, flattened as roots afterwards
-    function emit(key, depth, into) {
-      if (emitted.has(key)) return; // cycle guard
-      emitted.add(key);
-      const node = {
-        task: taskOfKey.get(key),
-        archived: key[0] === "r",
-        depth,
-        children: [],
-        childSummary: null,
-      };
-      into.push(node);
-      const childKeys = childrenOf.get(key) || [];
-      if (depth < TRELLIS_TREE_DEPTH_CAP) {
-        for (const childKey of childKeys) emit(childKey, depth + 1, node.children);
-      } else {
-        for (const childKey of childKeys) overflow.push(childKey);
-      }
-    }
-    for (let i = 0; i < actives.length; i++) {
-      if (!hasParent.has(`a${i}`)) emit(`a${i}`, 0, roots);
-    }
-    for (let j = 0; j < archives.length; j++) {
-      if (!hasParent.has(`r${j}`)) emit(`r${j}`, 0, roots);
-    }
-    // Cycle members (their parents are live, so the DFS never reached
-    // them) and depth-cap pushdowns flatten to depth 0 in list order.
-    for (let i = 0; i < actives.length; i++) {
-      if (!emitted.has(`a${i}`)) emit(`a${i}`, 0, roots);
-    }
-    for (const key of overflow) emit(key, 0, roots);
-    for (let j = 0; j < archives.length; j++) {
-      if (!emitted.has(`r${j}`)) emit(`r${j}`, 0, roots);
-    }
-
-    function summarize(node) {
-      let done = 0;
-      let total = 0;
-      let any = false;
-      for (const child of node.children) {
-        const progress = child.task && child.task.progress;
-        if (progress && Number.isFinite(progress.done) && Number.isFinite(progress.total) && progress.total > 0) {
-          done += progress.done;
-          total += progress.total;
-          any = true;
-        }
-        const sub = summarize(child);
-        if (sub) {
-          done += sub.done;
-          total += sub.total;
-          any = true;
-        }
-      }
-      node.childSummary = any ? { done, total } : null;
-      return node.childSummary;
-    }
-    for (const node of roots) summarize(node);
-    return { roots, depthCap: TRELLIS_TREE_DEPTH_CAP };
-  }
-
   // ── Project filter (independent Trellis view) ────────────────────────────
   // The filter is a pure render-layer concern: readActiveList /
   // readArchiveList rows carry the trusted `cwd` that owns their root, and
@@ -405,31 +249,6 @@
   // roots share it — first with the parent segment ("name (parent)"), then
   // deeper ancestors ("name (grand/parent)"), finally the full path so a
   // label is never ambiguous.
-  // v5-b board bucketing: map each task (active row shape or archived
-  // entry shape) to its board column phase. Archived entries always land
-  // in "done"; unknown/missing phases fall back to "execute" (the busiest
-  // column, so nothing silently disappears into a corner).
-  const BOARD_PHASES_ARRAY = ["plan", "execute", "check", "finish", "done"];
-  const BOARD_PHASES = new Set(BOARD_PHASES_ARRAY);
-
-  function boardPhaseFor(task) {
-    if (!task || typeof task !== "object") return "execute";
-    if (task.completedAt || task.archived === true) return "done";
-    if (typeof task.phase === "string" && BOARD_PHASES.has(task.phase)) return task.phase;
-    return "execute";
-  }
-
-  function bucketByBoardPhase(activeTasks, archiveTasks) {
-    const byPhase = new Map(BOARD_PHASES_ARRAY.map((phase) => [phase, []]));
-    for (const task of Array.isArray(activeTasks) ? activeTasks : []) {
-      byPhase.get(boardPhaseFor(task)).push(task);
-    }
-    for (const task of Array.isArray(archiveTasks) ? archiveTasks : []) {
-      byPhase.get("done").push(task);
-    }
-    return byPhase;
-  }
-
   function buildTrellisRootLabels(roots) {
     const list = Array.isArray(roots) ? roots.filter((root) => typeof root === "string" && root) : [];
     const labels = new Map();
@@ -471,15 +290,11 @@
     aggregateTrellisTasks,
     groupTrellisTasks,
     groupTrellisArchiveByMonth,
-    buildTrellisTree,
     trellisArchiveMonthOf,
     trellisTaskOwningRoot,
     filterTrellisTasksByRoot,
     buildTrellisRootLabels,
-    boardPhaseFor,
-    bucketByBoardPhase,
     TRELLIS_PHASE_BADGE,
-    TRELLIS_TREE_DEPTH_CAP,
     normalizeProgress,
   };
 });
