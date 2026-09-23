@@ -2183,6 +2183,10 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
 
   const listPane = document.createElement("div");
   listPane.className = "trellis-split-list";
+  // All parent taskPaths in the current dataset (v7 R4): drives the
+  // expand-all / collapse-all buttons in the foot bar. Roots are appended
+  // by the group loop below.
+  const parentPaths = [];
   const groups = [
     { phase: "plan", labelKey: "dashboardTrellisPhasePlan" },
     { phase: "execute", labelKey: "dashboardTrellisPhaseExecute" },
@@ -2206,6 +2210,7 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
         if (rowMeta.task.taskPath === trellisSplit.selectedTaskPath) selectedTask = rowMeta.task;
         listPane.appendChild(buildTrellisSplitRow(rowMeta.task, rowMeta));
       }
+      if (rowMeta.hasChildren) parentPaths.push(rowMeta.task.taskPath);
       i = renderSubtree(
         subtree,
         i + 1,
@@ -2309,6 +2314,7 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
             trellisSplit.tasksByPath.set(rootMeta.task.taskPath, rootMeta.task);
             if (rootMeta.task.taskPath === trellisSplit.selectedTaskPath) selectedTask = rootMeta.task;
             listPane.appendChild(buildTrellisSplitRow(rootMeta.task, rootMeta));
+            if (rootMeta.hasChildren) parentPaths.push(rootMeta.task.taskPath);
             renderSubtree(subtree, 1, rootMeta.depth, !trellisSplit.collapsedPaths.has(rootMeta.task.taskPath));
           }
         } else {
@@ -2326,17 +2332,46 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
       trellisSplit.tasksByPath.set(rootMeta.task.taskPath, rootMeta.task);
       if (rootMeta.task.taskPath === trellisSplit.selectedTaskPath) selectedTask = rootMeta.task;
       listPane.appendChild(buildTrellisSplitRow(rootMeta.task, rootMeta));
+      if (rootMeta.hasChildren) parentPaths.push(rootMeta.task.taskPath);
       renderSubtree(subtree, 1, rootMeta.depth, !trellisSplit.collapsedPaths.has(rootMeta.task.taskPath));
     }
     groupIndex += 1;
   }
-  listPane.appendChild(createText(
-    "div",
-    "trellis-split-foot",
+  const foot = document.createElement("div");
+  foot.className = "trellis-split-foot";
+  foot.appendChild(createText(
+    "span",
+    "trellis-split-foot-stat",
     t("dashboardTrellisSplitStat")
       .replace("{active}", String(activeCount))
       .replace("{archive}", String(archiveCount))
   ));
+  const footTools = document.createElement("span");
+  footTools.className = "trellis-split-foot-tools";
+  const expandAll = document.createElement("button");
+  expandAll.type = "button";
+  expandAll.className = "trellis-split-foot-btn";
+  expandAll.textContent = t("dashboardTrellisTreeExpandAll");
+  expandAll.title = t("dashboardTrellisTreeExpandAll");
+  expandAll.addEventListener("click", () => {
+    trellisSplit.collapsedPaths.clear();
+    lastTrellisPanelSignature = null;
+    renderTrellisViewBody();
+  });
+  footTools.appendChild(expandAll);
+  const collapseAll = document.createElement("button");
+  collapseAll.type = "button";
+  collapseAll.className = "trellis-split-foot-btn";
+  collapseAll.textContent = t("dashboardTrellisTreeCollapseAll");
+  collapseAll.title = t("dashboardTrellisTreeCollapseAll");
+  collapseAll.addEventListener("click", () => {
+    for (const p of parentPaths) trellisSplit.collapsedPaths.add(p);
+    lastTrellisPanelSignature = null;
+    renderTrellisViewBody();
+  });
+  footTools.appendChild(collapseAll);
+  foot.appendChild(footTools);
+  listPane.appendChild(foot);
   section.appendChild(listPane);
 
   // Selection may point at a task that filters just removed — show the
