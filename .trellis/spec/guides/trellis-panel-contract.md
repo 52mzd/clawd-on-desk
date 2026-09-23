@@ -1010,3 +1010,47 @@ implement.jsonl/check.jsonl 实测不存在，明确不作证据源。
   可变 json，含 `/` 时可逃出 tasks 目录
 - Correct：名字形状先验证（无分隔符/非空），再 join 同级目录 stat 确认，
   archive 扫描走 findArchivedTaskDir；任何失败都是单行 missing，不放大
+
+---
+
+#### §4.6e v5 UI 形态契约：board 模式 + overlay 近全屏（8 段式，v5）
+
+**1. Scope / Trigger**：Trellis 视图的两种展示模式与三种 doc overlay 的 UI
+层契约（39f656d2 / 8ff9c9aa）。纯渲染层，零新 IPC、零数据形态变更。
+
+**2. 模式切换**：`trellisView.mode ∈ {"tree","board"}`，filter 区切换按钮；
+localStorage 键 `trellisViewMode` 仅同窗重载缓存（会话级，不出 renderer）。
+board 分支替换 active+archive 两个 section 为单个 board section。
+
+**3. Board 分桶（纯函数，panel 模块导出）**：
+- `boardPhaseFor(task)`：`completedAt || archived === true` → `"done"`；
+  phase 字符串在 `{"plan","execute","check","finish","done"}` 内 → 该值；
+  其余（含缺失/未知）→ `"execute"`（最忙列，任务不静默消失）
+- `bucketByBoardPhase(active, archive)` → `Map<phase, task[]>`，archive
+  恒入 done；malformed 入参（null/非数组）全空桶不 throw
+- 测试锚点：`test/dashboard-trellis-panel.test.js` 分桶 2 用例
+
+**4. FLIP 换列动画**：board 重建前 `captureTrellisBoardCardPositions()`
+snapshot `.trellis-board-card[data-task-path]` 的 rect；
+`replaceChildren` 后 `flipTrellisBoardCards()` diff 新 rect，
+位移 ≥1px 的卡 `card.animate()` 260ms 平移补间。key = taskPath。
+
+**5. Overlay 近全屏**：`.trellis-detail-card` / `.trellis-spec-card`
+`calc(100%-48px) × calc(100%-64px)` cap `880×760`（**percent-only，
+禁 vw/vh**——zoom-safe，见 frontend/renderer-guidelines）；
+`@media (max-width: 980px)` 回落 `max-width:420px / max-height:520px`。
+
+**6. 可复制与动画**：`.trellis-detail-doc / .trellis-spec-doc /
+.trellis-spec-list / .trellis-network-card` 内 `user-select: text`；
+header/按钮保持 none。开=pop-in 回弹 0.26s + 遮罩 fade；关=对称
+fade-out（`animateTrellisOverlayClose`：setTimeout 140ms 守卫，重开
+`cancelTrellisOverlayClose`，reduced-motion / 无 timer 沙箱直落 finish）。
+
+**7. 降级矩阵**：
+- `prefers-reduced-motion: reduce` → 全部动画/过渡关
+- 窗口 <1100px → board 列动画关、5×200px 定宽横滚
+- 单列 >30 卡（`.trellis-board-heavy`）→ hover 辉光关（性能护栏）
+
+**8. Wrong vs Correct**：
+- Wrong：分桶逻辑内联在 renderer（不可测）/ 尺寸用 `92vw`（破坏 zoom 补偿）
+- Correct：分桶提为 panel 纯函数进单测；尺寸 percent 链接 overlay 父级 + px cap

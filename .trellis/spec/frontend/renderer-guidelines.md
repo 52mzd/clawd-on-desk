@@ -56,6 +56,24 @@ seq, … }` + `open/close/fetch/render` 四函数 + 独立 `overlayEl`（html �
 - **Esc/背景点击**绑定一次（初始化处），多个 overlay 共存时 Esc 按后开优先关
 - 事件绑定挂卡片内元素，随 `replaceChildren` 自然回收——不用 addEventListener 泄漏检查
 
+## 尺寸与 zoom 安全（硬线）
+
+**弹层/浮层尺寸禁用裸 viewport 单位（vw/vh）**——dashboard 的文字缩放补偿机制
+无法补偿 viewport 单位，会直接破坏大字号可用性（v5-a 实际踩过：先写
+`min(880px, 92vw)` 被 settings-renderer-browser-env 测试红牌，改 percent-only 才过）。
+正确形态是百分比链接到定位父级 + px 上限：
+
+```css
+/* ✓ */
+width: calc(100% - 48px);
+max-width: 880px;
+
+/* ✗ */
+width: min(880px, 92vw);
+```
+
+既有把关：`test/settings-renderer-browser-env.test.js` 扫 viewport 单位，全量必跑。
+
 ## 事件与定时器
 
 - 行内按钮 `stopPropagation()`（防触发行选中/展开）
