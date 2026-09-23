@@ -348,3 +348,9 @@ v5 可读性重构：① v5-a 8ff9c9aa 弹窗三卡（detail/spec/network）从 
 ### Status
 
 [OK] **Completed**
+
+## 2026-09-23 v6-split-view 收尾
+
+- 6741c776 已实现 split master-detail（左栏分组列表 + 右栏 detail card、↑↓/Enter/Esc 键盘导航、≤1100px drawer 降级、board→split 迁移映射）。
+- spec 补录：trellis-panel-contract.md 新增 §4.6f（v6 split 视图六段契约），§4.6e 头部加部分废弃注记（board 布局/FLIP/横滚降级废弃，分桶纯函数/overlay 近全屏/zoom-safe 红线仍复用）。修正过程中清掉一处双冒号笔误。
+- test/dashboard-trellis-panel.test.js 69/69 通过。

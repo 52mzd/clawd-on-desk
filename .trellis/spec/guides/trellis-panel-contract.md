@@ -1015,6 +1015,11 @@ implement.jsonl/check.jsonl 实测不存在，明确不作证据源。
 
 #### §4.6e v5 UI 形态契约：board 模式 + overlay 近全屏（8 段式，v5）
 
+> **v6 起部分废弃（6741c776）**：board 布局已被 §4.6f split master-detail 取代。
+> 本节第 2 段（mode 值域）、第 4 段（FLIP 换列动画）、第 7 段中 board 列动画 /
+> 5×200px 横滚降级不再适用，行为以 §4.6f 为准；第 3 段（分桶纯函数）、第 5 段
+>（overlay 近全屏）、第 6 段（可复制与动画）仍有效且被 split 视图复用。
+
 **1. Scope / Trigger**：Trellis 视图的两种展示模式与三种 doc overlay 的 UI
 层契约（39f656d2 / 8ff9c9aa）。纯渲染层，零新 IPC、零数据形态变更。
 
@@ -1054,3 +1059,21 @@ fade-out（`animateTrellisOverlayClose`：setTimeout 140ms 守卫，重开
 **8. Wrong vs Correct**：
 - Wrong：分桶逻辑内联在 renderer（不可测）/ 尺寸用 `92vw`（破坏 zoom 补偿）
 - Correct：分桶提为 panel 纯函数进单测；尺寸 percent 链接 overlay 父级 + px cap
+
+#### §4.6f v6 Split 视图：左右栏 master-detail（6741c776）
+
+**1. Scope / Trigger**：Trellis 面板的第二种任务视图模式 `split`，替代 v5 board 成为默认任务浏览形态。纯渲染层，零新 IPC、零数据形态变更。视图模式经 `localStorage['trellisViewMode']` 持久化，值域 `'tree' | 'split'`；旧存量值 `'board'` 读取时映射为 `split`（不写回），其余未知值回退 `tree`，不清理存量数据。选中行路径（`trellisSplit.selectedTaskPath`）是内存态，不持久化。
+
+**2. 左右栏结构**：
+- 左栏 `.trellis-split-list`：`flex: 1 1 46%` / `min-width: 260px` / `max-height: 640px` 独立滚动。任务按 Active / Archive 两组渲染，组头带计数；Archive 组默认折叠，由 `.trellis-split-group-toggle` 按钮切换（`archiveOpen` 内存态，同样不持久化）。
+- 右栏 `.trellis-split-detail`：`flex: 1 1 54%` / `min-width: 280px`。无选中任务时渲染空态（文案 `dashboardTrellisSplitEmpty`）；有选中时渲染 detail card（标题 + phase badge + meta + actions）。
+
+**3. 键盘导航**：面板可见且模式为 `split` 时，↑/↓ 在**DOM 实际可见行**间移动选中（折叠组无 DOM 行自然跳过——不得从内存任务数组推导导航序列）；`Enter` 触发选中行 dblclick 等价行为打开详情 overlay；`Esc` 清空选择；移动后 `scrollIntoView({ block: 'nearest' })` 保持可见。
+
+**4. 窄窗降级**：容器 ≤1100px 时右栏从并排变为覆盖左栏的 drawer（`absolute inset 0 0 auto 0`、`z-index: 3`，仅 `:has(.trellis-split-detail-card)` 时 `display: block`）。
+
+**5. 动画**：首次进入时分组头/行播 `group-in`（`translateY(-10px)`、0.3s ease-out），detail card 播 `detail-in`（`translateX(14px)`、0.22s ease-out）；`is-entering` 类只在首次构建时添加，后续重建不重播。`prefers-reduced-motion: reduce` 全部禁用。
+
+**6. 红线**：
+- 键盘导航序列必须从 DOM querySelectorAll 派生，不得从内存任务数组推导
+- 尺寸继续遵守 §4.6e 第 6 段 zoom-safe 红线（percent 链接父级 + px cap，不用 `vw`）
