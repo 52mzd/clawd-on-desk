@@ -497,16 +497,21 @@ Correct 聚合入 dashboard-trellis-panel.js UMD；阶段文案复用 sessionHud
   行内 tokenizer 单趟前向 + `MAX_INLINE_DEPTH=4` 硬帽（敌意输入
   O(n×depth)，无 O(n²) 退化）；行数帽 `MD_MAX_RENDER_LINES=5000`，
   超限丢弃尾部并返回 truncated；链接只渲染 label 文本（URL 丢弃）；
-  h2/h3 折叠交互在 renderer 侧 wire（toggle 类 + 隐藏同级），点击
-  不会误关 overlay（backdrop 判定是 `event.target === overlay`）
+  **h1–h4 全部可折叠**（v6.1 起从 h2/h3 扩展：PRD 顶层节如验收/Notes
+  也需折叠；每级都带 `.md-heading-collapsible` + `.md-heading-toggle`
+  旋转箭头），折叠交互在 renderer 侧 wire（toggle 类 + 隐藏同级直到
+  下一个同级或更高级标题），点击不会误关 overlay（backdrop 判定是
+  `event.target === overlay`）
 - **归档回退**：active 目录消失时复用 `findArchivedTaskDir` 精确名匹配
   （与轮询/庆祝同一语义）；跨月同名取 readdir 首个，与既有回退一致；
-  detail 与 doc 共享同一条 `resolveTaskDir`（含回退）
+  detail 与 doc 共享同一条 `resolveTaskDir`（含回退）；**嵌入式宿主
+  （v6.1）**：`openTrellisDetail(task, {embedded:true})` 在 split 右栏
+  渲染同一卡片，签名含 `embedded` 位区分两种宿主
 - **降级语义**：无 root/无目录/被拒 → `missing`（卡片提示可能已归档）；
   task.json 损坏 → `error`（不渲染半空数据）；doc 不可读/不在白名单 →
   `missing`；checklist 只解析 checkbox 列表，不渲染任意 markdown
 - **overlay 生命周期**：每秒 render() 调 `renderTrellisDetail`，但签名 =
-  `{lang,open,loading,request,result,tab,docsFingerprint}` 的 JSON 全量比较——
+  `{lang,open,loading,embedded,request,result,tab,docsFingerprint}` 的 JSON 全量比较——
   request（含 sessions 快照）在打开时冻结，所以周期重建既不关卡也不闪，
   折叠态/激活 tab 在 tick 下保留；docsFingerprint 只含缓存条目的
   (key,loading,status,length,truncated)——1MB 文档不进签名（碰撞面：
@@ -1072,7 +1077,7 @@ fade-out（`animateTrellisOverlayClose`：setTimeout 140ms 守卫，重开
 
 **3. 嵌入式详情卡（v6.1 核心变化）**：split 模式下 `openTrellisDetail(task, { embedded: true })` 把完整 detail card（含 prd/design/implement 等 doc tabs）渲染进右栏 host（`.trellis-split-detail`），不再弹 overlay。`trellisDetail.embedded` 状态位区分两种宿主；tree 模式仍走 overlay。`selectTrellisSplitTask` 是唯一入口：选中即重置详情态并重建视图体，由 `buildTrellisSplitDetailPane` 同步内联旧卡或触发新开。`closeTrellisDetail` 在 embedded 分支等价于清空选中行。
 
-**4. 层级树（v6.1）**：左栏不再是扁平列表——`groupTrellisTasks` 的 DFS 序按根切分为 subtree，根行按 phase 分桶（archive 强制 `done` 桶），子任务缩进嵌在父行下（`.is-child`，`--split-depth` 缩进，封顶 3 层）。有子任务的行带 `.trellis-split-caret` 折叠按钮（`stopPropagation`，不触发行选中），展开态为默认（`collapsedPaths` Set 记录折叠）。归档子任务同样保留层级。
+**4. 层级树（v6.1）**：左栏不再是扁平列表——`groupTrellisTasks` 的 DFS 序按根切分为 subtree，根行按 phase 分桶（archive 强制 `done` 桶），子任务缩进嵌在父行下（`.is-child`，`--split-depth` 缩进，封顶 3 层）。**每行都有 18px 前导 caret 槽**（`.trellis-split-caret-slot`；叶子行留空 spacer，保证 dot/标题列对齐），父行的槽内是 `.trellis-split-caret` 小按钮（15px、显式 `min-width:0` 覆盖全局 `button{min-width:82px}`、折叠时旋转 -90°；`stopPropagation` 不触发行选中），展开态为默认（`collapsedPaths` Set 记录折叠）。归档子任务同样保留层级。
 
 **5. 键盘导航**：面板可见且模式为 `split` 时，↑/↓ 在**DOM 实际可见行**间移动选中（折叠子树无 DOM 行自然跳过）；`Enter` 等价行 click（选中 + 嵌入详情）；`Esc` 清空选择；`scrollIntoView({ block: 'nearest' })` 保持可见。
 
