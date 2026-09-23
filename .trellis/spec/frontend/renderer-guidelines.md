@@ -44,7 +44,14 @@ function renderTrellisPanel() {
 ```
 
 规则：签名必须覆盖渲染输入的全部字段（loading/data/selected/truncated…）；漏一个就会
-"数据变了界面不动"。
+“数据变了界面不动”。
+
+**同一根因的变体（v6.1 连环 bug 实录）**：改的是“签名没覆盖的那个状态”时，界面同样不动。
+典型案例 `setTrellisViewMode()`：只写 `trellisView.mode = x` + `renderTrellisView()`，
+但 view/panel 两个签名都没包含 mode，重渲染被短路 →“点按钮没反应”。修复形态是
+统一走 `renderTrellisViewBody()`（先置空 view 签名再渲染）。规则：**任何 view-state
+变更（mode/selection/fold/open）后，要么该状态进签名，要么变更处显式置空签名**；
+新增强相关的状态时优先包一个 invalidate+render 入口函数，禁止裸赋值后直接调 render。
 
 ## Overlay 状态对象模式
 
@@ -73,6 +80,24 @@ width: min(880px, 92vw);
 ```
 
 既有把关：`test/settings-renderer-browser-env.test.js` 扫 viewport 单位，全量必跑。
+
+**常驻面板高度同禁区（v6.1 踩过三步）**：面板类布局（非弹层）禁用固定 `max-height`
+（像素或 vh 都不行——`640px` 和 `min(72vh,720px)` 都被用户当场打回）。正确形态是
+flex 链路填满：`main` 改 `flex column`，section `flex:1 1 auto; min-height:0`，
+两栏各自 `min-height:0` 内部滚动。判据：把窗口拉高，面板必须跟着长。
+
+## 全局样式陷阱（元素选择器继承）
+
+新建小尺寸控件前先查它继承的元素级样式，本仓库已知两个：
+
+1. **`button { min-width: 82px; … }`**（dashboard.html ~2595）：任何图标/caret/小按钮
+   不显式 `min-width: 0` 会被撑成 82px 宽（v6.1 caret 踩过：负 margin 修正位置后
+   仍被 min-width 撑爆，视觉“箭头不明显/错位”）。同批还要覆盖 `height/min-height`。
+2. **`.trellis-view-section { flex-direction: column }`**：挂在它下面的新 section
+   要并排布局必须显式 `flex-direction: row` 覆盖（v6.1 左右栏变上下）。
+
+调试方法：UI 错位时先用 CDP `getBoundingClientRect()` + `getComputedStyle()` 量化
+实际尺寸/坐标，再定位到规则；盲改 margin/padding 两轮都失败、量化后一次命中。
 
 ## 事件与定时器
 

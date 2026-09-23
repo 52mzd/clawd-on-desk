@@ -13,6 +13,11 @@ When you copy-paste or rewrite existing logic:
 - Behavior diverges over time
 - Codebase becomes harder to understand
 
+**v6.1 实例**：split 右栏起初新写了一个摘要卡（标题+chips+进度条），后续用户要求
+“详情直接在右边显示”时，正确解法不是扩写摘要卡，而是删掉它、把 overlay 的
+`buildTrellisDetailCard` 加 `embedded` 模式嵌入右栏——单一组件两种宿主。今天详情卡
+的 doc tabs / 能量格进度 / 折叠行为只需改一处，overlay 与嵌入同步演进。
+
 ---
 
 ## Before Writing New Code
