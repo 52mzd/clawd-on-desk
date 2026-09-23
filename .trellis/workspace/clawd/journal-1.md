@@ -326,3 +326,25 @@ v4 三件落地后的质量收口：① trellis-check 全维核查通过（debug
 ### Status
 
 [OK] **Completed**
+
+
+## Session 13: 创意池 v5 两件全落地：弹窗近全屏可复制+弹入出动画 / phase 列看板华丽动画
+
+**Date**: 2026-09-23
+**Task**: 创意池 v5 两件全落地：弹窗近全屏可复制+弹入出动画 / phase 列看板华丽动画
+**Branch**: `main`
+
+### Summary
+
+v5 可读性重构：① v5-a 8ff9c9aa 弹窗三卡（detail/spec/network）从 420×520 升近全屏 calc(100%-48px)×calc(100%-64px) cap 880×760（percent-only 无 vw/vh——zoom-safe，settings-renderer-browser-env 355 全绿把关）；正文 user-select:text 可复制（chrome 保持 none）；弹入 pop-in 回弹 cubic-bezier + 遮罩 fade，对称 close fade-out（animateTrellisOverlayClose 定时器守卫：必然完成/重开取消/reduced-motion 跳过/无 timer 沙箱直落）；<980px 回落紧凑卡。② v5-b 39f656d2 phase 列看板：树/看板切换（localStorage 缓存），5 列 plan/execute/check/finish/archived，分桶纯函数进 panel 模块（未知 phase→execute、归档恒 done，2 新单测）；华丽动画——列 60ms stagger 入场、hover 升起+蓝辉光、计数徽标 pop、FLIP 换列飞移（rect snapshot→diff→card.animate 260ms）；三重降级 reduced-motion/<1100px/>30卡。全量 npm test 两批均与基线 diff=0；dev app 已重启（ownerPid 28198）待真机验收。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8ff9c9aa` | (see git log) |
+| `39f656d2` | (see git log) |
+
+### Status
+
+[OK] **Completed**
