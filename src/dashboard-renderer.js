@@ -2188,6 +2188,44 @@ function openTrellisNetwork(request) {
   void fetchTrellisNetwork();
 }
 
+// v5-a symmetric close: play the CSS fade/scale-out, then swap in the
+// cleared render. The finish callback always runs (timer, not
+// animationend), reduced-motion skips straight to it, and reopening
+// cancels a pending close — a missed/late timer can never strand or
+// double-run the overlay. Renderer test sandboxes may run without timer
+// globals; a missing setTimeout degrades to the immediate close.
+const trellisOverlayCloseTimers = new WeakMap();
+const trellisCloseTimer = typeof setTimeout === "function" ? setTimeout : null;
+
+function cancelTrellisOverlayClose(overlayEl) {
+  if (!overlayEl) return;
+  const pending = trellisOverlayCloseTimers.get(overlayEl);
+  if (pending) {
+    clearTimeout(pending);
+    trellisOverlayCloseTimers.delete(overlayEl);
+  }
+  overlayEl.classList.remove("is-closing");
+}
+
+function animateTrellisOverlayClose(overlayEl, finish) {
+  const reduced = typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!overlayEl || overlayEl.hidden || reduced || !trellisCloseTimer) {
+    finish();
+    return;
+  }
+  cancelTrellisOverlayClose(overlayEl);
+  overlayEl.classList.add("is-closing");
+  trellisOverlayCloseTimers.set(
+    overlayEl,
+    trellisCloseTimer(() => {
+      trellisOverlayCloseTimers.delete(overlayEl);
+      overlayEl.classList.remove("is-closing");
+      finish();
+    }, 140)
+  );
+}
+
 function closeTrellisNetwork() {
   if (!trellisNetwork.open) return;
   trellisNetwork.open = false;
@@ -2195,7 +2233,7 @@ function closeTrellisNetwork() {
   trellisNetwork.request = null;
   trellisNetwork.result = null;
   lastTrellisNetworkSignature = null;
-  renderTrellisNetwork();
+  animateTrellisOverlayClose(trellisNetworkOverlayEl, renderTrellisNetwork);
 }
 
 async function fetchTrellisNetwork() {
@@ -2331,6 +2369,7 @@ function renderTrellisNetwork() {
   ]);
   if (signature === lastTrellisNetworkSignature) return;
   lastTrellisNetworkSignature = signature;
+  cancelTrellisOverlayClose(trellisNetworkOverlayEl);
   trellisNetworkOverlayEl.replaceChildren(buildTrellisNetworkCard());
   trellisNetworkOverlayEl.hidden = false;
 }
@@ -2390,7 +2429,7 @@ function closeTrellisSpec() {
   // Ephemeral by contract: closing drops every cached document content.
   trellisSpecDocs.clear();
   lastTrellisSpecSignature = null;
-  renderTrellisSpec();
+  animateTrellisOverlayClose(trellisSpecOverlayEl, renderTrellisSpec);
 }
 
 function switchTrellisSpecRoot(root) {
@@ -2565,6 +2604,7 @@ function renderTrellisSpec() {
   ]);
   if (signature === lastTrellisSpecSignature) return;
   lastTrellisSpecSignature = signature;
+  cancelTrellisOverlayClose(trellisSpecOverlayEl);
   trellisSpecOverlayEl.replaceChildren(buildTrellisSpecCard());
   trellisSpecOverlayEl.hidden = false;
 }
@@ -2661,7 +2701,7 @@ function closeTrellisDetail() {
   // content along with the card itself.
   trellisDetailDocs.clear();
   lastTrellisDetailSignature = null;
-  renderTrellisDetail();
+  animateTrellisOverlayClose(trellisDetailOverlayEl, renderTrellisDetail);
 }
 
 // Tab switch inside an open card. "overview" is always available; a doc
@@ -2975,6 +3015,7 @@ function renderTrellisDetail() {
     trellisDetailOverlayEl.replaceChildren();
     return;
   }
+  cancelTrellisOverlayClose(trellisDetailOverlayEl);
   trellisDetailOverlayEl.replaceChildren(buildTrellisDetailCard());
   trellisDetailOverlayEl.hidden = false;
   trellisDetailOverlayEl.setAttribute("aria-label", t("dashboardTrellisDetailTitle"));
