@@ -2128,6 +2128,23 @@ function buildTrellisSplitDetailPane(task) {
 }
 
 
+// ↻ archive refresh button (v7 R3): migrates the retired archive section's
+// reload entry into the split list's DONE group head. stopPropagation keeps
+// the group-toggle handler out of the click.
+function buildTrellisSplitRefreshBtn() {
+  const refresh = document.createElement("button");
+  refresh.type = "button";
+  refresh.className = "trellis-split-refresh";
+  refresh.textContent = "↻";
+  refresh.title = t("dashboardTrellisArchivedRefresh");
+  refresh.setAttribute("aria-label", t("dashboardTrellisArchivedRefresh"));
+  refresh.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    void refreshTrellisViewArchive();
+  });
+  return refresh;
+}
+
 function buildTrellisSplitSection(activeTasks, archiveTasks) {
   const section = document.createElement("div");
   section.className = "trellis-view-section trellis-split-section";
@@ -2217,6 +2234,9 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
       collapsed.appendChild(createText("span", "trellis-split-group-caret", "▾"));
       collapsed.appendChild(createText("span", "trellis-split-group-title", t(group.labelKey)));
       collapsed.appendChild(createText("span", "trellis-split-group-count", String(subtrees.length)));
+      // ↻ refresh lives next to the collapsed head so archived data is
+      // always reloadable without expanding first (v7 R3).
+      collapsed.appendChild(buildTrellisSplitRefreshBtn());
       collapsed.addEventListener("click", toggleTrellisSplitArchive);
       listPane.appendChild(collapsed);
       groupIndex += 1;
@@ -2236,7 +2256,70 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
         // Group count shows ROOT tasks — children live behind carets.
         head.appendChild(createText("span", "trellis-split-group-count", String(subtrees.length)));
       }
+      if (group.phase === "done") {
+        head.appendChild(buildTrellisSplitRefreshBtn());
+        // Error / loading hints next to the refresh (v7 R3, migrated from
+        // the retired archive section).
+        const archiveState = trellisView.archive;
+        if (archiveState.error) {
+          head.appendChild(createText("span", "trellis-split-archive-hint is-error", t("dashboardTrellisArchivedError")));
+        } else if (archiveState.loading) {
+          head.appendChild(createText("span", "trellis-split-archive-hint", t("dashboardTrellisArchivedLoading")));
+        }
+      }
       listPane.appendChild(head);
+    }
+    if (group.phase === "done" && trellisSplit.archiveOpen) {
+      // Month sub-groups inside the archive (v7 R3): roots bucket by
+      // completed-at month (trellisArchiveMonthOf), each month folds
+      // independently via archive state openMonths (null = all open).
+      const byMonth = new Map();
+      for (const subtree of subtrees) {
+        const month = trellisArchiveMonthOf(subtree[0].task.taskPath);
+        if (!byMonth.has(month)) byMonth.set(month, []);
+        byMonth.get(month).push(subtree);
+      }
+      const months = [...byMonth.keys()].sort().reverse();
+      for (const month of months) {
+        const monthOpen = trellisView.archive.openMonths === null
+          || trellisView.archive.openMonths.has(month);
+        const monthHead = document.createElement("div");
+        monthHead.className = "trellis-split-month-head" + (monthOpen ? "" : " is-collapsed");
+        monthHead.appendChild(createText("span", "trellis-split-caret", monthOpen ? "▾" : "▸"));
+        monthHead.appendChild(createText(
+          "span",
+          "trellis-split-month-label",
+          `${month || t("dashboardTrellisArchivedUnknownMonth")} · ${byMonth.get(month).length}`
+        ));
+        monthHead.addEventListener("click", () => {
+          const state = trellisView.archive;
+          if (state.openMonths === null) state.openMonths = new Set(months);
+          if (state.openMonths.has(month)) {
+            state.openMonths.delete(month);
+          } else {
+            state.openMonths.add(month);
+          }
+          lastTrellisPanelSignature = null;
+          renderTrellisViewBody();
+        });
+        listPane.appendChild(monthHead);
+        if (monthOpen) {
+          for (const subtree of byMonth.get(month)) {
+            const rootMeta = subtree[0];
+            trellisSplit.tasksByPath.set(rootMeta.task.taskPath, rootMeta.task);
+            if (rootMeta.task.taskPath === trellisSplit.selectedTaskPath) selectedTask = rootMeta.task;
+            listPane.appendChild(buildTrellisSplitRow(rootMeta.task, rootMeta));
+            renderSubtree(subtree, 1, rootMeta.depth, !trellisSplit.collapsedPaths.has(rootMeta.task.taskPath));
+          }
+        } else {
+          // keep collapsed months' tasks selectable via keyboard nav map
+          for (const subtree of byMonth.get(month)) {
+            trellisSplit.tasksByPath.set(subtree[0].task.taskPath, subtree[0].task);
+          }
+        }
+      }
+      groupIndex += 1;
+      continue;
     }
     for (const subtree of subtrees) {
       const rootMeta = subtree[0];

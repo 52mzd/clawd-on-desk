@@ -1235,6 +1235,74 @@ h1 {
   transform: rotate(-90deg);
 }
 
+/* Archive month sub-groups + refresh (v7 R3) */
+.trellis-split-refresh {
+  flex: 0 0 auto;
+  width: 16px;
+  min-width: 0;
+  height: 16px;
+  padding: 0;
+  margin-left: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.trellis-split-refresh:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 45%, transparent);
+}
+
+.trellis-split-archive-hint {
+  font-size: 9px;
+  color: var(--muted);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.trellis-split-archive-hint.is-error {
+  color: var(--danger, #e5484d);
+}
+
+.trellis-split-month-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px 3px 14px;
+  font-size: 10px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.trellis-split-month-head:hover {
+  color: var(--text);
+}
+
+.trellis-split-month-head .trellis-split-caret {
+  border: none;
+  width: auto;
+  height: auto;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.trellis-split-month-head.is-collapsed .trellis-split-caret {
+  transform: none; /* glyph already flips ▾/▸ in JS */
+}
+
+.trellis-split-month-label {
+  font-variant-numeric: tabular-nums;
+}
+
 .trellis-split-foot {
   margin-top: auto;
   padding: 8px 6px 2px;
