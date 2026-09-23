@@ -1840,6 +1840,15 @@ function trellisRowProjectLabel(task, labels) {
 // state — clicking only re-filters what is already in memory.
 // v5-b: switch the Trellis view display mode (tree ⇄ board). Cached in
 // localStorage for reloads of the same window; never leaves the renderer.
+// View-level rebuild entry: invalidates the *view* signature (not the panel
+// one) so renderTrellisView() re-renders body + toggles even when panel data
+// is unchanged. All view-state mutations (mode, split selection, archive
+// fold) must go through this, never through renderTrellisView() directly.
+function renderTrellisViewBody() {
+  lastTrellisViewSignature = null;
+  renderTrellisView();
+}
+
 function setTrellisViewMode(mode) {
   const next = mode === "split" ? "split" : "tree";
   if (next === trellisView.mode) return;
