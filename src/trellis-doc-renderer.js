@@ -242,7 +242,7 @@
     const el = builder.createElement("div");
     el.className = `md-task md-task-l${level}`;
     const box = builder.createElement("span");
-    box.className = "md-task-box";
+    box.className = checked ? "md-task-box is-checked" : "md-task-box";
     box.textContent = checked ? "☑" : "☐";
     el.appendChild(box);
     const textEl = builder.createElement("span");

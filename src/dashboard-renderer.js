@@ -1588,6 +1588,9 @@ function openTrellisDetailFromNode(node) {
 // tasks go through the cwd-carrying shape, active ones pass the row task.
 function openTrellisDetailFromTask(task) {
   if (!task) return;
+  // v6.1: in split view the detail card renders INSIDE the right pane
+  // (embedded); tree view keeps the overlay popup.
+  const opts = trellisView.mode === "split" ? { embedded: true } : undefined;
   if (task.completedAt) {
     void openTrellisDetail({
       taskPath: task.taskPath,
@@ -1595,10 +1598,10 @@ function openTrellisDetailFromTask(task) {
       cwd: task.cwd || "",
       sessions: [],
       progress: null,
-    });
+    }, opts);
     return;
   }
-  void openTrellisDetail(task);
+  void openTrellisDetail(task, opts);
 }
 
 function createTrellisTreeNodeRow(node, projectLabel) {
@@ -1949,12 +1952,29 @@ const trellisSplit = {
   selectedTaskPath: null,
   archiveOpen: false,
   entryPending: false,
+  // Expanded-by-default hierarchy: paths in this set are COLLAPSED.
+  collapsedPaths: new Set(),
+  // taskPath -> panel task object (flat, both groups); lets the detail
+  // card reopen from selection alone without re-deriving from the tree.
+  tasksByPath: new Map(),
 };
 
 function selectTrellisSplitTask(taskPath) {
   const next = typeof taskPath === "string" ? taskPath : null;
-  if (next === trellisSplit.selectedTaskPath) return;
+  // Idempotent re-click: only early-return when the detail card is already
+  // showing for this selection (or both are empty). A same-path click with
+  // a closed card (fetch failed / closed) must retry the open.
+  if (
+    next === trellisSplit.selectedTaskPath &&
+    (next === null ? !(trellisDetail.open || trellisDetail.embedded) : trellisDetail.open)
+  ) {
+    return;
+  }
   trellisSplit.selectedTaskPath = next;
+  // The detail card lifecycle follows the selection: rebuild resets any
+  // stale embedded card, then buildTrellisSplitDetailPane() re-opens the
+  // FULL detail card inside the pane for the new selection (no overlay).
+  resetTrellisDetailState();
   lastTrellisPanelSignature = null;
   renderTrellisViewBody();
 }
@@ -1987,29 +2007,79 @@ function moveTrellisSplitSelection(delta) {
   }
 }
 
-function buildTrellisSplitRow(task) {
+function buildTrellisSplitRow(task, meta) {
   const row = document.createElement("div");
   row.className = "trellis-split-row";
   row.dataset.taskPath = task.taskPath || "";
   if (task.taskPath === trellisSplit.selectedTaskPath) {
     row.classList.add("is-selected");
   }
-  const title = document.createElement("span");
-  title.className = "trellis-split-row-title";
-  title.appendChild(document.createTextNode(task.title || task.taskPath || "?"));
-  row.appendChild(title);
+  if (task.phase === "done") row.classList.add("is-archived");
+  // Hierarchy cues (v6.1): indent children under their parent; expose
+  // hasChildren so a parent row reads as a group head at a glance.
+  const depth = meta && Number.isFinite(meta.depth) ? meta.depth : 0;
+  if (depth > 0) {
+    row.classList.add("is-child");
+    row.style.setProperty("--split-depth", String(Math.min(depth, 3)));
+  }
+  if (meta && meta.hasChildren) {
+    row.classList.add("is-parent");
+    if (trellisSplit.collapsedPaths.has(task.taskPath)) {
+      row.classList.add("is-collapsed");
+    }
+    const caret = document.createElement("button");
+    caret.type = "button";
+    caret.className = "trellis-split-caret";
+    caret.setAttribute("aria-label", t("dashboardTrellisSplitToggle"));
+    caret.appendChild(document.createTextNode("▾"));
+    caret.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      if (trellisSplit.collapsedPaths.has(task.taskPath)) {
+        trellisSplit.collapsedPaths.delete(task.taskPath);
+      } else {
+        trellisSplit.collapsedPaths.add(task.taskPath);
+      }
+      lastTrellisPanelSignature = null;
+      renderTrellisViewBody();
+    });
+    row.appendChild(caret);
+  }
+
+  // Three-segment row (noty-ui structure): state dot / main / side.
+  const dot = document.createElement("span");
+  dot.className = `trellis-split-row-dot is-${task.phase || "plan"}`;
+  row.appendChild(dot);
+
+  const main = document.createElement("div");
+  main.className = "trellis-split-row-main";
+  main.appendChild(createText("span", "trellis-split-row-title", task.title || task.taskPath || "?"));
+  const subBits = [];
+  if (task.sessions && task.sessions.length > 0) {
+    subBits.push(t("dashboardTrellisBoundSessions").replace("{n}", String(task.sessions.length)));
+  }
+  const childCount = meta && meta.hasChildren && Number.isFinite(meta.childCount) ? meta.childCount : null;
+  if (meta && meta.hasChildren) {
+    subBits.push(t("dashboardTrellisSplitChildren").replace("{n}", String(childCount != null ? childCount : "")));
+  }
+  if (subBits.length > 0) {
+    main.appendChild(createText("span", "trellis-split-row-sub", subBits.join(" · ")));
+  }
+  row.appendChild(main);
+
   if (task.progress) {
     row.appendChild(createText(
       "span",
-      "trellis-task-progress",
+      "trellis-split-row-side",
       `${task.progress.done}/${task.progress.total}`
     ));
   }
+
   row.addEventListener("click", () => {
     selectTrellisSplitTask(task.taskPath);
   });
   row.addEventListener("dblclick", () => {
-    void openTrellisDetailFromTask(task);
+    // v6.1: full detail renders IN the right pane — no overlay popup.
+    selectTrellisSplitTask(task.taskPath);
   });
   return row;
 }
@@ -2018,65 +2088,35 @@ function buildTrellisSplitDetailPane(task) {
   const pane = document.createElement("div");
   pane.className = "trellis-split-detail";
   if (!task) {
-    pane.appendChild(createText("div", "trellis-split-detail-empty", t("dashboardTrellisSplitEmpty")));
+    // Empty state: oversized state-dot + guide text (noty-ui flavor).
+    const empty = document.createElement("div");
+    empty.className = "trellis-split-detail-empty";
+    const orb = document.createElement("span");
+    orb.className = "trellis-split-empty-orb";
+    empty.appendChild(orb);
+    empty.appendChild(createText("p", "trellis-split-empty-text", t("dashboardTrellisSplitEmpty")));
+    pane.appendChild(empty);
     return pane;
   }
-  const card = document.createElement("div");
-  card.className = "trellis-split-detail-card";
-
-  const head = document.createElement("div");
-  head.className = "trellis-split-detail-head";
-  head.appendChild(createText("h4", "trellis-split-detail-title", task.title || task.taskPath || "?"));
-  const badge = TRELLIS_PHASE_BADGE[task.phase];
-  if (badge) {
-    const chip = createText("span", `trellis-phase-badge ${badge.className}`, t(badge.labelKey));
-    head.appendChild(chip);
+  // The pane is a plain HOST: the full detail card (same component the
+  // overlay uses) is injected here via renderTrellisDetail(). Two cases:
+  //  1. selection matches an open embedded card (rebuild during fetch):
+  //     synchronously inline the card so the rebuild doesn't blank it.
+  //  2. otherwise (fresh selection just set it): openTrellisDetail will
+  //     render into this host on its first renderTrellisDetail() pass.
+  if (
+    trellisDetail.open &&
+    trellisDetail.embedded &&
+    trellisDetail.request &&
+    trellisDetail.request.taskPath === task.taskPath
+  ) {
+    pane.appendChild(buildTrellisDetailCard());
+  } else {
+    void openTrellisDetail(task, { embedded: true });
   }
-  card.appendChild(head);
-
-  const meta = document.createElement("div");
-  meta.className = "trellis-split-detail-meta";
-  if (task.progress) {
-    const ticks = buildTrellisProgressTicks(task.progress);
-    if (ticks) meta.appendChild(ticks);
-    meta.appendChild(createText(
-      "span",
-      "trellis-task-progress",
-      `${task.progress.done}/${task.progress.total}`
-    ));
-  }
-  if (task.completedAt) {
-    meta.appendChild(createText("span", "trellis-board-card-date", task.completedAt));
-  }
-  if (task.parent) {
-    meta.appendChild(createText("span", "trellis-board-card-parent", "↳ " + task.parent));
-  }
-  card.appendChild(meta);
-
-  const actions = document.createElement("div");
-  actions.className = "trellis-split-detail-actions";
-  const detailBtn = document.createElement("button");
-  detailBtn.type = "button";
-  detailBtn.className = "trellis-view-mode-toggle";
-  detailBtn.appendChild(document.createTextNode(t("dashboardTrellisDetailOpen")));
-  detailBtn.addEventListener("click", () => {
-    void openTrellisDetailFromTask(task);
-  });
-  actions.appendChild(detailBtn);
-  if (task.parent || task.hasChildren) {
-    const linksBtn = document.createElement("button");
-    linksBtn.type = "button";
-    linksBtn.className = "trellis-view-mode-toggle";
-    linksBtn.appendChild(document.createTextNode(t("dashboardTrellisLinksOpen")));
-    linksBtn.addEventListener("click", () => {
-      openTrellisNetwork({ taskPath: task.taskPath, title: task.title || "", cwd: task.cwd || "" });
-    });
-    actions.appendChild(linksBtn);
-  }
-  card.appendChild(actions);
-  pane.appendChild(card);
   return pane;
 }
+
 
 function buildTrellisSplitSection(activeTasks, archiveTasks) {
   const section = document.createElement("div");
@@ -2086,8 +2126,33 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
     trellisSplit.entryPending = false;
   }
 
-  const byPhase = bucketByBoardPhase(activeTasks, archiveTasks);
   let selectedTask = null;
+  // v6.1: hierarchy info for the master list — depth / hasChildren come
+  // from the same pure grouping fn the tree view uses. Only ACTIVE tasks
+  // nest (archived children render flat, matching archive design).
+  // v6.1: real hierarchy — subtasks nest under their parent with a
+  // click-to-expand caret. Roots are bucketed by phase; each root keeps
+  // its whole subtree (a contiguous DFS slice) so expanding reveals all
+  // descendants in order. Archive rows keep hierarchy too.
+  const rootsByPhase = (rows, forcedPhase) => {
+    const map = new Map();
+    let i = 0;
+    while (i < rows.length) {
+      const rootDepth = rows[i].depth;
+      let end = i + 1;
+      while (end < rows.length && rows[end].depth > rootDepth) end += 1;
+      // Archive rows ALWAYS bucket to "done" regardless of their phase
+      // field (same semantics as bucketByBoardPhase: archiving is a status,
+      // not a phase transition).
+      const phase = forcedPhase || rows[i].task.phase || "plan";
+      if (!map.has(phase)) map.set(phase, []);
+      map.get(phase).push(rows.slice(i, end));
+      i = end;
+    }
+    return map;
+  };
+  const activeRoots = rootsByPhase(groupTrellisTasks(activeTasks));
+  const archiveRoots = rootsByPhase(groupTrellisTasks(archiveTasks), "done");
 
   const listPane = document.createElement("div");
   listPane.className = "trellis-split-list";
@@ -2099,45 +2164,86 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
     { phase: "done", labelKey: "dashboardTrellisPhaseArchived" },
   ];
   let groupIndex = 0;
+  let activeCount = 0;
+  let archiveCount = 0;
+  trellisSplit.tasksByPath.clear();
+
+  // Render rows[startIdx..] while depth > rootDepth; returns next index.
+  // Descendants render only when every ancestor above them is expanded.
+  const renderSubtree = (subtree, startIdx, rootDepth, ancestorsExpanded) => {
+    let i = startIdx;
+    while (i < subtree.length && subtree[i].depth > rootDepth) {
+      const rowMeta = subtree[i];
+      if (ancestorsExpanded) {
+        trellisSplit.tasksByPath.set(rowMeta.task.taskPath, rowMeta.task);
+        if (rowMeta.task.taskPath === trellisSplit.selectedTaskPath) selectedTask = rowMeta.task;
+        listPane.appendChild(buildTrellisSplitRow(rowMeta.task, rowMeta));
+      }
+      i = renderSubtree(
+        subtree,
+        i + 1,
+        subtree[i].depth,
+        ancestorsExpanded && !trellisSplit.collapsedPaths.has(rowMeta.task.taskPath)
+      );
+    }
+    return i;
+  };
+
   for (const group of groups) {
-    const tasks = byPhase.get(group.phase) || [];
+    const subtrees = (group.phase === "done" ? archiveRoots : activeRoots).get(group.phase) || [];
+    if (group.phase === "done") {
+      for (const subtree of subtrees) archiveCount += subtree.length;
+    } else {
+      activeCount += subtrees.length;
+    }
     // finish (completed-but-unarchived) is practically always empty in
     // this repo's flow — a permanently empty placeholder reads as noise.
-    if (group.phase === "finish" && tasks.length === 0) continue;
-    if (group.phase === "done" && !trellisSplit.archiveOpen && tasks.length > 0) {
+    if (group.phase === "finish" && subtrees.length === 0) continue;
+    if (group.phase === "done" && !trellisSplit.archiveOpen && subtrees.length > 0) {
       const collapsed = document.createElement("button");
       collapsed.type = "button";
-      collapsed.className = "trellis-split-group-head trellis-split-group-toggle";
+      collapsed.className = "trellis-split-group-head trellis-split-group-toggle is-collapsed";
       collapsed.style.setProperty("--split-group-index", String(groupIndex));
-      collapsed.appendChild(createText("span", "trellis-split-group-title", `▸ ${t(group.labelKey)}`));
-      collapsed.appendChild(createText("span", "trellis-board-column-count", String(tasks.length)));
+      collapsed.appendChild(createText("span", "trellis-split-group-caret", "▾"));
+      collapsed.appendChild(createText("span", "trellis-split-group-title", t(group.labelKey)));
+      collapsed.appendChild(createText("span", "trellis-split-group-count", String(subtrees.length)));
       collapsed.addEventListener("click", toggleTrellisSplitArchive);
       listPane.appendChild(collapsed);
       groupIndex += 1;
       continue;
     }
-    if (tasks.length > 0 || group.phase !== "done") {
+    if (subtrees.length > 0 || group.phase !== "done") {
       const head = document.createElement("div");
       head.className = "trellis-split-group-head";
       head.style.setProperty("--split-group-index", String(groupIndex));
       if (group.phase === "done" && trellisSplit.archiveOpen) {
         head.classList.add("trellis-split-group-toggle");
         head.addEventListener("click", toggleTrellisSplitArchive);
-        head.appendChild(createText("span", "trellis-split-group-title", `▾ ${t(group.labelKey)}`));
-      } else {
-        head.appendChild(createText("span", "trellis-split-group-title", t(group.labelKey)));
+        head.appendChild(createText("span", "trellis-split-group-caret", "▾"));
       }
-      if (group.phase === "done" && trellisSplit.archiveOpen) {
-        head.appendChild(createText("span", "trellis-board-column-count", String(tasks.length)));
+      head.appendChild(createText("span", "trellis-split-group-title", t(group.labelKey)));
+      if (subtrees.length > 0) {
+        // Group count shows ROOT tasks — children live behind carets.
+        head.appendChild(createText("span", "trellis-split-group-count", String(subtrees.length)));
       }
       listPane.appendChild(head);
     }
-    for (const task of tasks) {
-      if (task.taskPath === trellisSplit.selectedTaskPath) selectedTask = task;
-      listPane.appendChild(buildTrellisSplitRow(task));
+    for (const subtree of subtrees) {
+      const rootMeta = subtree[0];
+      trellisSplit.tasksByPath.set(rootMeta.task.taskPath, rootMeta.task);
+      if (rootMeta.task.taskPath === trellisSplit.selectedTaskPath) selectedTask = rootMeta.task;
+      listPane.appendChild(buildTrellisSplitRow(rootMeta.task, rootMeta));
+      renderSubtree(subtree, 1, rootMeta.depth, !trellisSplit.collapsedPaths.has(rootMeta.task.taskPath));
     }
     groupIndex += 1;
   }
+  listPane.appendChild(createText(
+    "div",
+    "trellis-split-foot",
+    t("dashboardTrellisSplitStat")
+      .replace("{active}", String(activeCount))
+      .replace("{archive}", String(archiveCount))
+  ));
   section.appendChild(listPane);
 
   // Selection may point at a task that filters just removed — show the
@@ -2615,6 +2721,7 @@ const trellisDetail = {
   request: null, // { taskPath, title, cwd, sessions } — frozen at open time
   result: null,  // IPC reply { status, task? }
   activeTab: "overview", // "overview" | a doc name from result.task.docs
+  embedded: false, // true = rendered inside the split detail pane (no overlay)
 };
 // Per-document read state, one entry per (taskPath, doc) pair. Contents are
 // session-memory only: the cache dies with closeTrellisDetail() — never
@@ -2658,6 +2765,19 @@ function openTrellisNetwork(request) {
 const trellisOverlayCloseTimers = new WeakMap();
 const trellisCloseTimer = typeof setTimeout === "function" ? setTimeout : null;
 
+function resetTrellisDetailState() {
+  trellisDetail.open = false;
+  trellisDetail.loading = false;
+  trellisDetail.embedded = false;
+  trellisDetail.request = null;
+  trellisDetail.result = null;
+  trellisDetail.activeTab = "overview";
+  trellisDetailDocs.clear();
+  lastTrellisDetailSignature = null;
+}
+
+// Close handler for cards rendered INSIDE the split detail pane: no overlay
+// host is involved, so skip the close animation entirely.
 function cancelTrellisOverlayClose(overlayEl) {
   if (!overlayEl) return;
   const pending = trellisOverlayCloseTimers.get(overlayEl);
@@ -3098,6 +3218,7 @@ function computeTrellisDetailSignature() {
     lang: (i18nPayload && i18nPayload.lang) || "en",
     open: trellisDetail.open,
     loading: trellisDetail.loading,
+    embedded: trellisDetail.embedded,
     request: trellisDetail.request,
     result: trellisDetail.result,
     tab: trellisDetail.activeTab,
@@ -3105,7 +3226,7 @@ function computeTrellisDetailSignature() {
   });
 }
 
-async function openTrellisDetail(task) {
+async function openTrellisDetail(task, opts) {
   if (!trellisDetailOverlayEl || !task) return;
   const sessions = Array.isArray(task.sessions) ? task.sessions : [];
   const cwdSource = sessions.find((binding) => binding && binding.cwd);
@@ -3113,6 +3234,7 @@ async function openTrellisDetail(task) {
   trellisDetail.loading = true;
   trellisDetail.seq += 1;
   const seq = trellisDetail.seq;
+  trellisDetail.embedded = Boolean(opts && opts.embedded);
   trellisDetail.request = {
     taskPath: task.taskPath,
     title: task.title || "",
@@ -3153,7 +3275,19 @@ async function openTrellisDetail(task) {
 
 function closeTrellisDetail() {
   if (!trellisDetail.open) return;
-  trellisDetail.open = false;
+  if (trellisDetail.embedded) {
+    // Embedded card lives inside the split detail pane: closing equals
+    // clearing the master-list selection (pane rebuilds to the empty
+    // state and quietly drops the card). Fallback covers external close
+    // calls while no row is selected.
+    if (trellisSplit.selectedTaskPath !== null) {
+      selectTrellisSplitTask(null);
+    } else {
+      resetTrellisDetailState();
+      renderTrellisViewBody();
+    }
+    return;
+  }
   trellisDetail.loading = false;
   trellisDetail.request = null;
   trellisDetail.result = null;
@@ -3162,6 +3296,7 @@ function closeTrellisDetail() {
   // content along with the card itself.
   trellisDetailDocs.clear();
   lastTrellisDetailSignature = null;
+  trellisDetail.open = false;
   animateTrellisOverlayClose(trellisDetailOverlayEl, renderTrellisDetail);
 }
 
@@ -3253,12 +3388,20 @@ function appendTrellisDetailMeta(card, task) {
   if (meta.children.length) card.appendChild(meta);
 
   if (task.checklist && task.checklist.total > 0) {
+    // v6.1: segmented energy ticks (same component as the tree rows), one
+    // cell per checklist step — replaces the continuous percentage bar.
     const bar = document.createElement("div");
     bar.className = "trellis-detail-progress";
-    const fill = document.createElement("div");
-    fill.className = "trellis-detail-progress-fill";
-    fill.style.width = `${Math.round((task.checklist.done / task.checklist.total) * 100)}%`;
-    bar.appendChild(fill);
+    const ticks = buildTrellisProgressTicks(task.checklist);
+    if (ticks) {
+      ticks.classList.add("trellis-detail-progress-ticks");
+      bar.appendChild(ticks);
+    }
+    bar.appendChild(createText(
+      "span",
+      "trellis-detail-progress-num",
+      `${task.checklist.done}/${task.checklist.total}`
+    ));
     card.appendChild(bar);
   }
 }
@@ -3477,7 +3620,21 @@ function renderTrellisDetail() {
     return;
   }
   cancelTrellisOverlayClose(trellisDetailOverlayEl);
-  trellisDetailOverlayEl.replaceChildren(buildTrellisDetailCard());
+  const card = buildTrellisDetailCard();
+  if (trellisDetail.embedded) {
+    // Embedded mode: render into the split detail pane host instead of the
+    // overlay. The overlay host stays hidden; card chrome (close button)
+    // differs — see buildTrellisDetailCard embedded branch.
+    trellisDetailOverlayEl.hidden = true;
+    trellisDetailOverlayEl.replaceChildren();
+    const host = document.querySelector(".trellis-split-detail");
+    if (host) {
+      host.replaceChildren();
+      host.appendChild(card);
+    }
+    return;
+  }
+  trellisDetailOverlayEl.replaceChildren(card);
   trellisDetailOverlayEl.hidden = false;
   trellisDetailOverlayEl.setAttribute("aria-label", t("dashboardTrellisDetailTitle"));
 }

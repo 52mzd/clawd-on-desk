@@ -973,9 +973,12 @@ describe("dashboard trellis task detail overlay", () => {
     ));
     assert.ok(text.includes("step one"));
     assert.ok(text.includes("step two"));
-    const fills = byClass(app.overlay, "trellis-detail-progress-fill");
-    assert.equal(fills.length, 1);
-    assert.equal(fills[0].style.width, "50%");
+    const ticks = byClass(app.overlay, "trellis-detail-progress-ticks");
+    assert.equal(ticks.length, 1);
+    const cells = byClass(app.overlay, "trellis-progress-tick");
+    assert.equal(cells.length, 2);
+    assert.ok(cells[0].classList.contains("is-filled"));
+    assert.ok(!cells[1].classList.contains("is-filled"));
     const items = byClass(app.overlay, "trellis-detail-check-item");
     assert.equal(items.length, 2);
     assert.ok(items[0].classList.contains("trellis-detail-check-item-done"));

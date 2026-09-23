@@ -151,6 +151,7 @@
         task,
         depth,
         hasChildren: childrenOf.has(task.taskPath),
+        childCount: (childrenOf.get(task.taskPath) || []).length,
         childSummary: summary(task.taskPath),
       });
       for (const child of childrenOf.get(task.taskPath) || []) emit(child, depth + 1);

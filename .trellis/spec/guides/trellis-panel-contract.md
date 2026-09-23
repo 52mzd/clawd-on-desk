@@ -1060,20 +1060,30 @@ fade-out（`animateTrellisOverlayClose`：setTimeout 140ms 守卫，重开
 - Wrong：分桶逻辑内联在 renderer（不可测）/ 尺寸用 `92vw`（破坏 zoom 补偿）
 - Correct：分桶提为 panel 纯函数进单测；尺寸 percent 链接 overlay 父级 + px cap
 
-#### §4.6f v6 Split 视图：左右栏 master-detail（6741c776）
+#### §4.6f v6 Split 视图：左右栏 master-detail（6741c776；v6.1 重设计）
 
-**1. Scope / Trigger**：Trellis 面板的第二种任务视图模式 `split`，替代 v5 board 成为默认任务浏览形态。纯渲染层，零新 IPC、零数据形态变更。视图模式经 `localStorage['trellisViewMode']` 持久化，值域 `'tree' | 'split'`；旧存量值 `'board'` 读取时映射为 `split`（不写回），其余未知值回退 `tree`，不清理存量数据。选中行路径（`trellisSplit.selectedTaskPath`）是内存态，不持久化。
+**1. Scope / Trigger**：Trellis 面板的第二种任务视图模式 `split`，替代 v5 board 成为默认任务浏览形态。纯渲染层，零新 IPC、零数据形态变更。视图模式经 `localStorage['trellisViewMode']` 持久化，值域 `'tree' | 'split'`；旧存量值 `'board'` 读取时映射为 `split`（不写回），其余未知值回退 `tree`。选中行路径（`trellisSplit.selectedTaskPath`）、展开状态（`collapsedPaths`）、`archiveOpen` 均为内存态，不持久化。
 
-**2. 左右栏结构**：
-- 左栏 `.trellis-split-list`：`flex: 1 1 46%` / `min-width: 260px` / `max-height: 640px` 独立滚动。任务按 Active / Archive 两组渲染，组头带计数；Archive 组默认折叠，由 `.trellis-split-group-toggle` 按钮切换（`archiveOpen` 内存态，同样不持久化）。
-- 右栏 `.trellis-split-detail`：`flex: 1 1 54%` / `min-width: 280px`。无选中任务时渲染空态（文案 `dashboardTrellisSplitEmpty`）；有选中时渲染 detail card（标题 + phase badge + meta + actions）。
+**2. 左右栏结构（v6.1，单卡片框架）**：
+- 外框 `.trellis-split-section` 自身是圆角卡片（`border + border-radius + overflow:hidden`），左右两栏共享同一框体，高度天然对齐。
+- 高度自适应：`.content.trellis-view` 是 flex column，section `flex:1 1 auto; min-height:0` 填满窗口剩余高度；两栏各自 `min-height:0` 内部滚动。**禁止 `max-height` 固定像素 / vh 死高度**。
+- 左栏 `.trellis-split-list`：`flex: 0 0 clamp(260px, 28%, 320px)` 定宽，tint 底色 + 右侧 1px 分隔线；底部 `.trellis-split-foot` 统计条（`dashboardTrellisSplitStat`，Active 计根数、Archive 计根+后代总数）。
+- 右栏 `.trellis-split-detail`：整栏主浏览面。空态为大号呼吸 orb + `dashboardTrellisSplitEmpty`；选中时嵌入 **完整 detail card**（与 overlay 同一组件，见第 3 段）。
 
-**3. 键盘导航**：面板可见且模式为 `split` 时，↑/↓ 在**DOM 实际可见行**间移动选中（折叠组无 DOM 行自然跳过——不得从内存任务数组推导导航序列）；`Enter` 触发选中行 dblclick 等价行为打开详情 overlay；`Esc` 清空选择；移动后 `scrollIntoView({ block: 'nearest' })` 保持可见。
+**3. 嵌入式详情卡（v6.1 核心变化）**：split 模式下 `openTrellisDetail(task, { embedded: true })` 把完整 detail card（含 prd/design/implement 等 doc tabs）渲染进右栏 host（`.trellis-split-detail`），不再弹 overlay。`trellisDetail.embedded` 状态位区分两种宿主；tree 模式仍走 overlay。`selectTrellisSplitTask` 是唯一入口：选中即重置详情态并重建视图体，由 `buildTrellisSplitDetailPane` 同步内联旧卡或触发新开。`closeTrellisDetail` 在 embedded 分支等价于清空选中行。
 
-**4. 窄窗降级**：容器 ≤1100px 时右栏从并排变为覆盖左栏的 drawer（`absolute inset 0 0 auto 0`、`z-index: 3`，仅 `:has(.trellis-split-detail-card)` 时 `display: block`）。
+**4. 层级树（v6.1）**：左栏不再是扁平列表——`groupTrellisTasks` 的 DFS 序按根切分为 subtree，根行按 phase 分桶（archive 强制 `done` 桶），子任务缩进嵌在父行下（`.is-child`，`--split-depth` 缩进，封顶 3 层）。有子任务的行带 `.trellis-split-caret` 折叠按钮（`stopPropagation`，不触发行选中），展开态为默认（`collapsedPaths` Set 记录折叠）。归档子任务同样保留层级。
 
-**5. 动画**：首次进入时分组头/行播 `group-in`（`translateY(-10px)`、0.3s ease-out），detail card 播 `detail-in`（`translateX(14px)`、0.22s ease-out）；`is-entering` 类只在首次构建时添加，后续重建不重播。`prefers-reduced-motion: reduce` 全部禁用。
+**5. 键盘导航**：面板可见且模式为 `split` 时，↑/↓ 在**DOM 实际可见行**间移动选中（折叠子树无 DOM 行自然跳过）；`Enter` 等价行 click（选中 + 嵌入详情）；`Esc` 清空选择；`scrollIntoView({ block: 'nearest' })` 保持可见。
 
-**6. 红线**：
+**6. 进度显示**：详情卡的 checklist 进度用分段能量格 `buildTrellisProgressTicks`（与树视图同一组件，一格一步，`is-filled` 填充）+ 数字 `done/total`，不再用连续百分比条。
+
+**7. 窄窗降级**：容器 ≤1100px 时右栏从并排变为覆盖左栏的 drawer（`absolute inset 0 0 auto 0`、`z-index: 3`，仅 `:has(.trellis-detail-card)` 时 `display: block`）。
+
+**8. 动画**：首次进入时分组头/行播 `group-in`（0.3s ease-out），嵌入卡播 `detail-in`（0.22s）；`is-entering` 只在首次构建时添加；`in_progress` state-dot 呼吸动画；`prefers-reduced-motion: reduce` 全部禁用。
+
+**9. 红线**：
 - 键盘导航序列必须从 DOM querySelectorAll 派生，不得从内存任务数组推导
-- 尺寸继续遵守 §4.6e 第 6 段 zoom-safe 红线（percent 链接父级 + px cap，不用 `vw`）
+- 尺寸继续遵守 §4.6e zoom-safe 红线（percent 链接父级 + px cap，不用 `vw`）
+- 两栏不得各自设固定 `max-height`；高度由共享卡片框 + flex 撑满决定
+- 详情卡组件单一来源：split 嵌入与 overlay 复用同一 `buildTrellisDetailCard`，不得复制第二套

@@ -473,6 +473,15 @@ h1 {
   display: none;
 }
 
+/* v6.1: the trellis main itself stops scrolling — it becomes a flex column
+   so the split section can FILL the remaining window height (zoom-safe:
+   pure flex, no vh). Tree mode still scrolls via main's overflow-y: auto
+   (flex children keep min-height:auto, so nothing gets crushed). */
+.content.trellis-view {
+  display: flex;
+  flex-direction: column;
+}
+
 .trellis-view-section {
   margin: 0 0 18px;
   display: flex;
@@ -1004,107 +1013,257 @@ h1 {
 .trellis-split-section {
   display: flex;
   flex-direction: row; /* override .trellis-view-section column */
-  gap: 12px;
-  min-height: 320px;
+  gap: 0;
+  flex: 1 1 auto;
+  min-height: 0; /* fill remaining window height; panes scroll internally */
+  min-width: 0;
+  /* v6.1: one shared card frame — both panes live inside the same rounded,
+     bordered surface so heights stay aligned and scale with the window. */
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
 }
 
+/* ── Left master list (fixed width, tinted) ─────────────────────── */
+
 .trellis-split-list {
-  flex: 1 1 46%;
-  min-width: 260px;
+  flex: 0 0 clamp(260px, 28%, 320px);
+  min-width: 0;
+  min-height: 0;
+  align-self: stretch;
+  overflow-y: auto;
+  padding: 8px;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  overflow-y: auto;
-  max-height: 640px;
-  padding-right: 6px;
+  background: color-mix(in srgb, var(--surface, rgba(127, 127, 127, 0.06)) 55%, transparent);
+  border-right: 1px solid var(--border);
 }
 
 .trellis-split-group-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  padding: 8px 6px 4px;
-  border-bottom: 1px solid var(--border);
-}
-
-.trellis-split-group-title {
-  font-size: 11px;
-  font-weight: 700;
+  padding: 10px 6px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  opacity: 0.7;
-}
-
-.trellis-split-group-toggle {
-  background: transparent;
-  color: inherit;
-  border: none;
+  color: var(--muted);
   cursor: pointer;
+  user-select: none;
+  border: none;
+  background: transparent;
   width: 100%;
   text-align: left;
-  font: inherit;
 }
 
-.trellis-split-group-toggle:hover {
-  background: var(--hover, rgba(127, 127, 127, 0.08));
+.trellis-split-group-head:hover {
+  color: var(--text);
+}
+
+.trellis-split-group-caret {
+  display: inline-block;
+  font-size: 9px;
+  transition: transform 0.15s ease;
+  color: var(--muted);
+}
+
+.trellis-split-group-head.is-collapsed .trellis-split-group-caret {
+  transform: rotate(-90deg);
+}
+
+.trellis-split-group-count {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--hover, rgba(127, 127, 127, 0.15));
+  color: var(--muted);
 }
 
 .trellis-split-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 8px;
-  border-radius: 6px;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: 8px;
   cursor: pointer;
-  transition: background 0.14s ease, transform 0.14s ease;
+  border-left: 3px solid transparent;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease, opacity 0.15s ease;
 }
 
 .trellis-split-row:hover {
-  background: var(--hover, rgba(127, 127, 127, 0.1));
+  background: var(--hover, rgba(127, 127, 127, 0.12));
   transform: translateX(2px);
 }
 
 .trellis-split-row.is-selected {
-  background: var(--accent-soft, rgba(90, 160, 255, 0.18));
-  box-shadow: inset 2px 0 0 rgba(90, 160, 255, 0.75);
+  background: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 14%, transparent);
+  border-left-color: var(--accent, rgba(90, 160, 255, 0.85));
+}
+
+.trellis-split-row.is-archived {
+  opacity: 0.55;
+}
+
+.trellis-split-row-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted, rgba(127, 127, 127, 0.6));
+}
+
+.trellis-split-row-dot.is-plan {
+  background: var(--muted, rgba(127, 127, 127, 0.6));
+}
+
+.trellis-split-row-dot.is-execute {
+  background: var(--running, rgba(90, 160, 255, 0.9));
+}
+
+.trellis-split-row-dot.is-check {
+  background: var(--warn, rgba(230, 160, 60, 0.9));
+}
+
+.trellis-split-row-dot.is-done {
+  background: var(--done, rgba(90, 200, 130, 0.9));
+}
+
+.trellis-split-row-dot.is-execute {
+  animation: trellis-split-dot-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes trellis-split-dot-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--running, rgba(90, 160, 255, 0.9)) 45%, transparent); }
+  50% { box-shadow: 0 0 0 4px transparent; }
+}
+
+.trellis-split-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .trellis-split-row-title {
-  flex: 1;
-  font-size: 12.5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
+.trellis-split-row-sub {
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trellis-split-row-side {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  background: var(--hover, rgba(127, 127, 127, 0.12));
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+
+.trellis-split-row.is-child {
+  margin-left: calc(var(--split-depth, 1) * 14px);
+}
+
+.trellis-split-row.is-child .trellis-split-row-dot {
+  width: 6px;
+  height: 6px;
+}
+
+.trellis-split-row.is-child .trellis-split-row-title {
+  font-size: 11.5px;
+  font-weight: 400;
+}
+
+/* Caret on parent rows: click to expand/collapse the subtree. */
+.trellis-split-caret {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  margin-left: calc(var(--split-depth, 0) * -14px - 16px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: transform 0.15s ease;
+}
+
+.trellis-split-caret:hover {
+  background: var(--hover, rgba(127, 127, 127, 0.12));
+  color: var(--text);
+}
+
+.trellis-split-row.is-collapsed .trellis-split-caret {
+  transform: rotate(-90deg);
+}
+
+.trellis-split-foot {
+  margin-top: auto;
+  padding: 8px 6px 2px;
+  font-size: 10px;
+  color: var(--muted);
+  border-top: 1px dashed var(--border);
+}
+
+/* ── Right detail pane (full-column browse surface) ─────────────── */
+
 .trellis-split-detail {
-  flex: 1 1 54%;
-  min-width: 280px;
-  padding: 4px 0 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 14px 16px;
+  overflow-y: auto;
+  position: relative;
 }
 
 .trellis-split-detail-empty {
-  opacity: 0.55;
-  font-size: 12.5px;
-  padding: 24px 8px;
-  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 48px 12px;
+  color: var(--muted);
+}
+
+.trellis-split-empty-orb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 30%, var(--hover, rgba(127, 127, 127, 0.12)));
+  animation: trellis-split-dot-pulse 2.4s ease-in-out infinite;
+}
+
+.trellis-split-empty-text {
+  font-size: 12px;
 }
 
 .trellis-split-detail-card {
-  padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  animation: trellis-split-detail-in 0.22s ease-out both;
-}
-
-@keyframes trellis-split-detail-in {
-  from { opacity: 0; transform: translateX(14px); }
-  to { opacity: 1; transform: translateX(0); }
+  gap: 12px;
 }
 
 .trellis-split-detail-head {
@@ -1116,29 +1275,112 @@ h1 {
 
 .trellis-split-detail-title {
   margin: 0;
-  font-size: 14px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .trellis-split-detail-meta {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11.5px;
-  opacity: 0.8;
   flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.trellis-split-chip {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--hover, rgba(127, 127, 127, 0.12));
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.trellis-split-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.trellis-split-progress-ticks {
+  --tick-w: 12px;
+  --tick-h: 8px;
+  gap: 3px;
+}
+
+.trellis-split-progress-ticks .trellis-progress-tick {
+  width: var(--tick-w);
+  height: var(--tick-h);
+  border-radius: 3px;
+}
+
+.trellis-split-progress-num {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.trellis-split-detail-sessions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
 }
 
 .trellis-split-detail-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--border);
+  margin-top: 2px;
+  padding-top: 12px;
 }
 
-/* Mode-entry stagger: groups slide in top-down, one-shot (class present
-   only on the first build after a mode switch). */
-.trellis-split-section.is-entering .trellis-split-group-head,
-.trellis-split-section.is-entering .trellis-split-row {
+.trellis-split-action {
+  font-size: 11px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 55%, transparent);
+  background: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 12%, transparent);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.trellis-split-action:hover {
+  background: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 22%, transparent);
+}
+
+.trellis-split-action-ghost {
+  border-color: var(--border);
+  background: transparent;
+}
+
+.trellis-split-action-ghost:hover {
+  background: var(--hover, rgba(127, 127, 127, 0.12));
+}
+
+/* Embedded full detail card (v6.1): the pane hosts the same component
+   the overlay uses, but drops overlay chrome — no fixed size, no shadow. */
+.trellis-split-detail .trellis-detail-card {
+  width: 100%;
+  max-width: none;
+  height: auto;
+  max-height: none;
+  box-shadow: none;
+  animation: trellis-split-detail-in 0.22s ease-out both;
+}
+
+/* Entry animations (first build only, see is-entering) */
+
+.trellis-split-section.is-entering .trellis-split-group-head {
   animation: trellis-split-group-in 0.3s ease-out both;
-  animation-delay: calc(var(--split-group-index, 0) * 50ms);
+}
+
+.trellis-split-section.is-entering .trellis-split-row {
+  animation: trellis-split-row-in 0.3s ease-out both;
 }
 
 @keyframes trellis-split-group-in {
@@ -1146,41 +1388,64 @@ h1 {
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* Narrow windows: detail pane becomes an overlay drawer over the list. */
+@keyframes trellis-split-row-in {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.trellis-split-detail-card {
+  animation: trellis-split-detail-in 0.22s ease-out both;
+}
+
+@keyframes trellis-split-detail-in {
+  from { opacity: 0; transform: translateX(14px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trellis-split-section.is-entering .trellis-split-group-head,
+  .trellis-split-section.is-entering .trellis-split-row,
+  .trellis-split-detail-card,
+  .trellis-split-row-dot.is-execute,
+  .trellis-split-empty-orb,
+  .trellis-split-group-caret {
+    animation: none;
+  }
+
+  .trellis-split-row,
+  .trellis-split-action,
+  .trellis-split-group-caret {
+    transition: none;
+  }
+}
+
+/* Narrow window: right pane becomes a drawer overlaying the list */
+
 @media (max-width: 1100px) {
   .trellis-split-section {
     position: relative;
   }
+
+  .trellis-split-list {
+    flex-basis: 100%;
+  }
+
   .trellis-split-detail {
+    display: none;
     position: absolute;
     inset: 0 0 auto 0;
     max-height: 100%;
-    overflow-y: auto;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
     z-index: 3;
-    display: none;
+    background: var(--surface, #fff);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    border-radius: 8px;
   }
-  .trellis-split-detail:has(.trellis-split-detail-card) {
+
+  .trellis-split-detail:has(.trellis-split-detail-card),
+  .trellis-split-detail:has(.trellis-detail-card) {
     display: block;
   }
 }
-
-@media (prefers-reduced-motion: reduce) {
-  .trellis-split-row,
-  .trellis-split-detail-card,
-  .trellis-split-section.is-entering .trellis-split-group-head,
-  .trellis-split-section.is-entering .trellis-split-row {
-    animation: none;
-    transition: none;
-    transform: none;
-  }
-}
-
-/* ── v5-b phase board ─────────────────────────────────────────────── */
-
 .trellis-board {
   display: grid;
   grid-template-columns: repeat(5, minmax(180px, 1fr));
@@ -1472,14 +1737,32 @@ h1 {
 }
 
 .trellis-detail-progress {
-  height: 6px;
-  border-radius: 999px;
-  background: var(--surface-alt);
-  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
+.trellis-detail-progress-ticks {
+  --tick-w: 10px;
+  --tick-h: 12px;
+  gap: 3px;
+}
+
+.trellis-detail-progress-ticks .trellis-progress-tick {
+  width: var(--tick-w);
+  height: var(--tick-h);
+  border-radius: 3px;
+}
+
+.trellis-detail-progress-num {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+/* legacy continuous fill — kept for any remaining callers */
 .trellis-detail-progress-fill {
-  height: 100%;
+  height: 6px;
   border-radius: 999px;
   background: var(--done);
   transition: width 0.2s ease;
@@ -1602,10 +1885,47 @@ h1 {
   overflow-wrap: anywhere;
 }
 
-.md-h1 { font-size: 15px; }
-.md-h2 { font-size: 14px; }
-.md-h3 { font-size: 13px; }
-.md-h4 { font-size: 12px; }
+.md-h1 {
+  font-size: 15px;
+  margin: 14px 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 2px solid color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 40%, transparent);
+}
+.md-h2 {
+  font-size: 14px;
+  margin: 14px 0 6px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 10%, transparent);
+}
+.md-h3 { font-size: 13px; margin: 10px 0 4px; }
+.md-h4 { font-size: 12px; margin: 8px 0 4px; }
+
+.md-bold { font-weight: 700; }
+
+/* Reading aids: inline code / checked tasks get accent tints. */
+.md-code-inline {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 12%, var(--surface-alt));
+  border: 1px solid color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 25%, transparent);
+}
+
+.md-task-box.is-checked > .md-task-text {
+  color: var(--muted);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--done, rgba(90, 200, 130, 0.9)) 60%, transparent);
+}
+
+.md-task-box.is-checked::before {
+  color: var(--done, rgba(90, 200, 130, 0.9));
+}
+
+.md-task-box:not(.is-checked)::before {
+  color: var(--muted);
+}
 
 .md-heading-collapsible {
   cursor: pointer;
@@ -1648,7 +1968,6 @@ h1 {
   background: var(--surface-alt);
 }
 
-.md-bold { font-weight: 700; }
 .md-italic { font-style: italic; }
 
 .md-table {
