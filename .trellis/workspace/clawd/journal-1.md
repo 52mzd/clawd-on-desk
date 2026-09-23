@@ -354,3 +354,29 @@ v5 可读性重构：① v5-a 8ff9c9aa 弹窗三卡（detail/spec/network）从 
 - 6741c776 已实现 split master-detail（左栏分组列表 + 右栏 detail card、↑↓/Enter/Esc 键盘导航、≤1100px drawer 降级、board→split 迁移映射）。
 - spec 补录：trellis-panel-contract.md 新增 §4.6f（v6 split 视图六段契约），§4.6e 头部加部分废弃注记（board 布局/FLIP/横滚降级废弃，分桶纯函数/overlay 近全屏/zoom-safe 红线仍复用）。修正过程中清掉一处双冒号笔误。
 - test/dashboard-trellis-panel.test.js 69/69 通过。
+
+
+## Session 14: v6.1 split 视图华丽化落地
+
+**Date**: 2026-09-23
+**Task**: v6.1 split 视图华丽化落地
+**Branch**: `main`
+
+### Summary
+
+参照 trellis-card noty-ui 任务库重设计 split 视图：单卡片共享框架+flex 自适应高度（禁 max-height）；右栏嵌入完整 detail card（embedded 模式复用 overlay 组件，弹窗降级）；左栏层级树（DFS subtree 分桶、18px caret 槽对齐、collapsedPaths 折叠）；能量格进度条复用 buildTrellisProgressTicks；doc h1-h4 全级可折叠；修复 view-signature 失效漏 mode 字段与全局 button min-width:82px 继承陷阱。i18n 6 key×7 语言，spec §4.6f/renderer-guidelines/code-reuse-guide 同步。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `00dd64a4` | (see git log) |
+| `4ea84dd8` | (see git log) |
+| `2e4a7ae4` | (see git log) |
+| `f58c1108` | (see git log) |
+| `9d4e29e2` | (see git log) |
+| `58e94b66` | (see git log) |
+
+### Status
+
+[OK] **Completed**
