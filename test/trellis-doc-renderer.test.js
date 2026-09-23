@@ -86,19 +86,19 @@ function render(md) {
 // ── block elements ──────────────────────────────────────────────────────────
 
 describe("trellis-doc-renderer headings", () => {
-  it("maps h1-h4 onto graded divs and keeps h5+/hashtag lines as text", () => {
+  it("maps h1-h4 onto graded collapsible divs and keeps h5+/hashtag lines as text", () => {
     const { root } = render("# One\n## Two\n### Three\n#### Four\n##### Five\n\n#hashtag");
     assert.deepStrictEqual(root.children.map((c) => c.className), [
-      "md-h1",
+      "md-h1 md-heading-collapsible",
       "md-h2 md-heading-collapsible",
       "md-h3 md-heading-collapsible",
-      "md-h4",
+      "md-h4 md-heading-collapsible",
       "md-p",
       "md-p",
     ]);
   });
 
-  it("renders inline markers inside headings and adds collapse toggles on h2/h3 only", () => {
+  it("renders inline markers inside headings and adds collapse toggles on every h1-h4", () => {
     const { root } = render("## Run **bold**\n# plain\n### deep `code`");
     const [h2, h1, h3] = root.children;
     assert.ok(h2.classList.contains("md-heading-collapsible"));
@@ -109,7 +109,7 @@ describe("trellis-doc-renderer headings", () => {
       ["#text", "Run "],
       ["span.md-bold", ["#text", "bold"]],
     ]);
-    assert.ok(!h1.classList.contains("md-heading-collapsible"));
+    assert.ok(h1.classList.contains("md-heading-collapsible"));
     assert.ok(h3.classList.contains("md-heading-collapsible"));
   });
 });
