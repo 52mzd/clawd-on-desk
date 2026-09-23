@@ -1056,10 +1056,13 @@ h1 {
   border: none;
   background: transparent;
   width: 100%;
+  min-height: 0;
+  height: auto;
   text-align: left;
 }
 
-.trellis-split-group-head:hover {
+.trellis-split-group-head:hover:not(:disabled) {
+  background: transparent; /* keep global button hover tint off */
   color: var(--text);
 }
 
@@ -1191,28 +1194,41 @@ h1 {
   font-weight: 400;
 }
 
-/* Caret on parent rows: click to expand/collapse the subtree. */
-.trellis-split-caret {
-  flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  margin-left: calc(var(--split-depth, 0) * -14px - 16px);
+/* Caret slot: fixed leading column for every row; parents get a real
+   button, leaves keep an empty spacer so columns stay aligned. */
+.trellis-split-caret-slot {
+  flex: 0 0 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: none;
+}
+
+.trellis-split-caret {
+  width: 15px;
+  min-width: 0; /* override global button{min-width:82px} */
+  height: 15px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 5px;
   background: transparent;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 9px;
+  line-height: 1;
   cursor: pointer;
-  border-radius: 4px;
-  transition: transform 0.15s ease;
+  transition: transform 0.18s ease, background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
 .trellis-split-caret:hover {
-  background: var(--hover, rgba(127, 127, 127, 0.12));
+  background: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 45%, transparent);
   color: var(--text);
+}
+
+.trellis-split-row.is-selected .trellis-split-caret {
+  border-color: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 35%, transparent);
 }
 
 .trellis-split-row.is-collapsed .trellis-split-caret {
@@ -1937,10 +1953,22 @@ h1 {
 }
 
 .md-heading-toggle {
-  display: inline-block;
-  width: 1.1em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.3em;
+  margin-left: -1.3em; /* hang into the doc gutter, keep titles aligned */
   color: var(--muted);
   font-size: 10px;
+  transition: color 0.15s ease;
+}
+
+.md-heading-collapsible:hover .md-heading-toggle {
+  color: var(--text);
+}
+
+.md-heading-collapsible.md-collapsed .md-heading-toggle {
+  transform: rotate(-90deg);
 }
 
 .md-p {

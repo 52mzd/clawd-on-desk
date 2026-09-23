@@ -2027,6 +2027,15 @@ function buildTrellisSplitRow(task, meta) {
     if (trellisSplit.collapsedPaths.has(task.taskPath)) {
       row.classList.add("is-collapsed");
     }
+  }
+
+  // Leading caret slot: 16px for every row (empty for leaves) so dots and
+  // titles stay column-aligned between parents and children. The caret is
+  // a real button in normal flow — no negative margins pulling it over the
+  // row edge.
+  const slot = document.createElement("span");
+  slot.className = "trellis-split-caret-slot";
+  if (meta && meta.hasChildren) {
     const caret = document.createElement("button");
     caret.type = "button";
     caret.className = "trellis-split-caret";
@@ -2042,8 +2051,9 @@ function buildTrellisSplitRow(task, meta) {
       lastTrellisPanelSignature = null;
       renderTrellisViewBody();
     });
-    row.appendChild(caret);
+    slot.appendChild(caret);
   }
+  row.appendChild(slot);
 
   // Three-segment row (noty-ui structure): state dot / main / side.
   const dot = document.createElement("span");
@@ -3456,16 +3466,16 @@ function trellisDocHeadingLevel(el) {
   return 0;
 }
 
-// h2/h3 sections collapse on click: flip the class + hide the following
+// ANY heading (h1..h4) collapses on click: flip the class + hide following
 // siblings up to (and excluding) the next same-or-higher heading. Default is
-// fully expanded (PRD); a card rebuild resets it, which only happens on tab
-// or language changes — never on the periodic tick (the signature guard
-// skips unchanged cards).
+// fully expanded; a card rebuild resets collapse state, which only happens
+// on tab or language changes — never on the periodic tick (signature guard).
 function toggleTrellisDocHeading(docRoot, heading) {
+  const level = trellisDocHeadingLevel(heading);
+  if (!level) return;
   const collapsed = heading.classList.toggle("md-collapsed");
   heading.setAttribute("aria-expanded", collapsed ? "false" : "true");
   if (heading.children[0]) heading.children[0].textContent = collapsed ? "▸" : "▾";
-  const level = trellisDocHeadingLevel(heading);
   const siblings = docRoot.children;
   for (let i = siblings.length - 1; i >= 0; i -= 1) {
     if (siblings[i] === heading) {

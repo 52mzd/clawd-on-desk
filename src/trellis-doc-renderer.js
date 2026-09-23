@@ -191,14 +191,14 @@
   function appendHeading(builder, parent, level, text) {
     const el = builder.createElement("div");
     el.className = `md-h${level}`;
-    if (level === 2 || level === 3) {
-      el.className += " md-heading-collapsible";
-      el.setAttribute("aria-expanded", "true");
-      const toggle = builder.createElement("span");
-      toggle.className = "md-heading-toggle";
-      toggle.textContent = "▾";
-      el.appendChild(toggle);
-    }
+    // EVERY heading level is collapsible (h1 included): long docs like PRDs
+    // have top-level sections (验收/Notes) that users expect to fold too.
+    el.className += " md-heading-collapsible";
+    el.setAttribute("aria-expanded", "true");
+    const toggle = builder.createElement("span");
+    toggle.className = "md-heading-toggle";
+    toggle.textContent = "▾";
+    el.appendChild(toggle);
     appendInline(builder, el, text, 0);
     parent.appendChild(el);
     return el;
