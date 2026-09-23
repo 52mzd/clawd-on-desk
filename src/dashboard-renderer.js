@@ -1147,8 +1147,10 @@ const trellisView = {
   // window; it never leaves the renderer.
   mode: (() => {
     try {
-      return window.localStorage && window.localStorage.getItem("trellisViewMode") === "board"
-        ? "board" : "tree";
+      // v6: "board" was the v5-b layout; read it back as "split" (the
+      // master-detail successor). "tree" stays "tree".
+      const stored = window.localStorage && window.localStorage.getItem("trellisViewMode");
+      return stored === "board" || stored === "split" ? "split" : "tree";
     } catch {
       return "tree";
     }
@@ -1839,9 +1841,13 @@ function trellisRowProjectLabel(task, labels) {
 // v5-b: switch the Trellis view display mode (tree ⇄ board). Cached in
 // localStorage for reloads of the same window; never leaves the renderer.
 function setTrellisViewMode(mode) {
-  const next = mode === "board" ? "board" : "tree";
+  const next = mode === "split" ? "split" : "tree";
   if (next === trellisView.mode) return;
   trellisView.mode = next;
+  // One-shot: the split pane's group-stagger plays on mode entry only —
+  // later rebuilds (selection clicks, refresh ticks) must not replay it.
+  trellisSplit.entryPending = next === "split";
+  trellisSplit.selectedTaskPath = null;
   try {
     if (window.localStorage) window.localStorage.setItem("trellisViewMode", next);
   } catch {
@@ -1925,6 +1931,210 @@ function buildTrellisBoardCard(task) {
     void openTrellisDetailFromTask(task);
   });
   return card;
+}
+
+// v6 master-detail split state. Session-level, never persisted. Entry
+// stagger is one-shot (flag consumed by the builder); archive group starts
+// collapsed every session.
+const trellisSplit = {
+  selectedTaskPath: null,
+  archiveOpen: false,
+  entryPending: false,
+};
+
+function selectTrellisSplitTask(taskPath) {
+  const next = typeof taskPath === "string" ? taskPath : null;
+  if (next === trellisSplit.selectedTaskPath) return;
+  trellisSplit.selectedTaskPath = next;
+  lastTrellisPanelSignature = null;
+  renderTrellisViewBody();
+}
+
+function toggleTrellisSplitArchive() {
+  trellisSplit.archiveOpen = !trellisSplit.archiveOpen;
+  lastTrellisPanelSignature = null;
+  renderTrellisViewBody();
+}
+
+// Keyboard navigation across the VISIBLE rows in group order — derived
+// from the DOM so it can never drift from what is actually rendered
+// (collapsed archive group simply has no rows in the DOM).
+function moveTrellisSplitSelection(delta) {
+  const rows = trellisViewEl
+    ? trellisViewEl.querySelectorAll(".trellis-split-row[data-task-path]")
+    : [];
+  if (rows.length === 0) return;
+  const paths = [...rows].map((r) => r.dataset.taskPath);
+  const index = paths.indexOf(trellisSplit.selectedTaskPath);
+  const nextIndex = index === -1
+    ? (delta > 0 ? 0 : paths.length - 1)
+    : Math.min(Math.max(index + delta, 0), paths.length - 1);
+  if (paths[nextIndex] !== trellisSplit.selectedTaskPath) {
+    selectTrellisSplitTask(paths[nextIndex]);
+    const row = rows[nextIndex];
+    if (row && typeof row.scrollIntoView === "function") {
+      row.scrollIntoView({ block: "nearest" });
+    }
+  }
+}
+
+function buildTrellisSplitRow(task) {
+  const row = document.createElement("div");
+  row.className = "trellis-split-row";
+  row.dataset.taskPath = task.taskPath || "";
+  if (task.taskPath === trellisSplit.selectedTaskPath) {
+    row.classList.add("is-selected");
+  }
+  const title = document.createElement("span");
+  title.className = "trellis-split-row-title";
+  title.appendChild(document.createTextNode(task.title || task.taskPath || "?"));
+  row.appendChild(title);
+  if (task.progress) {
+    row.appendChild(createText(
+      "span",
+      "trellis-task-progress",
+      `${task.progress.done}/${task.progress.total}`
+    ));
+  }
+  row.addEventListener("click", () => {
+    selectTrellisSplitTask(task.taskPath);
+  });
+  row.addEventListener("dblclick", () => {
+    void openTrellisDetailFromTask(task);
+  });
+  return row;
+}
+
+function buildTrellisSplitDetailPane(task) {
+  const pane = document.createElement("div");
+  pane.className = "trellis-split-detail";
+  if (!task) {
+    pane.appendChild(createText("div", "trellis-split-detail-empty", t("dashboardTrellisSplitEmpty")));
+    return pane;
+  }
+  const card = document.createElement("div");
+  card.className = "trellis-split-detail-card";
+
+  const head = document.createElement("div");
+  head.className = "trellis-split-detail-head";
+  head.appendChild(createText("h4", "trellis-split-detail-title", task.title || task.taskPath || "?"));
+  const badge = TRELLIS_PHASE_BADGE[task.phase];
+  if (badge) {
+    const chip = createText("span", `trellis-phase-badge ${badge.className}`, t(badge.labelKey));
+    head.appendChild(chip);
+  }
+  card.appendChild(head);
+
+  const meta = document.createElement("div");
+  meta.className = "trellis-split-detail-meta";
+  if (task.progress) {
+    const ticks = buildTrellisProgressTicks(task.progress);
+    if (ticks) meta.appendChild(ticks);
+    meta.appendChild(createText(
+      "span",
+      "trellis-task-progress",
+      `${task.progress.done}/${task.progress.total}`
+    ));
+  }
+  if (task.completedAt) {
+    meta.appendChild(createText("span", "trellis-board-card-date", task.completedAt));
+  }
+  if (task.parent) {
+    meta.appendChild(createText("span", "trellis-board-card-parent", "↳ " + task.parent));
+  }
+  card.appendChild(meta);
+
+  const actions = document.createElement("div");
+  actions.className = "trellis-split-detail-actions";
+  const detailBtn = document.createElement("button");
+  detailBtn.type = "button";
+  detailBtn.className = "trellis-view-mode-toggle";
+  detailBtn.appendChild(document.createTextNode(t("dashboardTrellisDetailOpen")));
+  detailBtn.addEventListener("click", () => {
+    void openTrellisDetailFromTask(task);
+  });
+  actions.appendChild(detailBtn);
+  if (task.parent || task.hasChildren) {
+    const linksBtn = document.createElement("button");
+    linksBtn.type = "button";
+    linksBtn.className = "trellis-view-mode-toggle";
+    linksBtn.appendChild(document.createTextNode(t("dashboardTrellisLinksOpen")));
+    linksBtn.addEventListener("click", () => {
+      openTrellisNetwork({ taskPath: task.taskPath, title: task.title || "", cwd: task.cwd || "" });
+    });
+    actions.appendChild(linksBtn);
+  }
+  card.appendChild(actions);
+  pane.appendChild(card);
+  return pane;
+}
+
+function buildTrellisSplitSection(activeTasks, archiveTasks) {
+  const section = document.createElement("div");
+  section.className = "trellis-view-section trellis-split-section";
+  if (trellisSplit.entryPending) {
+    section.classList.add("is-entering");
+    trellisSplit.entryPending = false;
+  }
+
+  const byPhase = bucketByBoardPhase(activeTasks, archiveTasks);
+  let selectedTask = null;
+
+  const listPane = document.createElement("div");
+  listPane.className = "trellis-split-list";
+  const groups = [
+    { phase: "plan", labelKey: "dashboardTrellisPhasePlan" },
+    { phase: "execute", labelKey: "dashboardTrellisPhaseExecute" },
+    { phase: "check", labelKey: "dashboardTrellisPhaseCheck" },
+    { phase: "finish", labelKey: "dashboardTrellisPhaseFinish" },
+    { phase: "done", labelKey: "dashboardTrellisPhaseArchived" },
+  ];
+  let groupIndex = 0;
+  for (const group of groups) {
+    const tasks = byPhase.get(group.phase) || [];
+    // finish (completed-but-unarchived) is practically always empty in
+    // this repo's flow — a permanently empty placeholder reads as noise.
+    if (group.phase === "finish" && tasks.length === 0) continue;
+    if (group.phase === "done" && !trellisSplit.archiveOpen && tasks.length > 0) {
+      const collapsed = document.createElement("button");
+      collapsed.type = "button";
+      collapsed.className = "trellis-split-group-head trellis-split-group-toggle";
+      collapsed.style.setProperty("--split-group-index", String(groupIndex));
+      collapsed.appendChild(createText("span", "trellis-split-group-title", `▸ ${t(group.labelKey)}`));
+      collapsed.appendChild(createText("span", "trellis-board-column-count", String(tasks.length)));
+      collapsed.addEventListener("click", toggleTrellisSplitArchive);
+      listPane.appendChild(collapsed);
+      groupIndex += 1;
+      continue;
+    }
+    if (tasks.length > 0 || group.phase !== "done") {
+      const head = document.createElement("div");
+      head.className = "trellis-split-group-head";
+      head.style.setProperty("--split-group-index", String(groupIndex));
+      if (group.phase === "done" && trellisSplit.archiveOpen) {
+        head.classList.add("trellis-split-group-toggle");
+        head.addEventListener("click", toggleTrellisSplitArchive);
+        head.appendChild(createText("span", "trellis-split-group-title", `▾ ${t(group.labelKey)}`));
+      } else {
+        head.appendChild(createText("span", "trellis-split-group-title", t(group.labelKey)));
+      }
+      if (group.phase === "done" && trellisSplit.archiveOpen) {
+        head.appendChild(createText("span", "trellis-board-column-count", String(tasks.length)));
+      }
+      listPane.appendChild(head);
+    }
+    for (const task of tasks) {
+      if (task.taskPath === trellisSplit.selectedTaskPath) selectedTask = task;
+      listPane.appendChild(buildTrellisSplitRow(task));
+    }
+    groupIndex += 1;
+  }
+  section.appendChild(listPane);
+
+  // Selection may point at a task that filters just removed — show the
+  // empty pane rather than a stale card.
+  section.appendChild(buildTrellisSplitDetailPane(selectedTask));
+  return section;
 }
 
 function buildTrellisBoardSection(activeTasks, archiveTasks) {
@@ -2052,10 +2262,10 @@ function buildTrellisFilterSection() {
   modeBtn.className = "trellis-view-mode-toggle";
   modeBtn.title = t("dashboardTrellisModeToggle");
   modeBtn.appendChild(document.createTextNode(
-    trellisView.mode === "board" ? t("dashboardTrellisModeTree") : t("dashboardTrellisModeBoard")
+    trellisView.mode === "tree" ? t("dashboardTrellisModeSplit") : t("dashboardTrellisModeTree")
   ));
   modeBtn.addEventListener("click", () => {
-    setTrellisViewMode(trellisView.mode === "board" ? "tree" : "board");
+    setTrellisViewMode(trellisView.mode === "tree" ? "split" : "tree");
   });
   titleRow.appendChild(modeBtn);
   section.appendChild(titleRow);
@@ -2196,7 +2406,10 @@ function renderTrellisView() {
   const activeFiltered = filterTrellisTasksByRoot(trellisView.active.tasks, trellisView.roots, selectedRoot);
   const archiveFiltered = filterTrellisTasksByRoot(trellisView.archive.tasks, trellisView.roots, selectedRoot);
   const tree = buildTrellisTree(activeFiltered, archiveFiltered);
-  if (trellisView.mode === "board") {
+  if (trellisView.mode === "split") {
+    // v6 master-detail split: list groups left, selection detail right.
+    fragment.appendChild(buildTrellisSplitSection(activeFiltered, archiveFiltered));
+  } else if (trellisView.mode === "board") {
     // v5-b FLIP: capture the current card positions before the rebuild so
     // cards that changed columns can animate the move (see
     // flipTrellisBoardCards below).
@@ -4297,6 +4510,42 @@ async function init() {
         if (trellisSpec.open) closeTrellisSpec();
         else if (trellisNetwork.open) closeTrellisNetwork();
         else closeTrellisDetail();
+      }
+    });
+  }
+  // v6 split-mode keyboard navigation: ↑/↓ move the selection across the
+  // visible rows in group order, Enter opens the full detail overlay, Esc
+  // clears the selection (never the window). Only active while the split
+  // view is the current tab and no overlay/quick mode holds the key.
+  if (typeof document.addEventListener === "function") {
+    document.addEventListener("keydown", (event) => {
+      if (trellisView.mode !== "split") return;
+      if (trellisDetail.open || trellisSpec.open || trellisNetwork.open) return;
+      if (quick.active || quick.pending) return;
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown" && event.key !== "Enter" && event.key !== "Escape") return;
+      if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        moveTrellisSplitSelection(-1);
+      } else if (event.key === "ArrowDown") {
+        event.preventDefault();
+        moveTrellisSplitSelection(1);
+      } else if (event.key === "Enter") {
+        const rows = trellisViewEl
+          ? trellisViewEl.querySelectorAll(".trellis-split-row[data-task-path]")
+          : [];
+        for (const row of rows) {
+          if (row.classList.contains("is-selected")) {
+            event.preventDefault();
+            row.dispatchEvent(new CustomEvent("dblclick", { bubbles: false }));
+            break;
+          }
+        }
+      } else if (event.key === "Escape") {
+        if (trellisSplit.selectedTaskPath !== null) {
+          event.preventDefault();
+          selectTrellisSplitTask(null);
+        }
       }
     });
   }

@@ -999,6 +999,185 @@ h1 {
   opacity: 0.8;
 }
 
+/* ── v6 master-detail split ────────────────────────────────────────── */
+
+.trellis-split-section {
+  display: flex;
+  gap: 12px;
+  min-height: 320px;
+}
+
+.trellis-split-list {
+  flex: 1 1 46%;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  max-height: 640px;
+  padding-right: 6px;
+}
+
+.trellis-split-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 6px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.trellis-split-group-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+}
+
+.trellis-split-group-toggle {
+  background: transparent;
+  color: inherit;
+  border: none;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+}
+
+.trellis-split-group-toggle:hover {
+  background: var(--hover, rgba(127, 127, 127, 0.08));
+}
+
+.trellis-split-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.14s ease, transform 0.14s ease;
+}
+
+.trellis-split-row:hover {
+  background: var(--hover, rgba(127, 127, 127, 0.1));
+  transform: translateX(2px);
+}
+
+.trellis-split-row.is-selected {
+  background: var(--accent-soft, rgba(90, 160, 255, 0.18));
+  box-shadow: inset 2px 0 0 rgba(90, 160, 255, 0.75);
+}
+
+.trellis-split-row-title {
+  flex: 1;
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trellis-split-detail {
+  flex: 1 1 54%;
+  min-width: 280px;
+  padding: 4px 0 12px;
+}
+
+.trellis-split-detail-empty {
+  opacity: 0.55;
+  font-size: 12.5px;
+  padding: 24px 8px;
+  text-align: center;
+}
+
+.trellis-split-detail-card {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: trellis-split-detail-in 0.22s ease-out both;
+}
+
+@keyframes trellis-split-detail-in {
+  from { opacity: 0; transform: translateX(14px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.trellis-split-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.trellis-split-detail-title {
+  margin: 0;
+  font-size: 14px;
+}
+
+.trellis-split-detail-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  opacity: 0.8;
+  flex-wrap: wrap;
+}
+
+.trellis-split-detail-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Mode-entry stagger: groups slide in top-down, one-shot (class present
+   only on the first build after a mode switch). */
+.trellis-split-section.is-entering .trellis-split-group-head,
+.trellis-split-section.is-entering .trellis-split-row {
+  animation: trellis-split-group-in 0.3s ease-out both;
+  animation-delay: calc(var(--split-group-index, 0) * 50ms);
+}
+
+@keyframes trellis-split-group-in {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Narrow windows: detail pane becomes an overlay drawer over the list. */
+@media (max-width: 1100px) {
+  .trellis-split-section {
+    position: relative;
+  }
+  .trellis-split-detail {
+    position: absolute;
+    inset: 0 0 auto 0;
+    max-height: 100%;
+    overflow-y: auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    z-index: 3;
+    display: none;
+  }
+  .trellis-split-detail:has(.trellis-split-detail-card) {
+    display: block;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trellis-split-row,
+  .trellis-split-detail-card,
+  .trellis-split-section.is-entering .trellis-split-group-head,
+  .trellis-split-section.is-entering .trellis-split-row {
+    animation: none;
+    transition: none;
+    transform: none;
+  }
+}
+
 /* ── v5-b phase board ─────────────────────────────────────────────── */
 
 .trellis-board {
