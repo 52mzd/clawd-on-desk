@@ -10,6 +10,7 @@ const {
   trellisTaskOwningRoot,
   filterTrellisTasksByRoot,
   buildTrellisRootLabels,
+  bucketByBoardPhase,
   TRELLIS_PHASE_BADGE,
 } = globalThis.ClawdDashboardTrellisPanel;
 const {
@@ -1140,6 +1141,18 @@ const trellisView = {
   // Session-level UI state, never persisted: null = merged "all"
   // view, otherwise the registered root the lists are filtered to.
   selectedRoot: null,
+  // v5-b display mode: "tree" (default, the classic nesting) or
+  // "board" (phase columns). Session-level like selectedRoot — the
+  // localStorage bridge below only caches it for reloads of the same
+  // window; it never leaves the renderer.
+  mode: (() => {
+    try {
+      return window.localStorage && window.localStorage.getItem("trellisViewMode") === "board"
+        ? "board" : "tree";
+    } catch {
+      return "tree";
+    }
+  })(),
   active: { loading: false, seq: 0, loaded: false, tasks: [], error: false },
   archive: { loading: false, seq: 0, loaded: false, tasks: [], error: false, openMonths: null },
 };
@@ -1569,6 +1582,23 @@ function openTrellisDetailFromNode(node) {
   void openTrellisDetail(task);
 }
 
+// v5-b board cards: same detail-open payload as the tree rows — archived
+// tasks go through the cwd-carrying shape, active ones pass the row task.
+function openTrellisDetailFromTask(task) {
+  if (!task) return;
+  if (task.completedAt) {
+    void openTrellisDetail({
+      taskPath: task.taskPath,
+      title: task.title || "",
+      cwd: task.cwd || "",
+      sessions: [],
+      progress: null,
+    });
+    return;
+  }
+  void openTrellisDetail(task);
+}
+
 function createTrellisTreeNodeRow(node, projectLabel) {
   const task = node.task;
   const row = document.createElement("div");
@@ -1806,6 +1836,190 @@ function trellisRowProjectLabel(task, labels) {
 // "All projects" + one chip per registered root, labeled by the root's
 // (disambiguated) basename with its live-task count. Pure render-layer
 // state — clicking only re-filters what is already in memory.
+// v5-b: switch the Trellis view display mode (tree ⇄ board). Cached in
+// localStorage for reloads of the same window; never leaves the renderer.
+function setTrellisViewMode(mode) {
+  const next = mode === "board" ? "board" : "tree";
+  if (next === trellisView.mode) return;
+  trellisView.mode = next;
+  try {
+    if (window.localStorage) window.localStorage.setItem("trellisViewMode", next);
+  } catch {
+    /* storage unavailable — session-only */
+  }
+  lastTrellisPanelSignature = null;
+  renderTrellisViewBody();
+}
+
+// v5-b phase board: five flow columns (plan/execute/check/finish/done ≈
+// archived). Pure render-mode switch over the same filtered task lists the
+// tree uses — no new IPC, no data shape changes. FLIP move animation on
+// phase changes, stagger entrance, hover lift — all CSS, all gated on
+// prefers-reduced-motion.
+const TRELLIS_BOARD_COLUMNS = [
+  { phase: "plan", labelKey: "dashboardTrellisPhasePlan" },
+  { phase: "execute", labelKey: "dashboardTrellisPhaseExecute" },
+  { phase: "check", labelKey: "dashboardTrellisPhaseCheck" },
+  { phase: "finish", labelKey: "dashboardTrellisPhaseFinish" },
+  { phase: "done", labelKey: "dashboardTrellisPhaseArchived" },
+];
+const TRELLIS_BOARD_CARD_LIMIT = 30; // per column — perf guard for hover glow
+
+function buildTrellisBoardCard(task) {
+  const card = document.createElement("div");
+  card.className = "trellis-board-card";
+  card.dataset.taskPath = task.taskPath || "";
+
+  const title = document.createElement("div");
+  title.className = "trellis-board-card-title";
+  title.appendChild(document.createTextNode(task.title || task.taskPath || "?"));
+  card.appendChild(title);
+
+  const meta = document.createElement("div");
+  meta.className = "trellis-board-card-meta";
+  if (task.progress) {
+    const ticks = buildTrellisProgressTicks(task.progress);
+    if (ticks) meta.appendChild(ticks);
+    meta.appendChild(createText(
+      "span",
+      "trellis-task-progress",
+      `${task.progress.done}/${task.progress.total}`
+    ));
+  }
+  if (task.parent) {
+    meta.appendChild(createText("span", "trellis-board-card-parent", "↳ " + task.parent));
+  }
+  if (task.completedAt) {
+    meta.appendChild(createText("span", "trellis-board-card-date", task.completedAt));
+  }
+  card.appendChild(meta);
+
+  // Same affordances as tree rows: ⛓ links when linkage exists, ⓘ detail.
+  const actions = document.createElement("div");
+  actions.className = "trellis-board-card-actions";
+  if (task.parent || task.hasChildren) {
+    const links = document.createElement("button");
+    links.type = "button";
+    links.className = "trellis-task-detail-btn";
+    links.textContent = "⛓";
+    links.title = t("dashboardTrellisLinksOpen");
+    links.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openTrellisNetwork({ taskPath: task.taskPath, title: task.title || "", cwd: task.cwd || "" });
+    });
+    actions.appendChild(links);
+  }
+  const detail = document.createElement("button");
+  detail.type = "button";
+  detail.className = "trellis-task-detail-btn";
+  detail.textContent = "ⓘ";
+  detail.title = t("dashboardTrellisDetailOpen");
+  detail.addEventListener("click", (event) => {
+    event.stopPropagation();
+    void openTrellisDetailFromTask(task);
+  });
+  actions.appendChild(detail);
+  card.appendChild(actions);
+
+  card.addEventListener("click", () => {
+    void openTrellisDetailFromTask(task);
+  });
+  return card;
+}
+
+function buildTrellisBoardSection(activeTasks, archiveTasks) {
+  const section = document.createElement("div");
+  section.className = "trellis-view-section trellis-board-section";
+
+  const byPhase = bucketByBoardPhase(activeTasks, archiveTasks);
+
+  const board = document.createElement("div");
+  board.className = "trellis-board";
+  let colIndex = 0;
+  for (const col of TRELLIS_BOARD_COLUMNS) {
+    const tasks = byPhase.get(col.phase) || [];
+    const column = document.createElement("div");
+    column.className = "trellis-board-column";
+    column.style.setProperty("--board-col-index", String(colIndex));
+
+    const head = document.createElement("div");
+    head.className = "trellis-board-column-head";
+    head.appendChild(createText("span", "trellis-board-column-title", t(col.labelKey)));
+    head.appendChild(createText(
+      "span",
+      "trellis-board-column-count",
+      String(tasks.length)
+    ));
+    column.appendChild(head);
+
+    const list = document.createElement("div");
+    list.className = "trellis-board-column-list";
+    if (tasks.length > TRELLIS_BOARD_CARD_LIMIT) {
+      list.classList.add("trellis-board-heavy");
+    }
+    for (const task of tasks) {
+      list.appendChild(buildTrellisBoardCard(task));
+    }
+    column.appendChild(list);
+    board.appendChild(column);
+    colIndex += 1;
+  }
+  section.appendChild(board);
+  return section;
+}
+
+// v5-b FLIP move animation: cards keyed by taskPath. Before a board
+// rebuild we snapshot each card's viewport rect; after the swap we diff
+// the new rects — any card that moved (phase changed → new column) plays
+// a transform tween from its old position. Reduced-motion and test
+// sandboxes (no rAF/rect support) degrade to the plain rebuild.
+const trellisBoardCardRects = new Map();
+
+function captureTrellisBoardCardPositions(rootEl) {
+  trellisBoardCardRects.clear();
+  if (!rootEl) return;
+  for (const card of rootEl.querySelectorAll(".trellis-board-card[data-task-path]")) {
+    const key = card.dataset.taskPath;
+    if (!key) continue;
+    try {
+      trellisBoardCardRects.set(key, card.getBoundingClientRect());
+    } catch {
+      /* rect unavailable (detached) — skip */
+    }
+  }
+}
+
+function flipTrellisBoardCards(rootEl) {
+  if (!rootEl || trellisBoardCardRects.size === 0) return;
+  const reduced = typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduced || typeof document.documentElement.animate !== "function") {
+    trellisBoardCardRects.clear();
+    return;
+  }
+  for (const card of rootEl.querySelectorAll(".trellis-board-card[data-task-path]")) {
+    const prev = trellisBoardCardRects.get(card.dataset.taskPath);
+    if (!prev) continue;
+    let next;
+    try {
+      next = card.getBoundingClientRect();
+    } catch {
+      continue;
+    }
+    const dx = prev.left - next.left;
+    const dy = prev.top - next.top;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
+    card.animate(
+      [
+        { transform: `translate(${dx}px, ${dy}px)`, zIndex: 5 },
+        { transform: "translate(0, 0)", zIndex: 5 },
+      ],
+      { duration: 260, easing: "cubic-bezier(0.25, 0.8, 0.35, 1)" }
+    );
+  }
+  trellisBoardCardRects.clear();
+}
+
 function buildTrellisFilterSection() {
   if (trellisView.rootsError || !trellisView.roots.length) return null;
 
@@ -1832,6 +2046,18 @@ function buildTrellisFilterSection() {
     "trellis-filter-title",
     selected === null ? t("dashboardTrellisFilterAll") : labels.get(selected) || selected
   ));
+  // v5-b: tree / board display-mode toggle (session-cached in localStorage).
+  const modeBtn = document.createElement("button");
+  modeBtn.type = "button";
+  modeBtn.className = "trellis-view-mode-toggle";
+  modeBtn.title = t("dashboardTrellisModeToggle");
+  modeBtn.appendChild(document.createTextNode(
+    trellisView.mode === "board" ? t("dashboardTrellisModeTree") : t("dashboardTrellisModeBoard")
+  ));
+  modeBtn.addEventListener("click", () => {
+    setTrellisViewMode(trellisView.mode === "board" ? "tree" : "board");
+  });
+  titleRow.appendChild(modeBtn);
   section.appendChild(titleRow);
 
   const chips = document.createElement("div");
@@ -1970,9 +2196,22 @@ function renderTrellisView() {
   const activeFiltered = filterTrellisTasksByRoot(trellisView.active.tasks, trellisView.roots, selectedRoot);
   const archiveFiltered = filterTrellisTasksByRoot(trellisView.archive.tasks, trellisView.roots, selectedRoot);
   const tree = buildTrellisTree(activeFiltered, archiveFiltered);
-  fragment.appendChild(buildTrellisActiveSection(tree, activeFiltered));
-  fragment.appendChild(buildTrellisArchiveSection(tree, archiveFiltered));
+  if (trellisView.mode === "board") {
+    // v5-b FLIP: capture the current card positions before the rebuild so
+    // cards that changed columns can animate the move (see
+    // flipTrellisBoardCards below).
+    captureTrellisBoardCardPositions(trellisViewEl);
+    fragment.appendChild(buildTrellisBoardSection(activeFiltered, archiveFiltered));
+  } else {
+    fragment.appendChild(buildTrellisActiveSection(tree, activeFiltered));
+    fragment.appendChild(buildTrellisArchiveSection(tree, archiveFiltered));
+  }
   trellisViewEl.replaceChildren(fragment);
+  // v5-b: run the FLIP pass after the swap — cards that moved columns
+  // (phase changed between refreshes) tween from their old rects.
+  if (trellisView.mode === "board") {
+    flipTrellisBoardCards(trellisViewEl);
+  }
 }
 
 // ── Dashboard view switching ─────────────────────────────────────────────

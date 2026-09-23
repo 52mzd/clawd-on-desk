@@ -404,6 +404,31 @@
   // roots share it — first with the parent segment ("name (parent)"), then
   // deeper ancestors ("name (grand/parent)"), finally the full path so a
   // label is never ambiguous.
+  // v5-b board bucketing: map each task (active row shape or archived
+  // entry shape) to its board column phase. Archived entries always land
+  // in "done"; unknown/missing phases fall back to "execute" (the busiest
+  // column, so nothing silently disappears into a corner).
+  const BOARD_PHASES_ARRAY = ["plan", "execute", "check", "finish", "done"];
+  const BOARD_PHASES = new Set(BOARD_PHASES_ARRAY);
+
+  function boardPhaseFor(task) {
+    if (!task || typeof task !== "object") return "execute";
+    if (task.completedAt || task.archived === true) return "done";
+    if (typeof task.phase === "string" && BOARD_PHASES.has(task.phase)) return task.phase;
+    return "execute";
+  }
+
+  function bucketByBoardPhase(activeTasks, archiveTasks) {
+    const byPhase = new Map(BOARD_PHASES_ARRAY.map((phase) => [phase, []]));
+    for (const task of Array.isArray(activeTasks) ? activeTasks : []) {
+      byPhase.get(boardPhaseFor(task)).push(task);
+    }
+    for (const task of Array.isArray(archiveTasks) ? archiveTasks : []) {
+      byPhase.get("done").push(task);
+    }
+    return byPhase;
+  }
+
   function buildTrellisRootLabels(roots) {
     const list = Array.isArray(roots) ? roots.filter((root) => typeof root === "string" && root) : [];
     const labels = new Map();
@@ -450,6 +475,8 @@
     trellisTaskOwningRoot,
     filterTrellisTasksByRoot,
     buildTrellisRootLabels,
+    boardPhaseFor,
+    bucketByBoardPhase,
     TRELLIS_PHASE_BADGE,
     TRELLIS_TREE_DEPTH_CAP,
     normalizeProgress,

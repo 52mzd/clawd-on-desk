@@ -25,6 +25,8 @@ const {
   trellisTaskOwningRoot,
   filterTrellisTasksByRoot,
   buildTrellisRootLabels,
+  boardPhaseFor,
+  bucketByBoardPhase,
 } = require("../src/dashboard-trellis-panel");
 
 // The fake DOM below models `hidden` as a plain JS property, so the CSS
@@ -208,6 +210,35 @@ describe("dashboard trellis project filter (pure)", () => {
       filterTrellisTasksByRoot(tasks, roots, "/proj/two").map((task) => task.taskPath),
       ["b"]
     );
+  });
+});
+
+describe("dashboard trellis board bucketing (pure)", () => {
+  it("buckets tasks into the five flow columns; archived always done", () => {
+    const active = [
+      { taskPath: "a", phase: "plan" },
+      { taskPath: "b", phase: "execute" },
+      { taskPath: "c", phase: "check" },
+      { taskPath: "d", phase: "finish" },
+      { taskPath: "e", phase: "nonsense" },   // unknown → execute
+      { taskPath: "f", phase: "done" },        // done-but-active → done
+      { taskPath: "g" },                        // missing phase → execute
+    ];
+    const archived = [{ taskPath: "h", completedAt: "2026-09-24", phase: "plan" }];
+    const byPhase = bucketByBoardPhase(active, archived);
+    assert.deepEqual([...byPhase.keys()], ["plan", "execute", "check", "finish", "done"]);
+    assert.deepEqual(byPhase.get("plan").map((t) => t.taskPath), ["a"]);
+    assert.deepEqual(byPhase.get("execute").map((t) => t.taskPath), ["b", "e", "g"]);
+    assert.deepEqual(byPhase.get("check").map((t) => t.taskPath), ["c"]);
+    assert.deepEqual(byPhase.get("finish").map((t) => t.taskPath), ["d"]);
+    assert.deepEqual(byPhase.get("done").map((t) => t.taskPath), ["f", "h"]);
+  });
+
+  it("degrades on malformed input without throwing", () => {
+    const byPhase = bucketByBoardPhase(null, undefined);
+    for (const tasks of byPhase.values()) assert.deepEqual(tasks, []);
+    assert.strictEqual(boardPhaseFor(null), "execute");
+    assert.strictEqual(boardPhaseFor("x"), "execute");
   });
 });
 

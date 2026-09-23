@@ -26,12 +26,12 @@ Trellis 视图任务树 + 归档树单列纵堆，元素密集难读（用户痛
 
 ## Acceptance Criteria
 
-- [ ] 树/看板模式可切换，偏好记忆在 localStorage（会话级即可）
-- [ ] 5 列 stagger 入场 + 卡片 hover 升起辉光 + 计数 pop 均可见
-- [ ] 任务换列（如 plan→execute）时卡片有飞移动画（真实场景或测试钩子验证）
-- [ ] 归档列卡完成时间显示；关联入口可用
-- [ ] reduced-motion / 窄窗 / 任务>30 三种降级生效
-- [ ] 全量 npm test 与基线 diff=0
+- [x] filter 区新增模式切换按钮（tree⇄board），localStorage 缓存 trellisViewMode
+- [x] 列 stagger 60ms×5（translateX+fade）、hover translateY(-2px)+蓝辉光边框、计数徽标 pop（cubic-bezier 回弹）
+- [x] FLIP：重建前 snapshot 卡片 rect→replaceChildren 后 diff→card.animate(260ms) 平移补间；reduced-motion/无 rAF 环境降级直接重建
+- [x] done 列卡带 completedAt 右对齐小字；⛓/ⓘ 按钮与整卡点击均保留
+- [x] reduced-motion 全关；<1100px 列动画关+定宽横滚；单列>30 卡 hover 辉光关（.trellis-board-heavy）
+- [x] 全量与基线 diff=0；panel 套件 69 pass（新增 board 分桶纯函数 2 用例）
 
 ## Non-Goals
 
