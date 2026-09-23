@@ -304,3 +304,25 @@ v3 验收后续两修：① c13afbd1 面板执行步骤 0/0——readChecklist �
 ### Status
 
 [OK] **Completed**
+
+
+## Session 12: v4 后续：核查+复盘+spec 收口：Mistake 9 与 frontend 层规范重写
+
+**Date**: 2026-09-23
+**Task**: v4 后续：核查+复盘+spec 收口：Mistake 9 与 frontend 层规范重写
+**Branch**: `main`
+
+### Summary
+
+v4 三件落地后的质量收口：① trellis-check 全维核查通过（debug 残留 0、innerHTML 直写 0、i18n 13 新键×7 语言齐、13 CSS 类定义↔引用双向对齐、11 通道与 handler 一一对应、六套件 245 pass 0 fail）；② break-loop 复盘 v4-b readTaskNetwork 六次红绿往返（不存在的 harness helper、absTaskDir vs absDir 字段名、信任面用 PROJECT 还是 CWD、readJsonObject {ok,value} 包裹、taskRefPathFromAbs 差一偏移、单行 replace 误伤无关测试）→ 620be841 Mistake 9（调用前先读 callee 返回语句+一个既有测试；单行 pattern 批量替换必须锚定多行上下文）；③ trellis-spec-bootstrap 重写 frontend 层：删 5 个 React+TS 模板占位文件（本仓库无框架无 TS），新建 6 个源码背书规范——directory-structure（一窗一 renderer 配对布局）、renderer-guidelines（外来内容 createElement-only 红线+静态常量模板豁免、signature 防重渲染、overlay 状态对象模式）、ipc-guidelines（信任帧+严格 payload+owner 注入检查单）、i18n-guidelines（七语言完整性循环）、quality-guidelines（基线 diff 纪律+真机冒烟法），全部数字实测（dashboard-renderer 4168 行 0 innerHTML、BELL_SVG 豁免）；00-bootstrap-guidelines AC 勾选归档。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `620be841` | (see git log) |
+| `7958b47f` | (see git log) |
+
+### Status
+
+[OK] **Completed**
