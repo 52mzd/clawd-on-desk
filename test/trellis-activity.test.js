@@ -1703,6 +1703,44 @@ describe("trellis-activity readArchiveList", () => {
     assert.deepStrictEqual(h.fakeFs.writeOps, [], "spec tree stays read-only");
   });
 
+  it("readSpecTree reports fill status and reference counts (v7 R6)", async () => {
+    const h = makeArchiveHarness();
+    addSpecDoc(h.fakeFs, "frontend/index.md", "# Frontend\n\n" + Array.from({ length: 6 }, (_, i) => `Body line ${i + 1}.`).join("\n"));
+    addSpecDoc(h.fakeFs, "guides/index.md", "# Guide\n\n## Sub heading\n");
+    addSpecDoc(h.fakeFs, "guides/cross-layer-thinking-guide.md", "# Guide\n\nSee `.trellis/spec/frontend/index.md`.");
+    h.activity.setPersistedRoots([PROJECT]);
+    // Task docs referencing a spec by full path and by unique basename.
+    h.fakeFs.add(
+      path.join(PROJECT, ".trellis", "tasks", "09-23-a", "prd.md"),
+      "Uses cross-layer-thinking-guide.md plus .trellis/spec/frontend/index.md",
+    );
+    h.fakeFs.add(
+      path.join(PROJECT, ".trellis", "tasks", "09-23-b", "implement.jsonl"),
+      '{"path":".trellis/spec/frontend/index.md"}',
+    );
+
+    const result = await h.activity.readSpecTree(PROJECT);
+    assert.strictEqual(result.status, "ok");
+    const by = new Map(result.files.map((f) => [f.relPath, f]));
+
+    // Filled doc: past the body-line threshold, referenced by both docs.
+    assert.strictEqual(by.get("frontend/index.md").filled, true);
+    assert.strictEqual(by.get("frontend/index.md").lines, 6);
+    assert.strictEqual(by.get("frontend/index.md").refCount, 2);
+
+    // Heading-only doc reads as unfilled and reports zero body lines.
+    assert.strictEqual(by.get("guides/index.md").filled, false);
+    assert.strictEqual(by.get("guides/index.md").lines, 0);
+    // Below-threshold doc also stays unfilled.
+    assert.strictEqual(by.get("guides/cross-layer-thinking-guide.md").filled, false);
+
+    // A duplicated basename never matches by name — only by full path.
+    assert.strictEqual(by.get("guides/index.md").refCount, 0);
+    // A unique basename mention still counts.
+    assert.strictEqual(by.get("guides/cross-layer-thinking-guide.md").refCount, 1);
+    assert.deepStrictEqual(h.fakeFs.writeOps, [], "spec map stays read-only");
+  });
+
   it("readTaskNetwork resolves parent and children refs from task.json", async () => {
     const h = makeHarness({ sessions: new Map([["pi:net", { agentId: "pi", cwd: CWD }]]) });
     addTask(h.fakeFs, "task-parent", { title: "父任务", status: "in_progress", subtasks: [] });
@@ -1804,6 +1842,7 @@ describe("trellis-activity readArchiveList", () => {
       title: "Newer task",
       parent: null,
       hasChildren: false,
+      priority: null,
       createdAt: "2026-09-18",
       completedAt: "2026-09-20",
       completedAtMs: Date.parse("2026-09-20"),
@@ -1960,6 +1999,7 @@ describe("trellis-activity readActiveList", () => {
       phase: "plan",
       progress: null,
       parent: null,
+      priority: null,
       hasChildren: false,
       cwd: PROJECT,
     });

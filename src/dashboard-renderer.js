@@ -1139,6 +1139,10 @@ const trellisView = {
   // Session-level UI state, never persisted: null = merged "all"
   // view, otherwise the registered root the lists are filtered to.
   selectedRoot: null,
+  // v7 R5: the roots panel is now a secondary "manage projects" drawer.
+  // The one-line project bar is the primary control; the drawer holds the
+  // full paths and the remove buttons. Session-level, not persisted.
+  manageOpen: false,
   active: { loading: false, seq: 0, loaded: false, tasks: [], error: false },
   archive: { loading: false, seq: 0, loaded: false, tasks: [], error: false, openMonths: null },
 };
@@ -1517,8 +1521,15 @@ function openTrellisDetailFromTask(task) {
 }
 
 function buildTrellisRootsSection() {
+  // v7 R5: with roots registered the project bar is the primary control;
+  // this list (full paths + remove buttons) only appears while the ⚙
+  // drawer is open. Error and empty states stay unconditional — they are
+  // the only explanation of why the bar is missing at all.
+  if (!trellisView.rootsError && trellisView.roots.length > 0 && !trellisView.manageOpen) {
+    return null;
+  }
   const section = document.createElement("div");
-  section.className = "trellis-view-section";
+  section.className = "trellis-view-section trellis-roots-section";
 
   const titleRow = document.createElement("div");
   titleRow.className = "trellis-view-section-title";
@@ -1531,17 +1542,6 @@ function buildTrellisRootsSection() {
     void addTrellisRootViaPicker();
   });
   titleRow.appendChild(add);
-  // v4-a: browse this project's .trellis/spec in the spec-map overlay.
-  if (trellisView.roots.length > 0) {
-    const spec = document.createElement("button");
-    spec.type = "button";
-    spec.className = "trellis-view-add-root";
-    spec.textContent = t("dashboardTrellisSpecOpen");
-    spec.addEventListener("click", () => {
-      openTrellisSpec(trellisView.selectedRoot || trellisView.roots[0]);
-    });
-    titleRow.appendChild(spec);
-  }
   section.appendChild(titleRow);
 
   if (trellisView.rootsError) {
@@ -1747,15 +1747,20 @@ function buildTrellisSplitRow(task, meta, labels, archived = false) {
 
   const main = document.createElement("div");
   main.className = "trellis-split-row-main";
-  main.appendChild(createText("span", "trellis-split-row-title", task.title || task.taskPath || "?"));
+  // Title line: title + priority chip + origin tag share one flex row so
+  // the chip hugs the title instead of stacking under it.
+  const headRow = document.createElement("div");
+  headRow.className = "trellis-split-row-head";
+  headRow.appendChild(createText("span", "trellis-split-row-title", task.title || task.taskPath || "?"));
   // Origin tag: merged "all" view only, and only for rows that belong to
   // a registered root — same semantics and class as the v6 tree rows
   // (trellis-task-project), so disambiguated labels survive the split
   // migration while filtered / session-resolved rows stay untagged.
   const originLabel = trellisRowProjectLabel(task, labels);
   if (originLabel) {
-    main.appendChild(createText("span", "trellis-task-project", originLabel));
+    headRow.appendChild(createText("span", "trellis-task-project", originLabel));
   }
+  main.appendChild(headRow);
   const subBits = [];
   if (task.sessions && task.sessions.length > 0) {
     subBits.push(t("dashboardTrellisBoundSessions").replace("{n}", String(task.sessions.length)));
@@ -1764,8 +1769,22 @@ function buildTrellisSplitRow(task, meta, labels, archived = false) {
   if (meta && meta.hasChildren) {
     subBits.push(t("dashboardTrellisSplitChildren").replace("{n}", String(childCount != null ? childCount : "")));
   }
-  if (subBits.length > 0) {
-    main.appendChild(createText("span", "trellis-split-row-sub", subBits.join(" · ")));
+  // Priority chip (v7 R7) rides the sub line, ahead of the metadata bits:
+  // P0/P1 highlight, P2 stays muted. The chip text is the badge itself
+  // (locale-independent), the modifier class carries the rank.
+  const priority = normalizeTrellisPriority(task.priority);
+  if (priority || subBits.length > 0) {
+    const sub = document.createElement("div");
+    sub.className = "trellis-split-row-sub";
+    if (priority) {
+      const chip = createText("span", `trellis-priority pri-${priority}`, priority.toUpperCase());
+      chip.setAttribute("aria-label", t("dashboardTrellisPriority").replace("{p}", priority.toUpperCase()));
+      sub.appendChild(chip);
+    }
+    if (subBits.length > 0) {
+      sub.appendChild(createText("span", "trellis-split-row-sub-text", subBits.join(" · ")));
+    }
+    main.appendChild(sub);
   }
   row.appendChild(main);
 
@@ -2162,7 +2181,44 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
   return section;
 }
 
-function buildTrellisFilterSection() {
+function buildTrellisFilterChips(labels, activeCounts, archiveCounts) {
+  const chips = document.createElement("div");
+  chips.className = "trellis-filter-chips";
+
+  const chip = (next, label, count, empty) => {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = "trellis-filter-chip";
+    if (empty) el.classList.add("trellis-filter-chip-empty");
+    if (next === trellisView.selectedRoot) el.classList.add("is-active");
+    el.setAttribute("aria-pressed", next === trellisView.selectedRoot ? "true" : "false");
+    el.appendChild(createText("span", "trellis-filter-chip-label", label));
+    el.appendChild(createText("span", "trellis-filter-count", String(count)));
+    el.addEventListener("click", () => {
+      trellisView.selectedRoot = next;
+      lastTrellisViewSignature = null;
+      renderTrellisView();
+    });
+    return el;
+  };
+
+  chips.appendChild(chip(null, t("dashboardTrellisFilterAll"), trellisView.active.tasks.length, false));
+  for (const root of trellisView.roots) {
+    const count = activeCounts.get(root) || 0;
+    const empty = count === 0 && (archiveCounts.get(root) || 0) === 0;
+    // Tooltip carries the full path (same convention as the roots rows);
+    // empty roots dim but stay clickable — the empty view is the point.
+    const el = chip(root, labels.get(root) || root, count, empty);
+    el.title = root;
+    chips.appendChild(el);
+  }
+  return chips;
+}
+
+// v7 R5 — the single project bar that replaces the old roots card plus
+// its separate filter card: title, chips, the spec-map entry and the ⚙
+// toggle that reveals the manage drawer below it.
+function buildTrellisProjectBar() {
   if (trellisView.rootsError || !trellisView.roots.length) return null;
 
   const labels = buildTrellisRootLabels(trellisView.roots);
@@ -2188,39 +2244,35 @@ function buildTrellisFilterSection() {
     "trellis-filter-title",
     selected === null ? t("dashboardTrellisFilterAll") : labels.get(selected) || selected
   ));
+
+  const spec = document.createElement("button");
+  spec.type = "button";
+  // Distinct class from `trellis-view-add-root`: the spec-map entry and
+  // the add-root control live in different places and must stay separately
+  // addressable.
+  spec.className = "trellis-spec-open";
+  spec.textContent = t("dashboardTrellisSpecOpen");
+  spec.addEventListener("click", () => {
+    openTrellisSpec(trellisView.selectedRoot || trellisView.roots[0]);
+  });
+  titleRow.appendChild(spec);
+
+  const manage = document.createElement("button");
+  manage.type = "button";
+  manage.className = "trellis-filter-manage";
+  if (trellisView.manageOpen) manage.classList.add("is-active");
+  manage.textContent = "⚙";
+  manage.title = t("dashboardTrellisRootsManage");
+  manage.setAttribute("aria-expanded", trellisView.manageOpen ? "true" : "false");
+  manage.setAttribute("aria-label", t("dashboardTrellisRootsManage"));
+  manage.addEventListener("click", () => {
+    trellisView.manageOpen = !trellisView.manageOpen;
+    lastTrellisViewSignature = null;
+    renderTrellisView();
+  });
+  titleRow.appendChild(manage);
   section.appendChild(titleRow);
-
-  const chips = document.createElement("div");
-  chips.className = "trellis-filter-chips";
-
-  const chip = (next, label, count, empty) => {
-    const el = document.createElement("button");
-    el.type = "button";
-    el.className = "trellis-filter-chip";
-    if (empty) el.classList.add("trellis-filter-chip-empty");
-    if (next === selected) el.classList.add("is-active");
-    el.setAttribute("aria-pressed", next === selected ? "true" : "false");
-    el.appendChild(createText("span", "trellis-filter-chip-label", label));
-    el.appendChild(createText("span", "trellis-filter-count", String(count)));
-    el.addEventListener("click", () => {
-      trellisView.selectedRoot = next;
-      lastTrellisViewSignature = null;
-      renderTrellisView();
-    });
-    return el;
-  };
-
-  chips.appendChild(chip(null, t("dashboardTrellisFilterAll"), trellisView.active.tasks.length, false));
-  for (const root of trellisView.roots) {
-    const count = activeCounts.get(root) || 0;
-    const empty = count === 0 && (archiveCounts.get(root) || 0) === 0;
-    // Tooltip carries the full path (same convention as the roots rows);
-    // empty roots dim but stay clickable — the empty view is the point.
-    const el = chip(root, labels.get(root) || root, count, empty);
-    el.title = root;
-    chips.appendChild(el);
-  }
-  section.appendChild(chips);
+  section.appendChild(buildTrellisFilterChips(labels, activeCounts, archiveCounts));
   return section;
 }
 
@@ -2233,6 +2285,7 @@ function computeTrellisViewSignature() {
     rootsError: trellisView.rootsError,
     noProjectsHint: trellisView.noProjectsHint,
     selectedRoot: trellisView.selectedRoot,
+    manageOpen: trellisView.manageOpen,
     active: {
       loading: trellisView.active.loading,
       loaded: trellisView.active.loaded,
@@ -2258,9 +2311,10 @@ function renderTrellisView() {
   lastTrellisViewSignature = signature;
 
   const fragment = document.createDocumentFragment();
-  fragment.appendChild(buildTrellisRootsSection());
-  const filterSection = buildTrellisFilterSection();
-  if (filterSection) fragment.appendChild(filterSection);
+  const projectBar = buildTrellisProjectBar();
+  if (projectBar) fragment.appendChild(projectBar);
+  const rootsSection = buildTrellisRootsSection();
+  if (rootsSection) fragment.appendChild(rootsSection);
   // The filter is render-layer only: the full lists stay in memory and
   // each rebuild slices them down to the selected root BEFORE the tree is
   // built, so the nesting always reflects the filtered view (a parent
@@ -2314,6 +2368,15 @@ function initDashboardViewSwitch() {
 // 200-task archive navigable without an unbounded flat list. Each row opens
 // the same detail overlay as live tasks — taskPath already points into
 // tasks/archive/<month>/, which readTaskDetail answers.
+
+// Priority badge (v7 R7). task.py writes "P0".."P2"; tolerate a bare
+// digit from hand-written task.json files, and treat anything else as
+// unset so the row never shows a rank it cannot order.
+function normalizeTrellisPriority(value) {
+  if (typeof value !== "string") return null;
+  const match = /^p?([0-2])$/i.exec(value.trim());
+  return match ? `p${match[1]}` : null;
+}
 
 function formatTrellisArchiveDuration(ms) {
   if (typeof ms !== "number" || !Number.isFinite(ms) || ms <= 0) return "—";
@@ -2771,8 +2834,25 @@ function buildTrellisSpecCard() {
       const item = document.createElement("button");
       item.type = "button";
       item.className = "trellis-spec-file-button";
+      // v7 R6: fill status + reference count. `filled === false` means the
+      // doc exists but still holds only headings — the placeholder shape
+      // `trellis init` writes. `null` means the read failed, so we stay
+      // quiet instead of claiming it is empty.
+      if (file.filled === false) item.classList.add("is-empty");
       if (file.relPath === trellisSpec.selected) item.setAttribute("aria-current", "true");
-      item.appendChild(document.createTextNode(file.relPath));
+      item.appendChild(createText("span", "trellis-spec-file-name", file.relPath));
+      if (file.filled === false) {
+        item.appendChild(createText("span", "trellis-spec-file-empty", t("dashboardTrellisSpecEmptyDoc")));
+      } else if (typeof file.lines === "number" && file.lines > 0) {
+        item.appendChild(
+          createText("span", "trellis-spec-file-lines", t("dashboardTrellisSpecLines").replace("{n}", String(file.lines)))
+        );
+      }
+      if (file.refCount > 0) {
+        const refs = createText("span", "trellis-spec-file-refs", `⛓${file.refCount}`);
+        refs.setAttribute("title", t("dashboardTrellisSpecRefs").replace("{n}", String(file.refCount)));
+        item.appendChild(refs);
+      }
       item.addEventListener("click", () => selectTrellisSpecDoc(file.relPath));
       list.appendChild(item);
     }
@@ -2811,7 +2891,7 @@ function renderTrellisSpec() {
   const signature = JSON.stringify([
     trellisSpec.loading,
     trellisSpec.root,
-    trellisSpec.files.map((f) => `${f.group}|${f.relPath}`),
+    trellisSpec.files.map((f) => `${f.group}|${f.relPath}|${f.filled}|${f.lines}|${f.refCount}`),
     trellisSpec.truncated,
     trellisSpec.selected,
     [...trellisSpecDocs.entries()].map(([k, v]) => [k, v.loading, v.result && v.result.status, v.result && v.result.truncated]),
@@ -2996,6 +3076,21 @@ function createTrellisDetailCheckItem(item) {
 function appendTrellisDetailMeta(card, task) {
   const meta = document.createElement("div");
   meta.className = "trellis-detail-meta";
+  // Priority (v7 R7) leads the meta row: it is the field that decides
+  // whether the task gets looked at at all.
+  const priority = normalizeTrellisPriority(task.priority);
+  if (priority) {
+    const chip = createText(
+      "span",
+      `trellis-detail-meta-item trellis-priority pri-${priority}`,
+      priority.toUpperCase()
+    );
+    chip.setAttribute(
+      "aria-label",
+      t("dashboardTrellisDetailPriority").replace("{p}", priority.toUpperCase())
+    );
+    meta.appendChild(chip);
+  }
   if (task.createdAt) {
     meta.appendChild(createText(
       "span",

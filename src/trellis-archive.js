@@ -9,23 +9,35 @@
 // already injects, so both consumers stay testable off the real disk.
 //
 // Entry shape (frozen, IPC/JSON-safe):
-//   { name, month, dir, title, parent, createdAt, completedAt, completedAtMs }
+//   { name, month, dir, title, parent, hasChildren, priority, createdAt,
+//     completedAt, completedAtMs }
 //     name/completedAt semantics mirror task.py: createdAt/completedAt are
 //     YYYY-MM-DD local-date strings, and a missing/invalid completedAt falls
 //     back to the task directory's mtime (exposed as completedAtMs only, so
 //     each consumer projects it into its own time zone — recap freezes it,
 //     the dashboard renders a local date). parent is the task.json `parent`
 //     task NAME (string) or null — the dashboard's archive tree resolves it
-//     by name across months; the recap scan ignores it. A task.json that
-//     cannot be read or parsed is skipped, exactly like the recap scan
-//     always did.
+//     by name across months; the recap scan ignores it. priority is the
+//     normalized "p0"|"p1"|"p2" badge key (null when unset/invalid). A
+//     task.json that cannot be read or parsed is skipped, exactly like the
+//     recap scan always did.
 
 const path = require("path");
 
 const MONTH_DIR_PATTERN = /^\d{4}-\d{2}$/;
+const PRIORITY_PATTERN = /^p?([0-2])$/;
 
 function isValidDateString(value) {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+// task.py stores priority as "P0".."P2"; older hand-written task.json files
+// may carry a bare digit. Anything else is unset — the renderer must not
+// invent a badge for values it cannot rank.
+function normalizePriority(value) {
+  if (typeof value !== "string") return null;
+  const match = PRIORITY_PATTERN.exec(value.trim().toLowerCase());
+  return match ? `p${match[1]}` : null;
 }
 
 function listDirectories(fsApi, dirPath) {
@@ -97,6 +109,7 @@ function listArchivedTasks(fsApi, archiveBase, options) {
         title,
         parent,
         hasChildren,
+        priority: normalizePriority(taskJson.priority),
         createdAt: isValidDateString(taskJson.createdAt) ? taskJson.createdAt : null,
         completedAt,
         completedAtMs,
@@ -106,4 +119,4 @@ function listArchivedTasks(fsApi, archiveBase, options) {
   return entries;
 }
 
-module.exports = { listArchivedTasks, listDirectories, MONTH_DIR_PATTERN };
+module.exports = { listArchivedTasks, listDirectories, MONTH_DIR_PATTERN, normalizePriority };

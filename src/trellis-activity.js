@@ -34,7 +34,7 @@
 const path = require("path");
 const { parseImplementChecklist, truncateNextStep } = require("./trellis-checklist");
 const { compareDocNames } = require("./trellis-doc-renderer");
-const { listArchivedTasks } = require("./trellis-archive");
+const { listArchivedTasks, normalizePriority } = require("./trellis-archive");
 const { normalizeRootPath } = require("./trellis-roots");
 const {
   sessionPointerKey,
@@ -698,6 +698,10 @@ function createTrellisActivity(options) {
         phase,
         progress: deriveProgress(taskJson.value, checklist),
       };
+      // Priority badge (v7 R7): normalized to "p0"|"p1"|"p2", attached
+      // only when set so the legacy TrellisInfo shape stays byte-identical.
+      const priority = normalizePriority(taskJson.value.priority);
+      if (priority) info.priority = priority;
       // Parent link for the Dashboard's task-tree grouping: task.py writes
       // it as a sibling task name (task.json "parent"). Absent/blank stays
       // unset so the legacy TrellisInfo shape is byte-identical.
@@ -727,6 +731,7 @@ function createTrellisActivity(options) {
       title: pickTitle(value, archivedDir),
       phase: "done",
       progress: deriveProgress(value, await readChecklist(archivedDir)),
+      priority: normalizePriority(value.priority),
     };
   }
 
@@ -870,6 +875,7 @@ function createTrellisActivity(options) {
           implementChecklist: checklist,
         }),
         rawStatus: typeof value.status === "string" ? value.status : null,
+        priority: normalizePriority(value.priority),
         createdAt: sanitizeTaskDate(value.createdAt),
         completedAt: sanitizeTaskDate(value.completedAt),
         archived,
@@ -967,6 +973,78 @@ function createTrellisActivity(options) {
   // capped so a pathological tree cannot stall the round-trip.
   const SPEC_TREE_MAX_DEPTH = 3;
   const SPEC_TREE_MAX_FILES = 200;
+  // v7 R6: the spec map also reports whether each doc has a body and how
+  // many task documents reference it. Both passes are bounded — the whole
+  // task tree is walked at most SPEC_REF_MAX_FILES times for at most
+  // SPEC_REF_MAX_BYTES of text, so a huge repo cannot stall the round-trip.
+  const SPEC_REF_MAX_FILES = 400;
+  const SPEC_REF_MAX_BYTES = 2 * 1024 * 1024;
+  const SPEC_REF_DOC_NAMES = ["prd.md", "design.md", "implement.md", "implement.jsonl", "check.jsonl"];
+
+  // A doc counts as "filled" once it carries at least SPEC_FILL_MIN_LINES
+  // body lines — blank lines, headings and `//` comments do not count. The
+  // placeholder specs written by `trellis init` are all headings, so they
+  // read as 待填 instead of as content (PRD R6).
+  const SPEC_FILL_MIN_LINES = 5;
+
+  function countSpecBodyLines(text) {
+    let n = 0;
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed && !trimmed.startsWith("#")) n += 1;
+    }
+    return n;
+  }
+
+  // Reference count for the spec map (v7 R6): a spec doc is referenced when
+  // a task document mentions its repo-relative path, or its bare file name
+  // when that name is unambiguous within the spec tree (a shared name like
+  // index.md would otherwise collect false positives).
+  async function countSpecRefs(root, relPaths) {
+    const counts = new Map();
+    if (relPaths.length === 0) return counts;
+    const nameCounts = new Map();
+    for (const relPath of relPaths) {
+      const bare = relPath.slice(relPath.lastIndexOf("/") + 1);
+      nameCounts.set(bare, (nameCounts.get(bare) || 0) + 1);
+    }
+    const needles = relPaths.map((relPath) => {
+      const bare = relPath.slice(relPath.lastIndexOf("/") + 1);
+      return {
+        relPath,
+        full: `.trellis/spec/${relPath}`,
+        bare: nameCounts.get(bare) === 1 ? bare : null,
+      };
+    });
+    const tasksDir = path.join(root, ".trellis", "tasks");
+    const queue = [{ rel: "", depth: 0 }];
+    let scanned = 0;
+    let bytes = 0;
+    while (queue.length > 0 && scanned < SPEC_REF_MAX_FILES && bytes < SPEC_REF_MAX_BYTES) {
+      const { rel, depth } = queue.shift();
+      if (depth > 4) continue;
+      const dir = rel ? path.join(tasksDir, rel) : tasksDir;
+      const entries = await readdirQuiet(dir);
+      if (!entries) continue;
+      for (const name of entries) {
+        if (name.startsWith(".")) continue;
+        if (SPEC_REF_DOC_NAMES.includes(name)) {
+          const text = await readTextQuiet(path.join(dir, name));
+          if (text === null) continue;
+          scanned += 1;
+          bytes += text.length;
+          for (const needle of needles) {
+            if (text.includes(needle.full) || (needle.bare && text.includes(needle.bare))) {
+              counts.set(needle.relPath, (counts.get(needle.relPath) || 0) + 1);
+            }
+          }
+          continue;
+        }
+        if (depth < 4) queue.push({ rel: rel ? `${rel}/${name}` : name, depth: depth + 1 });
+      }
+    }
+    return counts;
+  }
 
   function resolveTrustedSpecDir(root) {
     if (typeof root !== "string" || !root.trim()) return null;
@@ -996,13 +1074,28 @@ function createTrellisActivity(options) {
           const group = rel ? rel.split("/")[0] : "spec";
           files.push({ relPath: childRel, group });
           continue;
-        }
-        // Descend only into plain-named directories below the cap.
+        }        // Descend only into plain-named directories below the cap.
         if (depth < SPEC_TREE_MAX_DEPTH) {
           queue.push({ rel: childRel, depth: depth + 1 });
         }
       }
     }
+    // v7 R6: fill status + reference count. A doc that vanished between the
+    // listing and this read keeps filled=null so the UI can say "unknown"
+    // rather than claiming it is empty.
+    for (const file of files) {
+      const text = await readTextQuiet(path.join(resolved.specDir, ...file.relPath.split("/")));
+      if (text === null) {
+        file.filled = null;
+        file.lines = null;
+        continue;
+      }
+      const lines = countSpecBodyLines(text);
+      file.lines = lines;
+      file.filled = lines >= SPEC_FILL_MIN_LINES;
+    }
+    const refs = await countSpecRefs(resolved.normalizedRoot, files.map((file) => file.relPath));
+    for (const file of files) file.refCount = refs.get(file.relPath) || 0;
     return { status: "ok", files, truncated: files.length >= SPEC_TREE_MAX_FILES };
   }
 
@@ -1180,6 +1273,7 @@ function createTrellisActivity(options) {
         title: entry.title || entry.name,
         parent: entry.parent,
         hasChildren: entry.hasChildren === true,
+        priority: entry.priority,
         createdAt: entry.createdAt,
         completedAt: entry.completedAt,
         completedAtMs: entry.completedAtMs,
@@ -1197,7 +1291,8 @@ function createTrellisActivity(options) {
   // module, never from the request. One shot per call, never cached.
   //
   // Returns { status: "ok", tasks }, each entry IPC/JSON-safe:
-  //   { taskPath, title, phase, progress: {done,total}|null, parent: string|null, cwd }
+  //   { taskPath, title, phase, progress: {done,total}|null, parent: string|null,
+  //     hasChildren: boolean, priority: "p0"|"p1"|"p2"|null, cwd }
   // taskPath is the snapshot-relative posix path readTaskDetail accepts;
   // cwd is the trusted cwd that owns the task's root.
   const ACTIVE_LIST_MAX = 200;
@@ -1228,6 +1323,7 @@ function createTrellisActivity(options) {
           progress: info.progress,
           parent: typeof info.parent === "string" ? info.parent : null,
           hasChildren: info.hasChildren === true,
+          priority: info.priority || null,
           cwd,
         };
         if (info.nextStep) task.nextStep = info.nextStep;

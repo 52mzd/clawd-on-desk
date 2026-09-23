@@ -583,6 +583,46 @@ h1 {
   margin: 0 0 14px;
 }
 
+/* v7 R5: the project bar's trailing controls — the spec-map entry and the
+   ⚙ drawer toggle that reveals the root list below. */
+.trellis-filter-section .trellis-view-section-title .trellis-spec-open {
+  margin-left: auto;
+  height: 22px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.trellis-spec-open:hover {
+  background: var(--hover, rgba(127, 127, 127, 0.14));
+  color: var(--text);
+}
+
+.trellis-filter-manage {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.trellis-filter-manage:hover,
+.trellis-filter-manage.is-active {
+  background: var(--hover, rgba(127, 127, 127, 0.14));
+  color: var(--text);
+}
+
 .trellis-filter-chips {
   display: flex;
   flex-wrap: wrap;
@@ -640,6 +680,30 @@ h1 {
   white-space: nowrap;
   color: var(--subtle);
   font-size: 10px;
+}
+
+/* Priority badge (v7 R7). The rank lives in the modifier class, so P0/P1
+   can shout while P2 stays as quiet as the origin tag. */
+.trellis-priority {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 15px;
+  color: var(--muted);
+  background: var(--hover, rgba(127, 127, 127, 0.14));
+}
+
+.trellis-priority.pri-p0 {
+  color: #fff;
+  background: var(--danger, #e5484d);
+}
+
+.trellis-priority.pri-p1 {
+  color: #fff;
+  background: var(--warn, rgba(230, 160, 60, 0.95));
 }
 
 .trellis-archive-month {
@@ -1151,6 +1215,14 @@ h1 {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+/* Title line: title + priority chip + origin tag. */
+.trellis-split-row-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .trellis-split-row-title {
@@ -1772,6 +1844,9 @@ h1 {
 }
 
 .trellis-spec-file-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   text-align: left;
   font-size: 12.5px;
   padding: 5px 8px;
@@ -1780,6 +1855,40 @@ h1 {
   background: transparent;
   cursor: pointer;
   color: inherit;
+}
+
+/* v7 R6: fill status + reference count per spec doc. An empty doc (only
+   headings — the shape `trellis init` writes) dims and says so instead of
+   looking like a filled one. */
+.trellis-spec-file-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trellis-spec-file-empty,
+.trellis-spec-file-lines,
+.trellis-spec-file-refs {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.trellis-spec-file-empty {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--hover, rgba(127, 127, 127, 0.14));
+}
+
+.trellis-spec-file-refs {
+  color: var(--accent, #6aa9ff);
+}
+
+.trellis-spec-file-button.is-empty .trellis-spec-file-name {
+  color: var(--muted);
 }
 
 .trellis-spec-file-button:hover {

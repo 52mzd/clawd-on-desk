@@ -403,12 +403,16 @@ function loadDashboard({
   rootsError = null,
   addResult = null,
   removeResult = null,
+  specResult = null,
+  specError = null,
 } = {}) {
   const elements = new Map(
     [
       "content", "title", "count", "quickBanner", "quotaSummary", "trellisPanel",
       "trellisDetailOverlay", "trellisView", "viewSessionsTab", "viewTrellisTab",
       "sessionsHeaderExtras",
+      // v7 R6 spec map overlay (its file list / doc pane are built inline).
+      "trellisSpecOverlay",
     ].map((id) => [id, new FakeElement("div")]),
   );
   // The real page starts with <main id="trellisView" hidden>; mirror that.
@@ -435,6 +439,7 @@ function loadDashboard({
   const activeCalls = [];
   const rootsCalls = [];
   const addRootCalls = [];
+  const specCalls = [];
   const removeRootCalls = [];
   let snapshotListener = null;
   let renderInterval = null;
@@ -483,6 +488,11 @@ function loadDashboard({
       if (activeError) throw activeError;
       return typeof activeResult === "function" ? activeResult() : activeResult;
     },
+    getTrellisSpecTree: async (payload) => {
+      specCalls.push(payload);
+      if (specError) throw specError;
+      return typeof specResult === "function" ? specResult(payload) : specResult;
+    },
     listTrellisRoots: async () => {
       rootsCalls.push(null);
       if (rootsError) throw rootsError;
@@ -527,6 +537,7 @@ function loadDashboard({
   return {
     panel: elements.get("trellisPanel"),
     overlay: elements.get("trellisDetailOverlay"),
+    specOverlay: elements.get("trellisSpecOverlay"),
     view: elements.get("trellisView"),
     content: elements.get("content"),
     titleEl: elements.get("title"),
@@ -539,6 +550,7 @@ function loadDashboard({
     archiveCalls,
     activeCalls,
     rootsCalls,
+    specCalls,
     addRootCalls,
     removeRootCalls,
     docListeners,
@@ -1173,6 +1185,10 @@ describe("dashboard trellis independent view", () => {
     assert.equal(app.titleEl.textContent, i18n.en.dashboardViewTrellis);
 
     assert.equal(app.rootsCalls.length, 1);
+    // v7 R5: the project bar is the primary control; the root list (full
+    // paths + remove) lives behind the ⚙ drawer toggle.
+    assert.equal(byClass(app.view, "trellis-root-row").length, 0, "the manage drawer starts closed");
+    await byClass(app.view, "trellis-filter-manage")[0].dispatch("click");
     const rows = byClass(app.view, "trellis-root-row");
     assert.equal(rows.length, 1);
     assert.ok(textOf(rows[0]).includes("/proj/s1"));
@@ -1273,6 +1289,7 @@ describe("dashboard trellis independent view", () => {
     await flush();
     await switchToTrellis(app);
 
+    await byClass(app.view, "trellis-filter-manage")[0].dispatch("click");
     await byClass(app.view, "trellis-view-add-root")[0].dispatch("click");
     registered = ["/proj/s1", "/proj/two"];
     await flush();
@@ -1762,8 +1779,10 @@ describe("dashboard trellis project filter (rendering)", () => {
     assert.equal(byClass(app.view, "trellis-split-row").length, 1);
 
     // Removing the selected root refreshes the roots list; the stale
-    // selection must not silently filter everything out.
+    // selection must not silently filter everything out. Removal lives in
+    // the ⚙ manage drawer (v7 R5).
     registered = ["/proj/one"];
+    await byClass(app.view, "trellis-filter-manage")[0].dispatch("click");
     await byClass(app.view, "trellis-root-remove")[1].dispatch("click");
     await flush();
     assert.deepEqual(app.removeRootCalls, ["/proj/two"]);
@@ -1798,5 +1817,148 @@ describe("dashboard trellis project filter (rendering)", () => {
     assert.equal(tags.length, 2);
     assert.ok(textOf(tags[0]).includes("proj (one)"));
     assert.ok(textOf(tags[1]).includes("proj (two)"));
+  });
+});
+
+describe("dashboard trellis v7 single view (R5–R7)", () => {
+  const priorityTask = (extra = {}) => ({
+    taskPath: ".trellis/tasks/p0-task",
+    title: "Hotfix",
+    phase: "execute",
+    progress: null,
+    parent: null,
+    priority: "p0",
+    cwd: "/proj/one",
+    ...extra,
+  });
+
+  it("badges a P0 task on its row and on the detail card", async () => {
+    const app = loadDashboard({
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/one"] },
+      activeResult: { status: "ok", tasks: [priorityTask()] },
+      archiveResult: { status: "ok", tasks: [] },
+      detailResult: detailOk({ priority: "p0" }),
+    });
+    await flush();
+    await switchToTrellis(app);
+
+    const chip = byClass(app.view, "trellis-priority");
+    assert.equal(chip.length, 1);
+    assert.ok(chip[0].classList.contains("pri-p0"), "the rank travels in the modifier class");
+    assert.equal(textOf(chip[0]), "P0");
+    assert.ok(byClass(app.view, "trellis-split-row-sub").length > 0, "the chip rides the sub line");
+
+    await byClass(app.view, "trellis-split-row")[0].dispatch("click");
+    await flush();
+    // v7 renders the detail inside the split pane (the overlay stays for
+    // the session-driven cards only).
+    const pane = byClass(app.view, "trellis-split-detail")[0];
+    const detailChip = byClass(pane, "trellis-priority");
+    assert.equal(detailChip.length, 1);
+    assert.ok(detailChip[0].classList.contains("pri-p0"));
+    assert.ok(detailChip[0].classList.contains("trellis-detail-meta-item"));
+  });
+
+  it("renders no badge for tasks without a usable priority", async () => {
+    const app = loadDashboard({
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/one"] },
+      activeResult: { status: "ok", tasks: [
+        { taskPath: ".trellis/tasks/a", title: "A", phase: "plan", progress: null, parent: null, cwd: "/proj/one" },
+        { taskPath: ".trellis/tasks/b", title: "B", phase: "plan", progress: null, parent: null, priority: "urgent", cwd: "/proj/one" },
+        { taskPath: ".trellis/tasks/c", title: "C", phase: "plan", progress: null, parent: null, priority: null, cwd: "/proj/one" },
+      ] },
+      archiveResult: { status: "ok", tasks: [] },
+    });
+    await flush();
+    await switchToTrellis(app);
+    assert.equal(
+      byClass(app.view, "trellis-priority").length,
+      0,
+      "an unrankable value must not be rendered as a badge",
+    );
+  });
+
+  it("folds the root list behind the project bar's manage toggle", async () => {
+    const app = loadDashboard({
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/one", "/proj/two"] },
+      activeResult: { status: "ok", tasks: [
+        { taskPath: ".trellis/tasks/a", title: "A", phase: "plan", progress: null, parent: null, cwd: "/proj/one" },
+      ] },
+      archiveResult: { status: "ok", tasks: [] },
+    });
+    await flush();
+    await switchToTrellis(app);
+
+    // The bar is primary: title + chips + spec entry + ⚙.
+    assert.equal(textOf(byClass(app.view, "trellis-filter-title")[0]), i18n.en.dashboardTrellisFilterAll);
+    assert.equal(byClass(app.view, "trellis-filter-chip").length, 3);
+    assert.equal(byClass(app.view, "trellis-spec-open").length, 1);
+    const manage = byClass(app.view, "trellis-filter-manage");
+    assert.equal(manage.length, 1);
+    assert.equal(manage[0].attributes["aria-expanded"], "false");
+
+    // The full-path list (and its remove buttons) stays out of the way.
+    assert.equal(byClass(app.view, "trellis-root-row").length, 0);
+    assert.equal(byClass(app.view, "trellis-roots-section").length, 0);
+
+    await manage[0].dispatch("click");
+    const rows = byClass(app.view, "trellis-root-row");
+    assert.equal(rows.length, 2, "⚙ reveals the manage drawer");
+    assert.ok(textOf(rows[0]).includes("/proj/one"));
+    assert.equal(byClass(app.view, "trellis-root-remove").length, 2);
+    assert.equal(byClass(app.view, "trellis-filter-manage")[0].attributes["aria-expanded"], "true");
+
+    await byClass(app.view, "trellis-filter-manage")[0].dispatch("click");
+    assert.equal(byClass(app.view, "trellis-root-row").length, 0, "⚙ folds it away again");
+  });
+
+  it("opens the spec map from the project bar and marks unfilled docs with reference counts", async () => {
+    const app = loadDashboard({
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/one"] },
+      activeResult: { status: "ok", tasks: [] },
+      archiveResult: { status: "ok", tasks: [] },
+      specResult: { status: "ok", truncated: false, files: [
+        { group: "frontend", relPath: "frontend/index.md", filled: true, lines: 12, refCount: 3 },
+        { group: "guides", relPath: "guides/index.md", filled: false, lines: 0, refCount: 0 },
+        { group: "guides", relPath: "guides/legacy.md", filled: null, lines: null, refCount: 1 },
+      ] },
+    });
+    await flush();
+    await switchToTrellis(app);
+
+    assert.deepEqual(app.specCalls, [], "nothing is fetched before the entry is clicked");
+    await byClass(app.view, "trellis-spec-open")[0].dispatch("click");
+    await flush();
+    assert.deepEqual(app.specCalls, [{ root: "/proj/one" }]);
+
+    const files = byClass(app.specOverlay, "trellis-spec-file-button");
+    assert.equal(files.length, 3);
+    assert.deepEqual(
+      files.map((el) => textOf(byClass(el, "trellis-spec-file-name")[0])),
+      ["frontend/index.md", "guides/index.md", "guides/legacy.md"],
+    );
+
+    // Filled docs show a body-line count, never a "filled" badge.
+    assert.equal(textOf(byClass(files[0], "trellis-spec-file-lines")[0]), "12 lines");
+    assert.equal(byClass(files[0], "trellis-spec-file-empty").length, 0);
+    assert.equal(textOf(byClass(files[0], "trellis-spec-file-refs")[0]), "⛓3");
+
+    // Heading-only docs read as empty instead of looking filled.
+    assert.ok(files[1].classList.contains("is-empty"));
+    assert.equal(
+      textOf(byClass(files[1], "trellis-spec-file-empty")[0]),
+      i18n.en.dashboardTrellisSpecEmptyDoc,
+    );
+    assert.equal(byClass(files[1], "trellis-spec-file-refs").length, 0);
+
+    // A doc that could not be read stays neutral: no empty badge, no count.
+    assert.ok(!files[2].classList.contains("is-empty"));
+    assert.equal(byClass(files[2], "trellis-spec-file-empty").length, 0);
+    assert.equal(byClass(files[2], "trellis-spec-file-lines").length, 0);
+    assert.equal(textOf(byClass(files[2], "trellis-spec-file-refs")[0]), "⛓1");
   });
 });
