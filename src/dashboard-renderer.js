@@ -2603,7 +2603,10 @@ function buildTrellisNetworkCard() {
   const hasParent = result.parent && !result.parent.missing;
   const children = Array.isArray(result.children) ? result.children : [];
   const liveChildren = children.filter((c) => c && !c.missing);
-  if (!hasParent && liveChildren.length === 0 && children.length === 0) {
+  const specGroups = Array.isArray(result.specGroups) ? result.specGroups : [];
+  const prdGroups = Array.isArray(result.prdGroups) ? result.prdGroups : [];
+  if (!hasParent && liveChildren.length === 0 && children.length === 0
+    && specGroups.length === 0 && prdGroups.length === 0) {
     card.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksEmpty")));
     return card;
   }
@@ -2623,6 +2626,42 @@ function buildTrellisNetworkCard() {
       wrap.appendChild(trellisNetworkRefButton(child));
     }
     if (result.childrenTruncated) {
+      card.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksTruncated")));
+    }
+    card.appendChild(wrap);
+  }
+
+  // ── R2 horizontal edges. Spec docs: “N tasks follow <doc>” groups;
+  // PRD groups additionally lead with the PRD's owning task (a missing
+  // owner renders as a disabled row, mirroring the vertical refs).
+  const refList = (tasks, truncated) => {
+    const wrap = document.createElement("div");
+    wrap.className = "trellis-network-group";
+    for (const ref of tasks) wrap.appendChild(trellisNetworkRefButton(ref));
+    if (truncated) {
+      card.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksTruncated")));
+    }
+    return wrap;
+  };
+  for (const group of specGroups) {
+    card.appendChild(createText(
+      "div",
+      "trellis-spec-group-label",
+      `${t("dashboardTrellisLinksSharedSpec")} · ${group.specPath} (${group.tasks.length})`
+    ));
+    card.appendChild(refList(group.tasks, group.truncated));
+  }
+  for (const group of prdGroups) {
+    card.appendChild(createText(
+      "div",
+      "trellis-spec-group-label",
+      `${t("dashboardTrellisLinksSharedPrd")} (${group.tasks.length})`
+    ));
+    const wrap = document.createElement("div");
+    wrap.className = "trellis-network-group";
+    wrap.appendChild(trellisNetworkRefButton(group.owner));
+    for (const ref of group.tasks) wrap.appendChild(trellisNetworkRefButton(ref));
+    if (group.truncated) {
       card.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksTruncated")));
     }
     card.appendChild(wrap);

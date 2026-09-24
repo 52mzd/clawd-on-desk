@@ -1761,6 +1761,45 @@ describe("trellis-activity readArchiveList", () => {
     assert.deepStrictEqual(h.fakeFs.writeOps, [], "network read stays read-only");
   });
 
+  it("readTaskNetwork collects shared-spec and shared-PRD edges (v7 R2)", async () => {
+    const h = makeHarness({ sessions: new Map([["pi:net3", { agentId: "pi", cwd: CWD }]]) });
+    addTask(h.fakeFs, "task-a", { title: "A", status: "in_progress", subtasks: [] });
+    addTask(h.fakeFs, "task-b", { title: "B", status: "in_progress", subtasks: [] });
+    addTask(h.fakeFs, "task-c", { title: "C", status: "in_progress", subtasks: [] });
+    // A cites the shared spec doc and the archived sibling PRD; B cites both
+    // too (that is the edge); C cites nothing.
+    h.fakeFs.add(path.join(PROJECT, ".trellis", "tasks", "task-a", "prd.md"),
+      "Follows .trellis/spec/frontend/index.md and .trellis/tasks/archive/2026-09/task-old/prd.md");
+    h.fakeFs.add(path.join(PROJECT, ".trellis", "tasks", "task-b", "design.md"),
+      "Also follows .trellis/spec/frontend/index.md; prior art: .trellis/tasks/archive/2026-09/task-old/prd.md");
+    h.activity.setPersistedRoots([PROJECT]);
+
+    const result = await h.activity.readTaskNetwork(CWD, ".trellis/tasks/task-a");
+    assert.strictEqual(result.status, "ok");
+
+    assert.strictEqual(result.specGroups.length, 1);
+    assert.strictEqual(result.specGroups[0].specPath, "frontend/index.md");
+    assert.deepStrictEqual(
+      result.specGroups[0].tasks.map((ref) => ref.taskPath),
+      [".trellis/tasks/task-b"],
+    );
+    assert.strictEqual(result.specGroups[0].truncated, false);
+
+    assert.strictEqual(result.prdGroups.length, 1);
+    assert.strictEqual(result.prdGroups[0].prdPath, ".trellis/tasks/archive/2026-09/task-old");
+    assert.strictEqual(result.prdGroups[0].owner.missing, true, "the cited PRD owner is gone");
+    assert.deepStrictEqual(
+      result.prdGroups[0].tasks.map((ref) => ref.taskPath),
+      [".trellis/tasks/task-b"],
+    );
+
+    // A task that cites nothing reports empty groups, not nulls.
+    const loner = await h.activity.readTaskNetwork(CWD, ".trellis/tasks/task-c");
+    assert.deepStrictEqual(loner.specGroups, []);
+    assert.deepStrictEqual(loner.prdGroups, []);
+    assert.deepStrictEqual(h.fakeFs.writeOps, [], "horizontal edges stay read-only");
+  });
+
   it("readTaskNetwork degrades missing dirs and caps children", async () => {
     const h = makeHarness({ sessions: new Map([["pi:net2", { agentId: "pi", cwd: CWD }]]) });
     const many = Array.from({ length: 25 }, (_, i) => `child-${i}`);

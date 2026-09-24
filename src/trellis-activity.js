@@ -34,7 +34,7 @@
 const path = require("path");
 const { parseImplementChecklist, truncateNextStep } = require("./trellis-checklist");
 const { compareDocNames } = require("./trellis-doc-renderer");
-const { listArchivedTasks, normalizePriority } = require("./trellis-archive");
+const { listArchivedTasks, normalizePriority, MONTH_DIR_PATTERN } = require("./trellis-archive");
 const { normalizeRootPath } = require("./trellis-roots");
 const {
   sessionPointerKey,
@@ -1152,6 +1152,7 @@ function createTrellisActivity(options) {
   // detail channel accepts (snapshot-relative posix), a display title, and
   // an archived flag; unknown ids degrade to {missing} rows instead of
   // failing the whole payload. Evidence source is task.json only.
+  const NETWORK_SIBLING_MAX = 200; // R2 horizontal-edge sibling scan cap
   const NETWORK_REF_MAX = 20;
 
   function taskRefPathFromAbs(absTaskDir) {
@@ -1216,7 +1217,137 @@ function createTrellisActivity(options) {
     for (const name of cap(rawChildren)) {
       children.push(await refFor(name));
     }
-    return { status: "ok", parent, children, childrenTruncated };
+
+    // ── R2 horizontal edges: shared spec docs and shared sibling PRDs,
+    // mirroring list_relations' spec_groups / prd_groups. A sibling that
+    // cites the same `.trellis/spec/<rel>` doc or the same sibling
+    // `prd.md` as this task forms one horizontal edge. Bounded sibling
+    // scan (≤ NETWORK_SIBLING_MAX tasks, ≤ SPEC_REF_MAX_BYTES doc text),
+    // strictly read-only, and never able to fail the answer above — a
+    // mid-walk IO hiccup just yields shorter lists.
+    const specGroups = [];
+    const prdGroups = [];
+    try {
+      const selfName = path.basename(absDir);
+      const tasksDir = MONTH_DIR_PATTERN.test(path.basename(path.dirname(absDir)))
+        ? path.dirname(path.dirname(path.dirname(absDir)))
+        : path.dirname(absDir);
+
+      // What does THIS task cite? A doc is one needle set; a sibling PRD
+      // is a concrete target taskPath.
+      const readTaskDocs = async (dir) => {
+        const names = await readdirQuiet(dir);
+        if (!names) return "";
+        let text = "";
+        for (const name of names) {
+          if (!SPEC_REF_DOC_NAMES.includes(name)) continue;
+          const chunk = await readTextQuiet(path.join(dir, name));
+          if (chunk) text += `\n${chunk}`;
+        }
+        return text;
+      };
+      const selfText = await readTaskDocs(absDir);
+      const specNeedles = new Set();
+      const prdTargets = new Set();
+      if (selfText) {
+        for (const m of selfText.matchAll(/\.trellis\/spec\/([^\s"'`<>)]+?\.md)/g)) specNeedles.add(m[1]);
+        // Absolute references (this repo writes the .trellis-prefixed form)
+        for (const m of selfText.matchAll(/\.trellis\/tasks\/archive\/(\d{4}-\d{2})\/([^\s"'`<>)\/]+)\/prd\.md/g)) {
+          prdTargets.add(`.trellis/tasks/archive/${m[1]}/${m[2]}`);
+        }
+        for (const m of selfText.matchAll(/\.trellis\/tasks\/([^\s"'`<>)\/]+)\/prd\.md/g)) {
+          if (m[1] !== selfName) prdTargets.add(`.trellis/tasks/${m[1]}`);
+        }
+      }
+
+      if (specNeedles.size > 0 || prdTargets.size > 0) {
+        // Candidate siblings: active tasks + archived tasks, fixed two
+        // levels — the layout task.py writes. Skip this task's own dir.
+        const siblings = [];
+        const collect = async (dir, make) => {
+          const names = await readdirQuiet(dir);
+          if (!names) return;
+          for (const name of names) {
+            if (name.startsWith(".")) continue;
+            siblings.push(make(name));
+          }
+        };
+        await collect(tasksDir, (name) => ({ dir: path.join(tasksDir, name), taskPath: `.trellis/tasks/${name}` }));
+        const archiveDir = path.join(tasksDir, "archive");
+        for (const month of (await readdirQuiet(archiveDir)) || []) {
+          if (!MONTH_DIR_PATTERN.test(month)) continue;
+          await collect(path.join(archiveDir, month), (name) => ({
+            dir: path.join(archiveDir, month, name),
+            taskPath: `.trellis/tasks/archive/${month}/${name}`,
+          }));
+        }
+
+        const specHits = new Map();
+        const prdHits = new Map();
+        let scanned = 0;
+        let bytes = 0;
+        for (const sibling of siblings) {
+          if (scanned >= NETWORK_SIBLING_MAX || bytes >= SPEC_REF_MAX_BYTES) break;
+          if (sibling.dir === absDir) continue;
+          const text = await readTaskDocs(sibling.dir);
+          if (!text) continue;
+          scanned += 1;
+          bytes += text.length;
+          let ref = null;
+          const refOnce = async () => {
+            if (ref) return ref;
+            const taskJson = await readJsonObject(path.join(sibling.dir, "task.json"));
+            ref = {
+              taskPath: sibling.taskPath,
+              title: (taskJson && typeof taskJson.value.title === "string" && taskJson.value.title) || sibling.taskPath,
+              archived: sibling.taskPath.includes("/archive/"),
+            };
+            return ref;
+          };
+          for (const needle of specNeedles) {
+            if (text.includes(`.trellis/spec/${needle}`)) {
+              if (!specHits.has(needle)) specHits.set(needle, []);
+              specHits.get(needle).push(await refOnce());
+            }
+          }
+          for (const target of prdTargets) {
+            if (text.includes(`${target}/prd.md`)) {
+              if (!prdHits.has(target)) prdHits.set(target, []);
+              prdHits.get(target).push(await refOnce());
+            }
+          }
+        }
+
+        for (const needle of [...specNeedles].sort()) {
+          const tasks = specHits.get(needle) || [];
+          if (tasks.length === 0) continue;
+          specGroups.push({ specPath: needle, tasks: tasks.slice(0, NETWORK_REF_MAX), truncated: tasks.length > NETWORK_REF_MAX });
+        }
+        for (const target of [...prdTargets].sort()) {
+          const tasks = prdHits.get(target) || [];
+          if (tasks.length === 0) continue;
+          // The PRD's owning task, resolved read-only; missing stays missing.
+          const ownerDir = path.join(tasksDir, ...target.slice(".trellis/tasks/".length).split("/"));
+          const names = await readdirQuiet(ownerDir);
+          let owner;
+          if (names) {
+            const taskJson = await readJsonObject(path.join(ownerDir, "task.json"));
+            owner = {
+              taskPath: target,
+              title: (taskJson && typeof taskJson.value.title === "string" && taskJson.value.title) || target,
+              archived: target.includes("/archive/"),
+            };
+          } else {
+            owner = { taskPath: target, title: target, archived: target.includes("/archive/"), missing: true };
+          }
+          prdGroups.push({ prdPath: target, owner, tasks: tasks.slice(0, NETWORK_REF_MAX), truncated: tasks.length > NETWORK_REF_MAX });
+        }
+      }
+    } catch {
+      // Horizontal edges are best-effort; the tree above already answered.
+    }
+
+    return { status: "ok", parent, children, childrenTruncated, specGroups, prdGroups };
   }
 
   // On-demand read of the most recently archived tasks for the Dashboard's
