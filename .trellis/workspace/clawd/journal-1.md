@@ -412,3 +412,13 @@ v5 可读性重构：① v5-a 8ff9c9aa 弹窗三卡（detail/spec/network）从 
 - ⛓ 网络全景保持顶部抽屉（低密度信息，无需 master-detail）
 - 删 buildTrellisSpecPanel / .trellis-spec-panel；efa1c5e4 提交；
   全量 11044/10978 pass，失败集与 HEAD 一致（20 预存）
+
+## 2026-09-24 v7 R9fix spec-split CSS 选择器失配（09-24-v7-r9fix-spec-split-css）
+
+- 截图反馈布局崩坏：R9 CSS 复合选择器 .trellis-spec-card.trellis-spec-split
+  永不匹配（renderer 挂的是 view-section/split-section/spec-split 三类），
+  列方向规则全失效，卡退回 row 方向——header/list/doc 挤一行+右侧空壳
+- 教训：改 CSS 前必须核对 renderer 实际 className 串；复合选择器假设
+  未挂类 = 静默零命中（无构建报错）
+- 修复：单类 .trellis-spec-split + 显式覆盖 row 方向与 view-section
+  margin；cbd78fa4 提交；11044/10978/20 预存不变
