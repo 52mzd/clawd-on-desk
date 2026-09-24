@@ -2763,7 +2763,6 @@ const trellisNetwork = {
   result: null, // { status, nodes, edges, specGroups, prdGroups, truncated }
 };
 let lastTrellisNetworkSignature = null;
-let trellisNetworkPanelEl = null;
 
 async function fetchTrellisNetworkOverview() {
   const seq = trellisNetwork.seq;
