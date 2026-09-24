@@ -445,3 +445,34 @@ v5 可读性重构：① v5-a 8ff9c9aa 弹窗三卡（detail/spec/network）从 
   → 清缓存重拉；refetch 助手统一首展开/切换两条路径
 - 测试：All→proj/two→All 双分组断言 specCalls/networkOverviewCalls 序列
 - 9b2dedeb；11045/10979/20 预存不变
+
+
+## Session 15: v7 split 单视图全弧线：R1去树形 → R8项目级关联+spec内嵌 → R10左栏分组定稿 + 两轮回归修复
+
+**Date**: 2026-09-24
+**Task**: v7 split 单视图全弧线：R1去树形 → R8项目级关联+spec内嵌 → R10左栏分组定稿 + 两轮回归修复
+**Branch**: `main`
+
+### Summary
+
+完成 09-23-v7-split-single-view 及四个后续反馈任务：R1 删 tree/board 视图（split 成唯一任务视图，15 个 v6 测试改写）；R2b/R5-R7 横向关联边、project bar、spec 地图 filled/lines/refCount、priority 徽章；R8 ⛓ 关联升级为项目级 readTaskNetworkOverview 通道（单任务通道全链路删除）；R9/R9fix spec 卡并入 split 槽位并修 CSS 复合选择器永不命中的失配；R10 定稿——规范/关联作为左栏折叠分组（与计划/执行/检查/归档同构，懒加载、行点击右栏出内容），R10fix 补 scope 跟随（currentTrellisScopeRoot + syncTrellisPanelScopes，切项目 chip 重拉）。两条踩坑沉淀进 renderer-guidelines：CSS 选择器必须核对 renderer 实际 className（复合类静默零命中）；懒加载副视图必须跟随过滤作用域。全量 11045/10979 pass，失败集与 HEAD 一致（20 预存，均不在 trellis dashboard）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `85398dec` | (see git log) |
+| `d307a492` | (see git log) |
+| `0826d4a9` | (see git log) |
+| `6f0b64b9` | (see git log) |
+| `0f894c07` | (see git log) |
+| `efa1c5e4` | (see git log) |
+| `cbd78fa4` | (see git log) |
+| `3fa1b200` | (see git log) |
+| `9b2dedeb` | (see git log) |
+| `fc549df7` | (see git log) |
+| `f6d4166d` | (see git log) |
+
+### Status
+
+[OK] **Completed**
