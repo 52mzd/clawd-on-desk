@@ -123,9 +123,9 @@ function createHarness(overrides = {}) {
       calls.push(["resumeSessionFromHistory", payload]);
       return { status: "ok" };
     }),
-    getTrellisTaskNetwork: overrides.getTrellisTaskNetwork || ((payload) => {
-      calls.push(["getTrellisTaskNetwork", payload]);
-      return { status: "ok", parent: null, children: [], childrenTruncated: false };
+    getTrellisNetworkOverview: overrides.getTrellisNetworkOverview || ((payload) => {
+      calls.push(["getTrellisNetworkOverview", payload]);
+      return { status: "ok", nodes: [], edges: [], specGroups: [], prdGroups: [], truncated: false };
     }),
     getTrellisTaskDetail: overrides.getTrellisTaskDetail || ((payload) => {
       calls.push(["getTrellisTaskDetail", payload]);
@@ -217,6 +217,7 @@ test("session IPC registers owned channels and disposes them", () => {
     "dashboard:set-session-automation",
     "dashboard:trellis-active-list",
     "dashboard:trellis-archive-list",
+    "dashboard:trellis-network-overview",
     "dashboard:trellis-pick-remove",
     "dashboard:trellis-roots-add",
     "dashboard:trellis-roots-list",
@@ -225,7 +226,6 @@ test("session IPC registers owned channels and disposes them", () => {
     "dashboard:trellis-spec-tree",
     "dashboard:trellis-task-detail",
     "dashboard:trellis-task-doc",
-    "dashboard:trellis-task-network",
     "session-hud:get-i18n",
     "session-hud:open-session-folder",
     "session:ack-completion",
@@ -645,15 +645,15 @@ test("trellis spec-doc IPC is a trusted-frame, strict two-key one-shot read", as
   assert.deepStrictEqual(calls, [], "invalid payloads must never reach the fs-reading owner");
 });
 
-test("trellis task-network IPC is a trusted-frame, strict two-key one-shot read", async () => {
+test("trellis network-overview IPC is a trusted-frame, strict one-key one-shot read", async () => {
   const { ipcMain, calls, trustedDashboardEvent } = createHarness();
 
-  const payload = { cwd: "/proj/app", taskPath: ".trellis/tasks/task-a" };
+  const payload = { root: "/proj/app" };
   assert.deepStrictEqual(
-    await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-task-network", payload),
-    { status: "ok", parent: null, children: [], childrenTruncated: false }
+    await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-network-overview", payload),
+    { status: "ok", nodes: [], edges: [], specGroups: [], prdGroups: [], truncated: false }
   );
-  assert.deepStrictEqual(calls, [["getTrellisTaskNetwork", payload]]);
+  assert.deepStrictEqual(calls, [["getTrellisNetworkOverview", payload]]);
 
   calls.length = 0;
   for (const event of [
@@ -662,7 +662,7 @@ test("trellis task-network IPC is a trusted-frame, strict two-key one-shot read"
     { sender: trustedDashboardEvent.sender, senderFrame: { ...trustedDashboardEvent.senderFrame } },
   ]) {
     assert.deepStrictEqual(
-      await ipcMain.invokeFrom(event, "dashboard:trellis-task-network", payload),
+      await ipcMain.invokeFrom(event, "dashboard:trellis-network-overview", payload),
       { status: "error", reason: "untrusted-dashboard-sender" }
     );
   }
@@ -675,16 +675,13 @@ test("trellis task-network IPC is a trusted-frame, strict two-key one-shot read"
     42,
     [],
     {},
-    { cwd: "/proj/app" },
-    { taskPath: ".trellis/tasks/task-a" },
-    { cwd: "", taskPath: ".trellis/tasks/task-a" },
-    { cwd: "/proj/app", taskPath: "" },
-    { cwd: "/proj/app", taskPath: 7 },
-    { cwd: "/proj/app", taskPath: ".trellis/tasks/task-a", extra: true },
-    { ["__proto__"]: "x", cwd: "/proj/app", taskPath: ".trellis/tasks/task-a" },
+    { root: "" },
+    { root: 7 },
+    { root: "/proj/app", extra: true },
+    { ["__proto__"]: "x", root: "/proj/app" },
   ]) {
     assert.deepStrictEqual(
-      await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-task-network", bad),
+      await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-network-overview", bad),
       { status: "invalid" },
       JSON.stringify(bad)
     );

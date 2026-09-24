@@ -48,8 +48,6 @@ const contentEl = document.getElementById("content");
 const quotaSummaryEl = document.getElementById("quotaSummary");
 const trellisPanelEl = document.getElementById("trellisPanel");
 const trellisDetailOverlayEl = document.getElementById("trellisDetailOverlay");
-const trellisSpecOverlayEl = document.getElementById("trellisSpecOverlay");
-const trellisNetworkOverlayEl = document.getElementById("trellisNetworkOverlay");
 // Independent Trellis view: a second scrolling main plus the header tab.
 const trellisViewEl = document.getElementById("trellisView");
 const viewSessionsTabEl = document.getElementById("viewSessionsTab");
@@ -1139,10 +1137,10 @@ const trellisView = {
   // Session-level UI state, never persisted: null = merged "all"
   // view, otherwise the registered root the lists are filtered to.
   selectedRoot: null,
-  // v7 R5: the roots panel is now a secondary "manage projects" drawer.
-  // The one-line project bar is the primary control; the drawer holds the
-  // full paths and the remove buttons. Session-level, not persisted.
-  manageOpen: false,
+  // v7 R8: the three project-level drawers (⚙ manage roots, ⛓ network
+  // overview, 📐 spec map) share one exclusive slot. Session-level, not
+  // persisted; opening one closes the others.
+  panelOpen: null, // null | "manage" | "network" | "spec"
   active: { loading: false, seq: 0, loaded: false, tasks: [], error: false },
   archive: { loading: false, seq: 0, loaded: false, tasks: [], error: false, openMonths: null },
 };
@@ -1525,7 +1523,7 @@ function buildTrellisRootsSection() {
   // this list (full paths + remove buttons) only appears while the ⚙
   // drawer is open. Error and empty states stay unconditional — they are
   // the only explanation of why the bar is missing at all.
-  if (!trellisView.rootsError && trellisView.roots.length > 0 && !trellisView.manageOpen) {
+  if (!trellisView.rootsError && trellisView.roots.length > 0 && trellisView.panelOpen !== "manage") {
     return null;
   }
   const section = document.createElement("div");
@@ -2252,21 +2250,36 @@ function buildTrellisProjectBar() {
   // addressable.
   spec.className = "trellis-spec-open";
   spec.textContent = t("dashboardTrellisSpecOpen");
+  spec.setAttribute("aria-expanded", trellisView.panelOpen === "spec" ? "true" : "false");
   spec.addEventListener("click", () => {
     openTrellisSpec(trellisView.selectedRoot || trellisView.roots[0]);
   });
   titleRow.appendChild(spec);
 
+  // ⛓ project-wide network overview (v7 R8): the relation graph entry
+  // lives on the project bar, not on individual task detail cards.
+  const network = document.createElement("button");
+  network.type = "button";
+  network.className = "trellis-network-open";
+  network.textContent = "⛓";
+  network.title = t("dashboardTrellisLinksTitle");
+  network.setAttribute("aria-expanded", trellisView.panelOpen === "network" ? "true" : "false");
+  network.setAttribute("aria-label", t("dashboardTrellisLinksTitle"));
+  network.addEventListener("click", () => {
+    openTrellisNetworkOverview();
+  });
+  titleRow.appendChild(network);
+
   const manage = document.createElement("button");
   manage.type = "button";
   manage.className = "trellis-filter-manage";
-  if (trellisView.manageOpen) manage.classList.add("is-active");
+  if (trellisView.panelOpen === "manage") manage.classList.add("is-active");
   manage.textContent = "⚙";
   manage.title = t("dashboardTrellisRootsManage");
-  manage.setAttribute("aria-expanded", trellisView.manageOpen ? "true" : "false");
+  manage.setAttribute("aria-expanded", trellisView.panelOpen === "manage" ? "true" : "false");
   manage.setAttribute("aria-label", t("dashboardTrellisRootsManage"));
   manage.addEventListener("click", () => {
-    trellisView.manageOpen = !trellisView.manageOpen;
+    trellisView.panelOpen = trellisView.panelOpen === "manage" ? null : "manage";
     lastTrellisViewSignature = null;
     renderTrellisView();
   });
@@ -2285,7 +2298,15 @@ function computeTrellisViewSignature() {
     rootsError: trellisView.rootsError,
     noProjectsHint: trellisView.noProjectsHint,
     selectedRoot: trellisView.selectedRoot,
-    manageOpen: trellisView.manageOpen,
+    panelOpen: trellisView.panelOpen,
+    // v7 R8 drawers carry their own async state — a loading→result flip
+    // must rerender the view even when nothing else changed.
+    network: trellisNetwork.open
+      ? { loading: trellisNetwork.loading, root: trellisNetwork.root, result: trellisNetwork.result }
+      : null,
+    spec: trellisSpec.open
+      ? { loading: trellisSpec.loading, root: trellisSpec.root, selected: trellisSpec.selected }
+      : null,
     active: {
       loading: trellisView.active.loading,
       loaded: trellisView.active.loaded,
@@ -2315,6 +2336,13 @@ function renderTrellisView() {
   if (projectBar) fragment.appendChild(projectBar);
   const rootsSection = buildTrellisRootsSection();
   if (rootsSection) fragment.appendChild(rootsSection);
+  // v7 R8: the network overview (⛓) and the spec map (📐) render inline
+  // under the project bar — the same exclusive drawer slot as ⚙ manage.
+  if (trellisView.panelOpen === "network") {
+    fragment.appendChild(buildTrellisNetworkPanel());
+  } else if (trellisView.panelOpen === "spec") {
+    fragment.appendChild(buildTrellisSpecPanel());
+  }
   // The filter is render-layer only: the full lists stay in memory and
   // each rebuild slices them down to the selected root BEFORE the tree is
   // built, so the nesting always reflects the filtered view (a parent
@@ -2428,37 +2456,11 @@ const trellisDetailDocs = new Map(); // "taskPath\u0000doc" → { loading, resul
 // Third overlay on the shared pattern: one task's structured linkage
 // (parent / children from task.json) as clickable refs that jump straight
 // into the task-detail overlay. Ephemeral; closing drops everything.
-const trellisNetwork = {
-  open: false,
-  loading: false,
-  seq: 0,
-  request: null, // { taskPath, title, cwd }
-  result: null, // { status, parent, children, childrenTruncated }
-};
-let lastTrellisNetworkSignature = null;
+// ── ⛓ project-wide network overview (v7 R8) ─────────
+// The relation graph is a project-level drawer now: one bounded IPC read
+// (readTaskNetworkOverview) over every task in the selected root. The old
+// single-task readTaskNetwork entry on detail cards is gone.
 
-function openTrellisNetwork(request) {
-  if (!request || typeof request.taskPath !== "string" || !request.taskPath) return;
-  trellisNetwork.open = true;
-  trellisNetwork.loading = true;
-  trellisNetwork.seq += 1;
-  trellisNetwork.request = {
-    taskPath: request.taskPath,
-    title: typeof request.title === "string" ? request.title : "",
-    cwd: typeof request.cwd === "string" ? request.cwd : "",
-  };
-  trellisNetwork.result = null;
-  lastTrellisNetworkSignature = null;
-  renderTrellisNetwork();
-  void fetchTrellisNetwork();
-}
-
-// v5-a symmetric close: play the CSS fade/scale-out, then swap in the
-// cleared render. The finish callback always runs (timer, not
-// animationend), reduced-motion skips straight to it, and reopening
-// cancels a pending close — a missed/late timer can never strand or
-// double-run the overlay. Renderer test sandboxes may run without timer
-// globals; a missing setTimeout degrades to the immediate close.
 const trellisOverlayCloseTimers = new WeakMap();
 const trellisCloseTimer = typeof setTimeout === "function" ? setTimeout : null;
 
@@ -2504,26 +2506,54 @@ function animateTrellisOverlayClose(overlayEl, finish) {
   );
 }
 
-function closeTrellisNetwork() {
+const trellisNetwork = {
+  open: false,
+  loading: false,
+  seq: 0,
+  root: null,
+  result: null, // { status, nodes, edges, specGroups, prdGroups, truncated }
+};
+let lastTrellisNetworkSignature = null;
+let trellisNetworkPanelEl = null;
+
+function openTrellisNetworkOverview() {
+  const root = trellisView.selectedRoot || trellisView.roots[0];
+  if (!root) return;
+  // Same-click toggle: closing counts as a real state change.
+  if (trellisView.panelOpen === "network" && trellisNetwork.root === root) {
+    closeTrellisNetworkOverview();
+    return;
+  }
+  trellisView.panelOpen = "network";
+  trellisNetwork.open = true;
+  trellisNetwork.loading = true;
+  trellisNetwork.seq += 1;
+  trellisNetwork.root = root;
+  trellisNetwork.result = null;
+  lastTrellisNetworkSignature = null;
+  lastTrellisViewSignature = null;
+  renderTrellisView();
+  void fetchTrellisNetworkOverview();
+}
+
+function closeTrellisNetworkOverview() {
   if (!trellisNetwork.open) return;
   trellisNetwork.open = false;
   trellisNetwork.loading = false;
-  trellisNetwork.request = null;
+  trellisNetwork.root = null;
   trellisNetwork.result = null;
+  if (trellisView.panelOpen === "network") trellisView.panelOpen = null;
   lastTrellisNetworkSignature = null;
-  animateTrellisOverlayClose(trellisNetworkOverlayEl, renderTrellisNetwork);
+  lastTrellisViewSignature = null;
+  renderTrellisView();
 }
 
-async function fetchTrellisNetwork() {
+async function fetchTrellisNetworkOverview() {
   const seq = trellisNetwork.seq;
-  const request = trellisNetwork.request;
-  if (!request || typeof window.dashboardAPI.getTrellisTaskNetwork !== "function") return;
+  const root = trellisNetwork.root;
   let result = null;
   try {
-    result = await window.dashboardAPI.getTrellisTaskNetwork({
-      taskPath: request.taskPath,
-      cwd: request.cwd,
-    });
+    result = await window.dashboardAPI.getTrellisNetworkOverview({ root });
   } catch {
     result = null;
   }
@@ -2531,7 +2561,25 @@ async function fetchTrellisNetwork() {
   trellisNetwork.loading = false;
   trellisNetwork.result = result && typeof result === "object" ? result : { status: "error" };
   lastTrellisNetworkSignature = null;
-  renderTrellisNetwork();
+  lastTrellisViewSignature = null;
+  renderTrellisView();
+}
+
+// Clicking a task inside the overview jumps to it in the split list: make
+// sure its root is selected (a different chip hides it) and archived tasks
+// need the DONE group open, then select — the detail pane follows.
+function jumpToTrellisNetworkTask(taskPath) {
+  if (typeof taskPath !== "string" || !taskPath) return;
+  const overviewRoot = trellisNetwork.root;
+  if (overviewRoot && trellisView.selectedRoot !== null && trellisView.selectedRoot !== overviewRoot) {
+    trellisView.selectedRoot = overviewRoot;
+  }
+  if (taskPath.includes("/archive/") && !trellisSplit.archiveOpen) {
+    trellisSplit.archiveOpen = true;
+  }
+  if (trellisSplit.collapsedPaths) trellisSplit.collapsedPaths.delete(taskPath);
+  closeTrellisNetworkOverview();
+  selectTrellisSplitTask(taskPath);
 }
 
 function trellisNetworkRefButton(ref) {
@@ -2547,20 +2595,14 @@ function trellisNetworkRefButton(ref) {
       btn.appendChild(badge);
     }
     btn.addEventListener("click", () => {
-      const request = trellisNetwork.request;
-      closeTrellisNetwork();
-      if (!request) return;
-      void openTrellisDetail({
-        taskPath: ref.taskPath,
-        title: ref.title || "",
-        cwd: request.cwd,
-        sessions: [],
-        progress: null,
-      });
+      jumpToTrellisNetworkTask(ref.taskPath);
     });
   } else {
     btn.disabled = true;
-    btn.appendChild(document.createTextNode((ref && (ref.title || ref.name)) || "?"));
+    btn.classList.add("is-missing");
+    btn.appendChild(document.createTextNode(
+      (ref && (ref.title || ref.taskPath || ref.name)) || t("dashboardTrellisLinksMissing")
+    ));
     const badge = document.createElement("span");
     badge.className = "trellis-network-ref-badge";
     badge.appendChild(document.createTextNode(t("dashboardTrellisLinksMissing")));
@@ -2569,90 +2611,132 @@ function trellisNetworkRefButton(ref) {
   return btn;
 }
 
-function buildTrellisNetworkCard() {
+function buildTrellisNetworkPanel() {
+  const section = document.createElement("div");
+  section.className = "trellis-view-section trellis-network-panel";
+  const signature = JSON.stringify([
+    trellisNetwork.loading,
+    trellisNetwork.root,
+    trellisNetwork.result,
+  ]);
+  const unchanged = signature === lastTrellisNetworkSignature;
+  if (unchanged && trellisNetworkPanelEl) {
+    return trellisNetworkPanelEl;
+  }
+  lastTrellisNetworkSignature = signature;
+
   const card = document.createElement("div");
-  card.className = "trellis-detail-card";
+  card.className = "trellis-network-card";
 
   const header = document.createElement("div");
-  header.className = "trellis-detail-header";
-  header.appendChild(createText(
-    "h3",
-    "trellis-detail-title",
-    (trellisNetwork.request && trellisNetwork.request.title) || t("dashboardTrellisLinksTitle")
-  ));
+  header.className = "trellis-network-head";
+  const title = document.createElement("div");
+  title.className = "trellis-network-title";
+  title.appendChild(document.createTextNode(t("dashboardTrellisLinksTitle")));
+  header.appendChild(title);
   const close = document.createElement("button");
   close.type = "button";
-  close.className = "trellis-detail-close";
-  close.textContent = "✕";
-  close.title = t("dashboardTrellisDetailClose");
+  close.className = "trellis-panel-close";
+  close.textContent = "×";
   close.setAttribute("aria-label", t("dashboardTrellisDetailClose"));
-  close.addEventListener("click", closeTrellisNetwork);
+  close.addEventListener("click", () => {
+    closeTrellisNetworkOverview();
+  });
   header.appendChild(close);
   card.appendChild(header);
 
-  if (trellisNetwork.loading || !trellisNetwork.result) {
-    card.appendChild(createText("div", "trellis-detail-hint", "…"));
-    return card;
-  }
+  const body = document.createElement("div");
+  body.className = "trellis-network-body";
+  card.appendChild(body);
+
   const result = trellisNetwork.result;
-  if (result.status !== "ok") {
-    card.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksFailed")));
-    return card;
+  if (trellisNetwork.loading) {
+    body.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisDetailLoading")));
+    section.appendChild(card);
+    trellisNetworkPanelEl = section;
+    return section;
+  }
+  if (!result || result.status === "error") {
+    body.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksFailed")));
+    section.appendChild(card);
+    trellisNetworkPanelEl = section;
+    return section;
+  }
+  if (result.status === "missing") {
+    body.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisDetailMissing")));
+    section.appendChild(card);
+    trellisNetworkPanelEl = section;
+    return section;
   }
 
-  const hasParent = result.parent && !result.parent.missing;
-  const children = Array.isArray(result.children) ? result.children : [];
-  const liveChildren = children.filter((c) => c && !c.missing);
+  const edges = Array.isArray(result.edges) ? result.edges : [];
   const specGroups = Array.isArray(result.specGroups) ? result.specGroups : [];
   const prdGroups = Array.isArray(result.prdGroups) ? result.prdGroups : [];
-  if (!hasParent && liveChildren.length === 0 && children.length === 0
-    && specGroups.length === 0 && prdGroups.length === 0) {
-    card.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksEmpty")));
-    return card;
-  }
-
-  if (hasParent) {
-    card.appendChild(createText("div", "trellis-spec-group-label", t("dashboardTrellisLinksParent")));
-    const wrap = document.createElement("div");
-    wrap.className = "trellis-network-group";
-    wrap.appendChild(trellisNetworkRefButton(result.parent));
-    card.appendChild(wrap);
-  }
-  if (children.length > 0) {
-    card.appendChild(createText("div", "trellis-spec-group-label", t("dashboardTrellisLinksChildren") + ` (${children.length})`));
-    const wrap = document.createElement("div");
-    wrap.className = "trellis-network-group";
-    for (const child of children) {
-      wrap.appendChild(trellisNetworkRefButton(child));
-    }
-    if (result.childrenTruncated) {
-      card.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksTruncated")));
-    }
-    card.appendChild(wrap);
-  }
-
-  // ── R2 horizontal edges. Spec docs: “N tasks follow <doc>” groups;
-  // PRD groups additionally lead with the PRD's owning task (a missing
-  // owner renders as a disabled row, mirroring the vertical refs).
-  const refList = (tasks, truncated) => {
-    const wrap = document.createElement("div");
-    wrap.className = "trellis-network-group";
-    for (const ref of tasks) wrap.appendChild(trellisNetworkRefButton(ref));
-    if (truncated) {
-      card.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksTruncated")));
-    }
-    return wrap;
+  const nodeByTaskPath = new Map(
+    (Array.isArray(result.nodes) ? result.nodes : []).map((n) => [n.taskPath, n])
+  );
+  const refOf = (taskPath) => {
+    const node = nodeByTaskPath.get(taskPath);
+    return node
+      ? { taskPath, title: node.title, archived: node.archived }
+      : { taskPath, title: taskPath, archived: taskPath.includes("/archive/"), missing: true };
   };
+
+  if (edges.length === 0 && specGroups.length === 0 && prdGroups.length === 0) {
+    body.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksEmpty")));
+    section.appendChild(card);
+    trellisNetworkPanelEl = section;
+    return section;
+  }
+
+  // ── Vertical: group children under their parent task.
+  if (edges.length > 0) {
+    const byParent = new Map(); // parentTaskPath|null -> [childTaskPath]
+    for (const edge of edges) {
+      const key = edge.parentTaskPath || null;
+      if (!byParent.has(key)) byParent.set(key, []);
+      byParent.get(key).push(edge.childTaskPath);
+    }
+    body.appendChild(createText(
+      "div",
+      "trellis-spec-group-label",
+      `${t("dashboardTrellisLinksParent")} → ${t("dashboardTrellisLinksChildren")} (${edges.length})`
+    ));
+    for (const [parentTaskPath, children] of [...byParent.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0])))) {
+      const group = document.createElement("div");
+      group.className = "trellis-network-group";
+      if (parentTaskPath === null) {
+        // Children whose parent name no longer resolves to any node.
+        group.appendChild(trellisNetworkRefButton({ taskPath: null, missing: true }));
+      } else {
+        group.appendChild(trellisNetworkRefButton(refOf(parentTaskPath)));
+      }
+      for (const childTaskPath of children) {
+        group.appendChild(trellisNetworkRefButton(refOf(childTaskPath)));
+      }
+      body.appendChild(group);
+    }
+  }
+
+  // ── Horizontal: shared spec docs.
   for (const group of specGroups) {
-    card.appendChild(createText(
+    body.appendChild(createText(
       "div",
       "trellis-spec-group-label",
       `${t("dashboardTrellisLinksSharedSpec")} · ${group.specPath} (${group.tasks.length})`
     ));
-    card.appendChild(refList(group.tasks, group.truncated));
+    const wrap = document.createElement("div");
+    wrap.className = "trellis-network-group";
+    for (const ref of group.tasks) wrap.appendChild(trellisNetworkRefButton(ref));
+    if (group.truncated) {
+      body.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksTruncated")));
+    }
+    body.appendChild(wrap);
   }
+
+  // ── Horizontal: shared sibling PRDs (owner first, then citers).
   for (const group of prdGroups) {
-    card.appendChild(createText(
+    body.appendChild(createText(
       "div",
       "trellis-spec-group-label",
       `${t("dashboardTrellisLinksSharedPrd")} (${group.tasks.length})`
@@ -2662,33 +2746,17 @@ function buildTrellisNetworkCard() {
     wrap.appendChild(trellisNetworkRefButton(group.owner));
     for (const ref of group.tasks) wrap.appendChild(trellisNetworkRefButton(ref));
     if (group.truncated) {
-      card.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksTruncated")));
+      body.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksTruncated")));
     }
-    card.appendChild(wrap);
+    body.appendChild(wrap);
   }
-  return card;
-}
 
-function renderTrellisNetwork() {
-  if (!trellisNetworkOverlayEl) return;
-  if (!trellisNetwork.open) {
-    trellisNetworkOverlayEl.hidden = true;
-    trellisNetworkOverlayEl.replaceChildren();
-    return;
+  if (result.truncated) {
+    body.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksTruncated")));
   }
-  const signature = JSON.stringify([
-    trellisNetwork.loading,
-    trellisNetwork.request,
-    trellisNetwork.result && trellisNetwork.result.status,
-    trellisNetwork.result && trellisNetwork.result.parent,
-    trellisNetwork.result && trellisNetwork.result.children,
-    trellisNetwork.result && trellisNetwork.result.childrenTruncated,
-  ]);
-  if (signature === lastTrellisNetworkSignature) return;
-  lastTrellisNetworkSignature = signature;
-  cancelTrellisOverlayClose(trellisNetworkOverlayEl);
-  trellisNetworkOverlayEl.replaceChildren(buildTrellisNetworkCard());
-  trellisNetworkOverlayEl.hidden = false;
+  section.appendChild(card);
+  trellisNetworkPanelEl = section;
+  return section;
 }
 // ── end task network ──────────────────────────────────────────────────────
 
@@ -2718,10 +2786,13 @@ function trellisSpecDocKey(root, relPath) {
 function openTrellisSpec(root) {
   const target = typeof root === "string" && root ? root : trellisView.selectedRoot || trellisView.roots[0];
   if (!target) return;
-  if (trellisSpec.open && trellisSpec.root === target) {
-    renderTrellisSpec();
+  // v7 R8: the spec map is an inline drawer under the project bar. The
+  // same click toggles it closed when it already shows this root.
+  if (trellisView.panelOpen === "spec" && trellisSpec.root === target) {
+    closeTrellisSpec();
     return;
   }
+  trellisView.panelOpen = "spec";
   trellisSpec.open = true;
   trellisSpec.loading = trellisSpec.root !== target;
   trellisSpec.seq += 1;
@@ -2746,7 +2817,9 @@ function closeTrellisSpec() {
   // Ephemeral by contract: closing drops every cached document content.
   trellisSpecDocs.clear();
   lastTrellisSpecSignature = null;
-  animateTrellisOverlayClose(trellisSpecOverlayEl, renderTrellisSpec);
+  if (trellisView.panelOpen === "spec") trellisView.panelOpen = null;
+  lastTrellisViewSignature = null;
+  renderTrellisView();
 }
 
 function switchTrellisSpecRoot(root) {
@@ -2921,10 +2994,8 @@ function buildTrellisSpecCard() {
 }
 
 function renderTrellisSpec() {
-  if (!trellisSpecOverlayEl) return;
   if (!trellisSpec.open) {
-    trellisSpecOverlayEl.hidden = true;
-    trellisSpecOverlayEl.replaceChildren();
+    lastTrellisSpecSignature = null;
     return;
   }
   const signature = JSON.stringify([
@@ -2938,9 +3009,19 @@ function renderTrellisSpec() {
   ]);
   if (signature === lastTrellisSpecSignature) return;
   lastTrellisSpecSignature = signature;
-  cancelTrellisOverlayClose(trellisSpecOverlayEl);
-  trellisSpecOverlayEl.replaceChildren(buildTrellisSpecCard());
-  trellisSpecOverlayEl.hidden = false;
+  // v7 R8: inline drawer — a spec-state change rerenders the whole view
+  // (the panel is a child of #trellisView now, no overlay element).
+  lastTrellisViewSignature = null;
+  renderTrellisView();
+}
+
+// The inline spec drawer body: file list + doc pane inside the project
+// view (v7 R8 replaces the near-fullscreen overlay).
+function buildTrellisSpecPanel() {
+  const section = document.createElement("div");
+  section.className = "trellis-view-section trellis-spec-panel";
+  section.appendChild(buildTrellisSpecCard());
+  return section;
 }
 // ── end spec map ───────────────────────────────────────────────────────────
 
@@ -3351,27 +3432,8 @@ function buildTrellisDetailCard() {
   close.addEventListener("click", closeTrellisDetail);
   header.appendChild(close);
 
-  // ⛓ task network: same entry the tree rows had (v7 R2). readTaskNetwork
-  // derives parent/children server-side and always renders at least the
-  // task's own node, so the button is unconditional; cwd was frozen into
-  // the request at open time (archived rows carry their scan cwd, live rows
-  // the first bound session cwd) — exactly what the row entry passes on.
-  if (request.taskPath) {
-    const links = document.createElement("button");
-    links.type = "button";
-    links.className = "trellis-detail-links";
-    links.textContent = "⛓";
-    links.title = t("dashboardTrellisLinksOpen");
-    links.setAttribute("aria-label", t("dashboardTrellisLinksOpen"));
-    links.addEventListener("click", () => {
-      openTrellisNetwork({
-        taskPath: request.taskPath,
-        title: (detail && detail.title) || request.title || "",
-        cwd: typeof request.cwd === "string" ? request.cwd : "",
-      });
-    });
-    header.appendChild(links);
-  }
+  // v7 R8: the ⛓ entry is gone from detail cards — the project bar's
+  // network overview replaced the per-task drill-down.
   card.appendChild(header);
 
   if (trellisDetail.loading) {
@@ -4466,7 +4528,7 @@ async function init() {
       if (quick.active || quick.pending) return;
       if (event.key === "Escape") {
         if (trellisSpec.open) closeTrellisSpec();
-        else if (trellisNetwork.open) closeTrellisNetwork();
+        else if (trellisNetwork.open) closeTrellisNetworkOverview();
         else closeTrellisDetail();
       }
     });
@@ -4506,16 +4568,8 @@ async function init() {
       }
     });
   }
-  if (trellisNetworkOverlayEl && typeof trellisNetworkOverlayEl.addEventListener === "function") {
-    trellisNetworkOverlayEl.addEventListener("click", (event) => {
-      if (event.target === trellisNetworkOverlayEl) closeTrellisNetwork();
-    });
-  }
-  if (trellisSpecOverlayEl && typeof trellisSpecOverlayEl.addEventListener === "function") {
-    trellisSpecOverlayEl.addEventListener("click", (event) => {
-      if (event.target === trellisSpecOverlayEl) closeTrellisSpec();
-    });
-  }
+  // v7 R8: the network overview is an inline drawer (no overlay host,
+  // no backdrop); Esc above still closes it.
   if (trellisDetailOverlayEl && typeof trellisDetailOverlayEl.addEventListener === "function") {
     trellisDetailOverlayEl.addEventListener("click", (event) => {
       if (event.target === trellisDetailOverlayEl) closeTrellisDetail();

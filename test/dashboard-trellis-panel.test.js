@@ -405,6 +405,8 @@ function loadDashboard({
   removeResult = null,
   specResult = null,
   specError = null,
+  networkOverviewResult = null,
+  networkOverviewError = null,
 } = {}) {
   const elements = new Map(
     [
@@ -412,7 +414,6 @@ function loadDashboard({
       "trellisDetailOverlay", "trellisView", "viewSessionsTab", "viewTrellisTab",
       "sessionsHeaderExtras",
       // v7 R6 spec map overlay (its file list / doc pane are built inline).
-      "trellisSpecOverlay",
     ].map((id) => [id, new FakeElement("div")]),
   );
   // The real page starts with <main id="trellisView" hidden>; mirror that.
@@ -440,6 +441,7 @@ function loadDashboard({
   const rootsCalls = [];
   const addRootCalls = [];
   const specCalls = [];
+  const networkOverviewCalls = [];
   const removeRootCalls = [];
   let snapshotListener = null;
   let renderInterval = null;
@@ -493,6 +495,11 @@ function loadDashboard({
       if (specError) throw specError;
       return typeof specResult === "function" ? specResult(payload) : specResult;
     },
+    getTrellisNetworkOverview: async (payload) => {
+      networkOverviewCalls.push(payload);
+      if (networkOverviewError) throw networkOverviewError;
+      return typeof networkOverviewResult === "function" ? networkOverviewResult(payload) : networkOverviewResult;
+    },
     listTrellisRoots: async () => {
       rootsCalls.push(null);
       if (rootsError) throw rootsError;
@@ -537,7 +544,6 @@ function loadDashboard({
   return {
     panel: elements.get("trellisPanel"),
     overlay: elements.get("trellisDetailOverlay"),
-    specOverlay: elements.get("trellisSpecOverlay"),
     view: elements.get("trellisView"),
     content: elements.get("content"),
     titleEl: elements.get("title"),
@@ -551,6 +557,7 @@ function loadDashboard({
     activeCalls,
     rootsCalls,
     specCalls,
+    networkOverviewCalls,
     addRootCalls,
     removeRootCalls,
     docListeners,
@@ -1935,7 +1942,8 @@ describe("dashboard trellis v7 single view (R5–R7)", () => {
     await flush();
     assert.deepEqual(app.specCalls, [{ root: "/proj/one" }]);
 
-    const files = byClass(app.specOverlay, "trellis-spec-file-button");
+    // v7 R8: the spec map renders inline under the project bar (no overlay).
+    const files = byClass(app.view, "trellis-spec-file-button");
     assert.equal(files.length, 3);
     assert.deepEqual(
       files.map((el) => textOf(byClass(el, "trellis-spec-file-name")[0])),
@@ -1960,5 +1968,94 @@ describe("dashboard trellis v7 single view (R5–R7)", () => {
     assert.equal(byClass(files[2], "trellis-spec-file-empty").length, 0);
     assert.equal(byClass(files[2], "trellis-spec-file-lines").length, 0);
     assert.equal(textOf(byClass(files[2], "trellis-spec-file-refs")[0]), "⛓1");
+  });
+});
+
+describe("dashboard trellis v7 R8 project drawers", () => {
+  it("opens the project-wide network overview from the bar and jumps on click", async () => {
+
+    const app = loadDashboard({
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/one"] },
+      activeResult: { status: "ok", tasks: [
+        { taskPath: ".trellis/tasks/a", title: "Task A", phase: "execute", progress: null, parent: null, cwd: "/proj/one" },
+        { taskPath: ".trellis/tasks/kid", title: "Kid", phase: "plan", progress: null, parent: "a", cwd: "/proj/one" },
+      ] },
+      archiveResult: { status: "ok", tasks: [] },
+      networkOverviewResult: { status: "ok", nodes: [
+        { taskPath: ".trellis/tasks/a", title: "Task A", archived: false, priority: null },
+        { taskPath: ".trellis/tasks/kid", title: "Kid", archived: false, priority: null },
+      ], edges: [
+        { parentTaskPath: ".trellis/tasks/a", childTaskPath: ".trellis/tasks/kid", parentMissing: false },
+      ], specGroups: [
+        { specPath: "frontend/index.md", tasks: [
+          { taskPath: ".trellis/tasks/a", title: "Task A", archived: false },
+          { taskPath: ".trellis/tasks/kid", title: "Kid", archived: false },
+        ], truncated: false },
+      ], prdGroups: [], truncated: false },
+    });
+    await flush();
+    await switchToTrellis(app);
+
+    // The ⛓ entry sits on the project bar; the drawer starts closed.
+    const btn = byClass(app.view, "trellis-network-open");
+    assert.equal(btn.length, 1);
+    assert.equal(btn[0].attributes["aria-expanded"], "false");
+    assert.equal(byClass(app.view, "trellis-network-panel").length, 0);
+    assert.deepEqual(app.networkOverviewCalls, [], "nothing fetched before the click");
+
+    await btn[0].dispatch("click");
+    await flush();
+    assert.deepEqual(app.networkOverviewCalls, [{ root: "/proj/one" }]);
+    assert.equal(byClass(app.view, "trellis-network-panel").length, 1, "the overview renders inline");
+    // The view rerendered on open — re-query instead of holding the stale btn.
+    assert.equal(byClass(app.view, "trellis-network-open")[0].attributes["aria-expanded"], "true");
+
+    // Three sections: vertical group + shared-spec group.
+    const labels = byClass(app.view, "trellis-spec-group-label").map(textOf);
+    assert.ok(labels.some((x) => x.includes("frontend/index.md")), "shared-spec group shows");
+    const refs = byClass(app.view, "trellis-network-ref");
+    assert.equal(refs.length, 4, "parent+child+two spec citers");
+
+    // Clicking a ref jumps: the drawer closes and the split row selects.
+    await refs[1].dispatch("click");
+    await flush();
+    assert.equal(byClass(app.view, "trellis-network-panel").length, 0, "jump closes the drawer");
+    assert.deepEqual(app.detailCalls, [{ taskPath: ".trellis/tasks/kid", cwd: "/proj/one" }]);
+
+    // The same ⛓ click re-opens it; a second click toggles it closed.
+    await byClass(app.view, "trellis-network-open")[0].dispatch("click");
+    await flush();
+    assert.equal(byClass(app.view, "trellis-network-panel").length, 1, "re-open after a jump");
+    await byClass(app.view, "trellis-network-open")[0].dispatch("click");
+    await flush();
+    assert.equal(byClass(app.view, "trellis-network-panel").length, 0);
+  });
+
+  it("renders the spec map inline under the project bar (no overlay)", async () => {
+    const app = loadDashboard({
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/one"] },
+      activeResult: { status: "ok", tasks: [] },
+      archiveResult: { status: "ok", tasks: [] },
+      specResult: { status: "ok", truncated: false, files: [
+        { group: "frontend", relPath: "frontend/index.md", filled: true, lines: 8, refCount: 1 },
+      ] },
+    });
+    await flush();
+    await switchToTrellis(app);
+
+    await byClass(app.view, "trellis-spec-open")[0].dispatch("click");
+    await flush();
+    // Inline panel inside #trellisView, not the removed overlay host.
+    assert.equal(byClass(app.view, "trellis-spec-panel").length, 1);
+    assert.equal(byClass(app.view, "trellis-spec-file-button").length, 1);
+    assert.equal(byClass(app.view, "trellis-spec-file-lines")[0].textContent, "8 lines");
+    assert.equal(byClass(app.view, "trellis-spec-file-refs")[0].textContent, "⛓1");
+
+    // The three drawers are mutually exclusive.
+    await byClass(app.view, "trellis-filter-manage")[0].dispatch("click");
+    assert.equal(byClass(app.view, "trellis-spec-panel").length, 0, "⚙ closes the spec drawer");
+    assert.equal(byClass(app.view, "trellis-root-row").length, 1, "and opens the roots drawer");
   });
 });

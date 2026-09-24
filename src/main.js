@@ -5398,11 +5398,11 @@ registerSessionIpc({
     sessionAutomationCoordinator.clearSessionAutomationGrant(payload),
   getSessionHistory: () => sessionHistoryRuntime.getHistory(),
   resumeSessionFromHistory: (payload) => sessionHistoryRuntime.resume(payload),
-  getTrellisTaskNetwork: (payload) => {
-    if (!_trellisActivity || typeof _trellisActivity.readTaskNetwork !== "function") {
+  getTrellisNetworkOverview: (payload) => {
+    if (!_trellisActivity || typeof _trellisActivity.readTaskNetworkOverview !== "function") {
       return { status: "error", message: "trellis-activity-unavailable" };
     }
-    return _trellisActivity.readTaskNetwork(payload.cwd, payload.taskPath);
+    return _trellisActivity.readTaskNetworkOverview(payload.root);
   },
   getTrellisTaskDetail: (payload) => {
     if (!_trellisActivity || typeof _trellisActivity.readTaskDetail !== "function") {

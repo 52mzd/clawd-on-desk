@@ -1679,6 +1679,39 @@ describe("trellis-activity readArchiveList", () => {
     return fake.add(path.join(PROJECT, ".trellis", "spec", ...relPath.split("/")), content);
   }
 
+  it("readTaskNetworkOverview builds the whole-root relation graph (v7 R8)", async () => {
+    const h = makeArchiveHarness();
+    addTask(h.fakeFs, "task-parent", { title: "父任务", status: "completed", subtasks: ["task-a"] });
+    addTask(h.fakeFs, "task-a", { title: "A", status: "in_progress", parent: "task-parent", subtasks: [] });
+    addTask(h.fakeFs, "task-b", { title: "B", status: "in_progress", subtasks: [] });
+    h.fakeFs.add(path.join(PROJECT, ".trellis", "tasks", "task-a", "prd.md"),
+      "Follows .trellis/spec/frontend/index.md");
+    h.fakeFs.add(path.join(PROJECT, ".trellis", "tasks", "task-b", "design.md"),
+      "Also follows .trellis/spec/frontend/index.md");
+    h.activity.setPersistedRoots([PROJECT]);
+
+    const result = await h.activity.readTaskNetworkOverview(PROJECT);
+    assert.strictEqual(result.status, "ok");
+    assert.strictEqual(result.truncated, false);
+
+    const byPath = new Map(result.nodes.map((n) => [n.taskPath, n]));
+    assert.ok(byPath.get(".trellis/tasks/task-a"));
+    assert.ok(byPath.get(".trellis/tasks/task-parent"));
+    assert.strictEqual(result.edges.length, 1);
+    assert.strictEqual(result.edges[0].parentTaskPath, ".trellis/tasks/task-parent");
+    assert.strictEqual(result.edges[0].childTaskPath, ".trellis/tasks/task-a");
+    assert.strictEqual(result.edges[0].parentMissing, false);
+
+    assert.strictEqual(result.specGroups.length, 1);
+    assert.strictEqual(result.specGroups[0].specPath, "frontend/index.md");
+    assert.deepStrictEqual(
+      result.specGroups[0].tasks.map((ref) => ref.taskPath).sort(),
+      [".trellis/tasks/task-a", ".trellis/tasks/task-b"],
+    );
+    assert.deepStrictEqual(result.prdGroups, []);
+    assert.deepStrictEqual(h.fakeFs.writeOps, [], "overview stays read-only");
+  });
+
   it("readSpecTree lists grouped markdown files under the trusted root", async () => {
     const h = makeArchiveHarness();
     addSpecDoc(h.fakeFs, "index.md", "# index");
@@ -1739,81 +1772,6 @@ describe("trellis-activity readArchiveList", () => {
     // A unique basename mention still counts.
     assert.strictEqual(by.get("guides/cross-layer-thinking-guide.md").refCount, 1);
     assert.deepStrictEqual(h.fakeFs.writeOps, [], "spec map stays read-only");
-  });
-
-  it("readTaskNetwork resolves parent and children refs from task.json", async () => {
-    const h = makeHarness({ sessions: new Map([["pi:net", { agentId: "pi", cwd: CWD }]]) });
-    addTask(h.fakeFs, "task-parent", { title: "父任务", status: "in_progress", subtasks: [] });
-    addTask(h.fakeFs, "task-a", {
-      title: "子任务A", status: "in_progress", subtasks: [],
-      parent: "task-parent", children: ["task-parent", "ghost-task"],
-    });
-    h.activity.setPersistedRoots([PROJECT]);
-
-    const result = await h.activity.readTaskNetwork(CWD, ".trellis/tasks/task-a");
-    assert.strictEqual(result.status, "ok");
-    assert.strictEqual(result.parent.taskPath, ".trellis/tasks/task-parent");
-    assert.strictEqual(result.parent.archived, false);
-    assert.strictEqual(result.children.length, 2);
-    assert.strictEqual(result.children[0].title, "父任务");
-    assert.strictEqual(result.children[1].missing, true);
-    assert.strictEqual(result.childrenTruncated, false);
-    assert.deepStrictEqual(h.fakeFs.writeOps, [], "network read stays read-only");
-  });
-
-  it("readTaskNetwork collects shared-spec and shared-PRD edges (v7 R2)", async () => {
-    const h = makeHarness({ sessions: new Map([["pi:net3", { agentId: "pi", cwd: CWD }]]) });
-    addTask(h.fakeFs, "task-a", { title: "A", status: "in_progress", subtasks: [] });
-    addTask(h.fakeFs, "task-b", { title: "B", status: "in_progress", subtasks: [] });
-    addTask(h.fakeFs, "task-c", { title: "C", status: "in_progress", subtasks: [] });
-    // A cites the shared spec doc and the archived sibling PRD; B cites both
-    // too (that is the edge); C cites nothing.
-    h.fakeFs.add(path.join(PROJECT, ".trellis", "tasks", "task-a", "prd.md"),
-      "Follows .trellis/spec/frontend/index.md and .trellis/tasks/archive/2026-09/task-old/prd.md");
-    h.fakeFs.add(path.join(PROJECT, ".trellis", "tasks", "task-b", "design.md"),
-      "Also follows .trellis/spec/frontend/index.md; prior art: .trellis/tasks/archive/2026-09/task-old/prd.md");
-    h.activity.setPersistedRoots([PROJECT]);
-
-    const result = await h.activity.readTaskNetwork(CWD, ".trellis/tasks/task-a");
-    assert.strictEqual(result.status, "ok");
-
-    assert.strictEqual(result.specGroups.length, 1);
-    assert.strictEqual(result.specGroups[0].specPath, "frontend/index.md");
-    assert.deepStrictEqual(
-      result.specGroups[0].tasks.map((ref) => ref.taskPath),
-      [".trellis/tasks/task-b"],
-    );
-    assert.strictEqual(result.specGroups[0].truncated, false);
-
-    assert.strictEqual(result.prdGroups.length, 1);
-    assert.strictEqual(result.prdGroups[0].prdPath, ".trellis/tasks/archive/2026-09/task-old");
-    assert.strictEqual(result.prdGroups[0].owner.missing, true, "the cited PRD owner is gone");
-    assert.deepStrictEqual(
-      result.prdGroups[0].tasks.map((ref) => ref.taskPath),
-      [".trellis/tasks/task-b"],
-    );
-
-    // A task that cites nothing reports empty groups, not nulls.
-    const loner = await h.activity.readTaskNetwork(CWD, ".trellis/tasks/task-c");
-    assert.deepStrictEqual(loner.specGroups, []);
-    assert.deepStrictEqual(loner.prdGroups, []);
-    assert.deepStrictEqual(h.fakeFs.writeOps, [], "horizontal edges stay read-only");
-  });
-
-  it("readTaskNetwork degrades missing dirs and caps children", async () => {
-    const h = makeHarness({ sessions: new Map([["pi:net2", { agentId: "pi", cwd: CWD }]]) });
-    const many = Array.from({ length: 25 }, (_, i) => `child-${i}`);
-    addTask(h.fakeFs, "task-b", { title: "B", status: "in_progress", subtasks: [], children: many });
-    h.activity.setPersistedRoots([PROJECT]);
-
-    const result = await h.activity.readTaskNetwork(CWD, ".trellis/tasks/task-b");
-    assert.strictEqual(result.status, "ok");
-    assert.strictEqual(result.children.length, 20);
-    assert.strictEqual(result.childrenTruncated, true);
-    assert.strictEqual(result.parent, null);
-
-    assert.strictEqual((await h.activity.readTaskNetwork(PROJECT, ".trellis/tasks/nope")).status, "missing");
-    assert.strictEqual((await h.activity.readTaskNetwork("/untrusted", ".trellis/tasks/task-b")).status, "missing");
   });
 
   it("readSpecTree rejects untrusted roots and tolerates a missing spec dir", async () => {

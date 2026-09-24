@@ -48,9 +48,9 @@ function registerSessionIpc(options = {}) {
     options.getTrellisTaskDetail,
     "getTrellisTaskDetail"
   );
-  const getTrellisTaskNetwork = requiredDependency(
-    options.getTrellisTaskNetwork,
-    "getTrellisTaskNetwork"
+  const getTrellisNetworkOverview = requiredDependency(
+    options.getTrellisNetworkOverview,
+    "getTrellisNetworkOverview"
   );
   const getTrellisTaskDoc = requiredDependency(
     options.getTrellisTaskDoc,
@@ -196,27 +196,27 @@ function registerSessionIpc(options = {}) {
     return getTrellisTaskDetail(payload);
   });
 
-  // v4-b task network: one-shot read of one task's structured linkage
-  // (parent/children from task.json). Same trusted-frame gate and the
-  // same cwd/taskPath validation as the detail read.
-  handle("dashboard:trellis-task-network", (event, payload) => {
+;
+
+  // v7 R8 project-wide network overview: one-shot read of the whole
+  // relation graph for a root (nodes + vertical parent edges + shared
+  // spec/PRD horizontal groups). Same trusted-frame gate; `root` mirrors
+  // the spec-tree payload.
+  handle("dashboard:trellis-network-overview", (event, payload) => {
     const rejected = rejectUntrustedDashboardEvent(event);
     if (rejected) return rejected;
     const keys = payload && typeof payload === "object" && !Array.isArray(payload)
       ? Object.keys(payload).sort()
       : [];
     if (
-      keys.length !== 2
-      || keys[0] !== "cwd"
-      || keys[1] !== "taskPath"
-      || typeof payload.cwd !== "string"
-      || !payload.cwd
-      || typeof payload.taskPath !== "string"
-      || !payload.taskPath
+      keys.length !== 1
+      || keys[0] !== "root"
+      || typeof payload.root !== "string"
+      || !payload.root
     ) {
       return { status: "invalid" };
     }
-    return getTrellisTaskNetwork(payload);
+    return getTrellisNetworkOverview(payload);
   });
 
   // One-shot on-demand read of ONE markdown document of a Trellis task —

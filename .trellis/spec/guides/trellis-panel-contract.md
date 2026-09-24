@@ -679,8 +679,9 @@ split 单视图见 §4.6f；spec 地图入口移至 project bar，见 §4.7。�
   隐藏，但 `renderTrellisPanel()` 照常执行（签名防抖挡住无谓重建）
 - **每秒 render() 与视图**：`renderTrellisView()` 开头
   `activeView !== "trellis"` 直接 return；视图签名 =
-  `{lang, roots, selectedRoot, manageOpen, active, archive}` 全量 JSON
-  （含 openMonths；selectedRoot/manageOpen 见 §4.7）
+  `{lang, roots, selectedRoot, panelOpen, active, archive, network, spec}`
+  全量 JSON（含 openMonths；selectedRoot/panelOpen 见 §4.7；network/spec
+  是 v7 R8 抽屉异步态的摘要——loading→result 翻转必须重渲染视图）
 - **会话内嵌面板保留**：活跃绑定视角（entry.trellis 聚合）仍是
   §4.2 面板；归档浏览只在独立视图——双入口不得回潮
 
@@ -764,9 +765,12 @@ Correct removeTrellisPick(pick 目录)      // 一次撤销整组
 `trellisView.selectedRoot`。**v7 R5**：项目区收成单行 project bar
 （标题 + chips + 规范地图入口 `trellis-spec-open` + ⚙
 `trellis-filter-manage`）；roots 列表（全路径行 + 移除按钮 +
-添加按钮）降级为 ⚙ 展开的 `manageOpen` 管理抽屉，默认收起，
-`buildTrellisRootsSection` 在有根且抽屉关闭时返回 null（错误/空态
-仍无条件渲染）；⚙ 按钮带 `aria-expanded`，签名含 `manageOpen`。
+添加按钮）降级为 ⚙ 展开的管理抽屉，默认收起；**v7 R8**：⚙ 与 ⛓（关联
+全景）和 📐（规范地图）共用互斥抽屉槽 `trellisView.panelOpen: null |
+"manage" | "network" | "spec"`（会话态）。`buildTrellisRootsSection`
+在 panelOpen!=="manage" 时返回 null（错误/空态仍无条件渲染）；三个按钮
+都带 `aria-expanded`，签名含 `panelOpen`。⛓/📐 面板内嵌在 #trellisView
+（project bar 之下），不再有 overlay 宿主。
 
 **2. Signatures**：
 - `trellisTaskOwningRoot(cwd, roots)` → 拥有该 cwd 的注册 root
@@ -949,8 +953,11 @@ for (const [dir, relPath] of taskRelPaths) {
 
 #### §4.6c 通道契约：dashboard:trellis-spec-tree / dashboard:trellis-spec-doc（7 段式，v4-a）
 
-**1. Scope / Trigger**：Dashboard Trellis 视图「规范地图」overlay 的两个只读
-一次性通道（f4bd8b82）。复刻 `dashboard:trellis-task-doc` 四层链路。
+**1. Scope / Trigger**：Trellis 项目视图「规范地图」抽屉的两个只读一次性
+通道（f4bd8b82）。复刻 `dashboard:trellis-task-doc` 四层链路。
+**v7 R8**：规范地图不再是 overlay——入口在 project bar（📐），
+面板内嵌 #trellisView（`trellis-spec-panel`，与 ⛓/⚙ 共用互斥
+`panelOpen` 槽）；通道与数据面不变。
 
 **2. Signatures**：
 - activity：`readSpecTree(root)` → `{status:"ok", files:[{relPath,group,filled,lines,refCount}], truncated}` 或
@@ -1001,41 +1008,48 @@ for (const [dir, relPath] of taskRelPaths) {
 
 ---
 
-#### §4.6d 通道契约：dashboard:trellis-task-network（7 段式，v4-b）
+#### §4.6d 通道契约：dashboard:trellis-network-overview（7 段式，v4-b；v7 R8 改造）
 
-**1. Scope / Trigger**：任务行「⛓ 关联」入口的只读一次性通道——读取单个
-task.json 的结构化关联（parent / children）。纵向证据源**只有 task.json**
-（v7 R2b 起横向边扩用任务文档文本，见第 2 段 specGroups/prdGroups；
-implement/check.jsonl 仍不作证据源）。
+**1. Scope / Trigger**：项目栏「⛓」按钮的只读一次性通道——一次遍历整个
+root 产出**全项目关联图**（nodes + 纵向 parent 边 + 横向共享 spec/PRD
+组）。v7 R8 起取代旧的单任务 `dashboard:trellis-task-network`（该通道、
+数据面 `readTaskNetwork`、详情卡 ⛓ 入口均已删除；关联是项目级视图，
+不是逐任务钻取）。纵向证据源**只有 task.json**；横向边用任务文档文本
+（prd/design/implement.md + implement/check.jsonl，
+`SPEC_REF_DOC_NAMES`）。
 
 **2. Signatures**：
-- activity：`readTaskNetwork(cwd, taskPath)` → `{status:"ok", parent,
-  children, childrenTruncated, specGroups, prdGroups}` / `{status:"missing"}`。
-  parent 为单个 ref 或 null；children ref 形态 `{taskPath, title, archived}` 或
-  `{name, missing:true}`。v7 R2b 新增两组横向边（对齐 `list_relations` 的
-  spec_groups / prd_groups）：`specGroups:[{specPath, tasks:[ref], truncated}]`
-  （同引 `.trellis/spec/<rel>` 文档的同层任务）、`prdGroups:[{prdPath,
-  owner:ref, tasks:[ref], truncated}]`（同引同层 `prd.md`；owner 是 PRD 所属
-  任务，缺失时 `{missing:true}` 仍渲染为禁用行）。证据源扩为任务文档文本
-  （prd/design/implement.md + implement/check.jsonl，`SPEC_REF_DOC_NAMES`）。
-- 帽：`NETWORK_REF_MAX = 20`（children/每组 tasks 截断标 `truncated`）、
-  `NETWORK_SIBLING_MAX = 200`（横向边同层扫描任务数）、
-  `SPEC_REF_MAX_BYTES = 2MiB`（横向边文档文本总帽）。
-- main api 表 `getTrellisTaskNetwork`（activity 缺失 → 既有 error envelope）。
+- activity：`readTaskNetworkOverview(root)` → `{status:"ok", nodes, edges,
+  specGroups, prdGroups, truncated}` / `{status:"missing"}`（root 过
+  `resolveTrustedSpecDir` 同一信任面）。
+  - `nodes`: 每任务 `{taskPath, title, archived, priority}`（task.json
+    读不到则跳过；priority 口径同归档条目）
+  - `edges`: 纵向 `{parentTaskPath|null, childTaskPath, parentMissing}`
+    （sibling join 优先，唯一 basename 回退，同 groupTrellisTasks）
+  - `specGroups:[{specPath, tasks:[ref], truncated}]`（同引
+    `.trellis/spec/<rel>`，**≥2 个不同引用者才成组**）
+  - `prdGroups:[{prdPath, owner:ref, tasks:[ref], truncated}]`
+    （同引 sibling `prd.md`；owner 缺失时 ref 带 `missing:true`）
+  - ref 形态 `{taskPath, title, archived, missing?}`
+- 帽：`NETWORK_SIBLING_MAX = 200`（任务目录数）、`SPEC_REF_MAX_BYTES =
+  2MiB`（文档文本总量，超限 break 且置顶层 `truncated:true`）、
+  `NETWORK_REF_MAX = 20`（每组 tasks）。
+- main api 表 `getTrellisNetworkOverview`（activity 缺失 → 既有 error
+  envelope）；preload 暴露同名方法。
 
 **3. Contracts**：
-- payload 严格双键 `{cwd:string, taskPath:string}`（与 task-detail 同形）。
+- payload 严格单键 `{root:string}`（与 spec-tree 同形）。
 - task.json 读取统一走 `readJsonObject`（返回 `{ok, value}` 包裹，非裸
-  对象）；corrupt 文件 `ok:false` → `{status:"missing"}`，不做部分解析
-- taskPath 过 `resolveTaskDir` 同一信任面（registered root / live cwd /
-  正向解析）；行级入口 flag：活跃行 `readTaskInfo` 附 `hasChildren:true`
-  （children 非空时）；归档行 entry 附 `hasChildren`（trellis-archive 扫描）。
-- ref 的 taskPath 由 `taskRefPathFromAbs` 生成：含前导 `.trellis/`，与
-  detail 通道的 taskPath 前缀直接兼容（点击 ref = 跳转 detail）。
+  对象）；corrupt 文件跳过，不做部分解析
+- root 过 `resolveTrustedSpecDir` 同一信任面；tasks 目录不存在 →
+  `{status:"missing"}`
+- 节点 taskPath 含前导 `.trellis/`，与 detail/split 选中路径直接兼容
+  （点击面板任务行 = `selectTrellisSplitTask` 跳转，归档目标先开
+  archiveOpen 折叠组并清除 collapsedPaths 命中）。
 
 **4. Validation & Error Matrix**：
 - untrusted sender → error envelope；payload 形状错 → `{status:"invalid"}`
-- resolveTaskDir 不认识 → `{status:"missing"}`
+- 根未注册/tasks 目录缺失 → `{status:"missing"}`
 - task.json 损坏 → `{status:"missing"}`（readJsonObject `{ok}` 包裹）
 - ref 名字含 `/` `\` 或空白 → `{name, missing:true}` 行内降级，不整体失败
 - sibling 目录不存在 → 先查活跃兄弟目录，再查 archive；都无 → missing 行
@@ -1086,9 +1100,11 @@ snapshot `.trellis-board-card[data-task-path]` 的 rect；
 `replaceChildren` 后 `flipTrellisBoardCards()` diff 新 rect，
 位移 ≥1px 的卡 `card.animate()` 260ms 平移补间。key = taskPath。
 
-**5. Overlay 近全屏**：`.trellis-detail-card` / `.trellis-spec-card`
-`calc(100%-48px) × calc(100%-64px)` cap `880×760`（**percent-only，
-禁 vw/vh**——zoom-safe，见 frontend/renderer-guidelines）；
+**5. Overlay 近全屏**：**v7 R8 后仅剩 detail 卡仍用此形态**（Sessions 卡片
+链路）。`.trellis-spec-card` 已改内联抽屉（100% 宽 / max-height 520px，
+无遮罩）；`.trellis-detail-card` 仍 `calc(100%-48px) × calc(100%-64px)`
+cap `880×760`（**percent-only，禁 vw/vh**——zoom-safe，见
+frontend/renderer-guidelines）；
 `@media (max-width: 980px)` 回落 `max-width:420px / max-height:520px`。
 
 **6. 可复制与动画**：`.trellis-detail-doc / .trellis-spec-doc /
@@ -1113,7 +1129,7 @@ fade-out（`animateTrellisOverlayClose`：setTimeout 140ms 守卫，重开
 `renderTrellisView` 无条件构建 split section，`openTrellisDetailFromTask` 无条件
 `{embedded:true}`（overlay 仅保留给 Sessions 卡片链路）。
 
-**1. Scope / Trigger**：Trellis 面板的任务浏览形态，纯渲染层，零新 IPC、零数据形态变更。选中行路径（`trellisSplit.selectedTaskPath`）、展开状态（`collapsedPaths`）、`archiveOpen`、项目过滤 `selectedRoot`（null=全部）、⚙ 管理抽屉 `manageOpen`（v7 R5）均为内存态，不持久化。
+**1. Scope / Trigger**：Trellis 面板的任务浏览形态，纯渲染层。选中行路径（`trellisSplit.selectedTaskPath`）、展开状态（`collapsedPaths`）、`archiveOpen`、项目过滤 `selectedRoot`（null=全部）、抽屉槽 `trellisView.panelOpen`（v7 R8，见 §4.7）均为内存态，不持久化。
 
 **2. 左右栏结构（v6.1，单卡片框架）**：
 - 外框 `.trellis-split-section` 自身是圆角卡片（`border + border-radius + overflow:hidden`），左右两栏共享同一框体，高度天然对齐。
