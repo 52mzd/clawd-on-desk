@@ -402,3 +402,13 @@ v5 可读性重构：① v5-a 8ff9c9aa 弹窗三卡（detail/spec/network）从 
 - 坑：renderer 里 IPC 调用是 window.dashboardAPI（非 window.dashboard）；
   沙盒测试重渲染后必须重新 byClass 取按钮（旧引用指向被替换的 DOM）
 - 0f894c07 提交；全量 11044/10978 pass，失败集与 HEAD 一致（20 预存）
+
+## 2026-09-24 v7 R9 规范地图并入 split 槽位（09-24-v7-r9-spec-split-view）
+
+- 用户二轮反馈：R8 内嵌面板仍"独立"（叠在任务列表上方）；
+  要求规范地图直接整合左右栏模式
+- buildTrellisSpecCard 改用 .trellis-split-section 框架（trellis-spec-split），
+  panelOpen==="spec" 时替换任务 split 槽位（非叠加）；关闭即恢复任务列表
+- ⛓ 网络全景保持顶部抽屉（低密度信息，无需 master-detail）
+- 删 buildTrellisSpecPanel / .trellis-spec-panel；efa1c5e4 提交；
+  全量 11044/10978 pass，失败集与 HEAD 一致（20 预存）
