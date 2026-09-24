@@ -1167,7 +1167,10 @@ function createTrellisSessionChip(binding) {
     : "trellis-session-chip trellis-session-chip-unfocusable";
   chip.textContent = binding.displayTitle;
   chip.title = binding.displayTitle;
-  if (!binding.canFocus) chip.disabled = true;
+  if (!binding.canFocus) {
+    chip.disabled = true;
+    chip.setAttribute("aria-disabled", "true");
+  }
   chip.addEventListener("click", (event) => {
     event.stopPropagation();
     window.dashboardAPI.focusSession(binding.id);
@@ -1689,16 +1692,65 @@ function moveTrellisSplitSelection(delta) {
     : Math.min(Math.max(index + delta, 0), paths.length - 1);
   if (paths[nextIndex] !== trellisSplit.selectedTaskPath) {
     selectTrellisSplitTask(paths[nextIndex]);
-    const row = rows[nextIndex];
-    if (row && typeof row.scrollIntoView === "function") {
-      row.scrollIntoView({ block: "nearest" });
-    }
+    // Rebuilt rows are fresh nodes — focus the new selected row so the
+    // :focus-visible outline tracks the keyboard cursor (guarded: the
+    // test sandbox elements have no focus()); focusing also scrolls the
+    // row into view, replacing the stale pre-rebuild scrollIntoView call.
+    const focused = trellisViewEl
+      ? trellisViewEl.querySelectorAll(".trellis-split-row[data-task-path]")[nextIndex]
+      : null;
+    if (focused && typeof focused.focus === "function") focused.focus();
   }
+}
+
+// Inline SVG icon vocabulary (UI redesign 09-24 Batch C): a small curated
+// set of stroke icons replaces the ad-hoc unicode glyphs (▾ ⛓ ↻ ✕) so
+// every marker renders identically across platforms and inherits color
+// from `currentColor`. Built with pure DOM calls (no innerHTML) so the
+// test sandbox's fake document keeps working; when createElementNS is
+// unavailable (sandbox), the fallback element still carries the shape
+// attributes for assertions.
+const TRELLIS_ICON_PATHS = {
+  caret: ["m6 9 6 6 6-6"],
+  link: [
+    "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71",
+    "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71",
+  ],
+  refresh: ["M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8", "M21 3v5h-5"],
+  close: ["M18 6 6 18", "m6 6 12 12"],
+};
+
+function iconSvg(name, size = 12) {
+  const ns = "http://www.w3.org/2000/svg";
+  const make = (tag) => (typeof document.createElementNS === "function"
+    ? document.createElementNS(ns, tag)
+    : document.createElement(tag));
+  const svg = make("svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", String(size));
+  svg.setAttribute("height", String(size));
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  for (const d of TRELLIS_ICON_PATHS[name] || []) {
+    const path = make("path");
+    path.setAttribute("d", d);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", "currentColor");
+    path.setAttribute("stroke-width", "2");
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    svg.appendChild(path);
+  }
+  return svg;
 }
 
 function buildTrellisSplitRow(task, meta, labels, archived = false) {
   const row = document.createElement("div");
   row.className = "trellis-split-row";
+  // Focusable for keyboard navigation only (not in the Tab order): ↑/↓
+  // move the selection AND the DOM focus so :focus-visible outlines the
+  // keyboard-active row (UI redesign 09-24 Batch B).
+  row.setAttribute("tabindex", "-1");
   row.dataset.taskPath = task.taskPath || "";
   if (task.taskPath === trellisSplit.selectedTaskPath) {
     row.classList.add("is-selected");
@@ -1732,7 +1784,7 @@ function buildTrellisSplitRow(task, meta, labels, archived = false) {
     caret.className = "trellis-split-caret";
     caret.setAttribute("aria-label", t("dashboardTrellisSplitToggle"));
     caret.setAttribute("aria-expanded", String(!trellisSplit.collapsedPaths.has(task.taskPath)));
-    caret.appendChild(document.createTextNode("▾"));
+    caret.appendChild(iconSvg("caret", 12));
     caret.addEventListener("click", (ev) => {
       ev.stopPropagation();
       if (trellisSplit.collapsedPaths.has(task.taskPath)) {
@@ -1883,7 +1935,7 @@ function buildTrellisSplitRefreshBtn() {
   const refresh = document.createElement("button");
   refresh.type = "button";
   refresh.className = "trellis-split-refresh";
-  refresh.textContent = "↻";
+  refresh.appendChild(iconSvg("refresh", 12));
   refresh.title = t("dashboardTrellisArchivedRefresh");
   refresh.setAttribute("aria-label", t("dashboardTrellisArchivedRefresh"));
   refresh.addEventListener("click", (ev) => {
@@ -2000,19 +2052,26 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
     if (group.phase === "done" && !trellisSplit.archiveOpen && subtrees.length > 0) {
       const collapsedHead = document.createElement("div");
       // `is-collapsed` stays on the HEAD (v7 contract: tests + CSS target
-      // the group head, not the inner toggle button).
+      // the group head, not the inner toggle button). The click/keyboard
+      // handler lives on the toggle BUTTON (UI redesign 09-24 Batch B):
+      // a real button carries focus, :focus-visible and :active for free;
+      // stopPropagation keeps the click from reaching the head.
       collapsedHead.className = "trellis-split-group-head is-collapsed";
       collapsedHead.style.setProperty("--split-group-index", String(groupIndex));
-      // Click handler lives on the HEAD div, not the inner button: the
-      // v7 contract addresses the head, and a handler on both would fire
-      // twice in a real browser (button click bubbles to the div).
-      collapsedHead.addEventListener("click", toggleTrellisSplitArchive);
       const collapsedToggle = document.createElement("button");
       collapsedToggle.type = "button";
       collapsedToggle.className = "trellis-split-group-toggle is-collapsed";
-      collapsedToggle.appendChild(createText("span", "trellis-split-group-caret", "▾"));
+      collapsedToggle.setAttribute("aria-expanded", "false");
+      const collapsedCaret = document.createElement("span");
+      collapsedCaret.className = "trellis-split-group-caret";
+      collapsedCaret.appendChild(iconSvg("caret", 12));
+      collapsedToggle.appendChild(collapsedCaret);
       collapsedToggle.appendChild(createText("span", "trellis-split-group-title", t(group.labelKey)));
       collapsedToggle.appendChild(createText("span", "trellis-split-group-count", String(subtrees.length)));
+      collapsedToggle.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        toggleTrellisSplitArchive();
+      });
       collapsedHead.appendChild(collapsedToggle);
       // ↻ refresh is a SIBLING of the toggle (never nested inside it —
       // nested buttons are invalid and would double-fire on click).
@@ -2032,12 +2091,21 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
       head.style.setProperty("--split-group-index", String(groupIndex));
       let headToggle = head;
       if (group.phase === "done" && trellisSplit.archiveOpen) {
-        // Same rule as the collapsed head: the handler sits on the head.
-        head.addEventListener("click", toggleTrellisSplitArchive);
+        // Same rule as the collapsed head: the handler sits on the toggle
+        // button; title/count ride inside it so the whole label is the
+        // click target (stopPropagation keeps the head out of it).
         headToggle = document.createElement("button");
         headToggle.type = "button";
         headToggle.className = "trellis-split-group-toggle";
-        headToggle.appendChild(createText("span", "trellis-split-group-caret", "▾"));
+        headToggle.setAttribute("aria-expanded", "true");
+        const openCaret = document.createElement("span");
+        openCaret.className = "trellis-split-group-caret";
+        openCaret.appendChild(iconSvg("caret", 12));
+        headToggle.appendChild(openCaret);
+        headToggle.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          toggleTrellisSplitArchive();
+        });
         head.appendChild(headToggle);
       }
       headToggle.appendChild(createText("span", "trellis-split-group-title", t(group.labelKey)));
@@ -2096,15 +2164,26 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
         const monthOpen = trellisView.archive.openMonths === null
           || trellisView.archive.openMonths.has(month);
         const monthHead = document.createElement("div");
+        // Same contract as the phase-group heads (Batch B): the fold
+        // handler and aria-expanded live on the inner toggle button;
+        // `is-collapsed` stays on the head for CSS + tests. The caret is
+        // an SVG that rotates via CSS — no glyph flipping in JS.
         monthHead.className = "trellis-split-month-head" + (monthOpen ? "" : " is-collapsed");
-        monthHead.setAttribute("aria-expanded", String(monthOpen));
-        monthHead.appendChild(createText("span", "trellis-split-caret", monthOpen ? "▾" : "▸"));
-        monthHead.appendChild(createText(
+        const monthToggle = document.createElement("button");
+        monthToggle.type = "button";
+        monthToggle.className = "trellis-split-month-toggle";
+        monthToggle.setAttribute("aria-expanded", String(monthOpen));
+        const monthCaret = document.createElement("span");
+        monthCaret.className = "trellis-split-caret";
+        monthCaret.appendChild(iconSvg("caret", 12));
+        monthToggle.appendChild(monthCaret);
+        monthToggle.appendChild(createText(
           "span",
           "trellis-split-month-label",
           `${month || t("dashboardTrellisArchivedUnknownMonth")} · ${byMonth.get(month).length}`
         ));
-        monthHead.addEventListener("click", () => {
+        monthToggle.addEventListener("click", (ev) => {
+          ev.stopPropagation();
           const state = trellisView.archive;
           if (state.openMonths === null) state.openMonths = new Set(months);
           if (state.openMonths.has(month)) {
@@ -2115,6 +2194,7 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
           lastTrellisPanelSignature = null;
           renderTrellisViewBody();
         });
+        monthHead.appendChild(monthToggle);
         listPane.appendChild(monthHead);
         if (monthOpen) {
           for (const subtree of byMonth.get(month)) {
@@ -2281,12 +2361,17 @@ function toggleTrellisNetworkGroup() {
 }
 
 function buildTrellisSpecListGroup() {
-  const head = document.createElement("div");
+  // The head is a real <button> (UI redesign 09-24 Batch B): same class
+  // contract (head + toggle double class), native focus/keyboard support.
+  const head = document.createElement("button");
+  head.type = "button";
   head.className = "trellis-split-group-head trellis-split-group-toggle"
     + (trellisSplit.specGroupOpen ? "" : " is-collapsed");
-  head.setAttribute("role", "button");
   head.setAttribute("aria-expanded", trellisSplit.specGroupOpen ? "true" : "false");
-  head.appendChild(createText("span", "trellis-split-group-caret", trellisSplit.specGroupOpen ? "▾" : "▸"));
+  const specCaret = document.createElement("span");
+  specCaret.className = "trellis-split-group-caret";
+  specCaret.appendChild(iconSvg("caret", 12));
+  head.appendChild(specCaret);
   head.appendChild(createText("span", "trellis-split-group-title", t("dashboardTrellisSpecGroup")));
   const files = trellisSpec.open ? trellisSpec.files : [];
   if (!trellisSpec.loading && files.length > 0) {
@@ -2330,7 +2415,10 @@ function buildTrellisSpecListGroup() {
       ));
     }
     if (file.refCount > 0) {
-      const refs = createText("span", "trellis-spec-file-refs", `⛓${file.refCount}`);
+      const refs = document.createElement("span");
+      refs.className = "trellis-spec-file-refs";
+      refs.appendChild(iconSvg("link", 12));
+      refs.appendChild(document.createTextNode(String(file.refCount)));
       refs.setAttribute("title", t("dashboardTrellisSpecRefs").replace("{n}", String(file.refCount)));
       side.appendChild(refs);
     }
@@ -2399,12 +2487,16 @@ function trellisNetworkGroups() {
 }
 
 function buildTrellisNetworkListGroup() {
-  const head = document.createElement("div");
+  // Real <button> head, same class contract as the spec group above.
+  const head = document.createElement("button");
+  head.type = "button";
   head.className = "trellis-split-group-head trellis-split-group-toggle"
     + (trellisSplit.networkGroupOpen ? "" : " is-collapsed");
-  head.setAttribute("role", "button");
   head.setAttribute("aria-expanded", trellisSplit.networkGroupOpen ? "true" : "false");
-  head.appendChild(createText("span", "trellis-split-group-caret", trellisSplit.networkGroupOpen ? "▾" : "▸"));
+  const networkCaret = document.createElement("span");
+  networkCaret.className = "trellis-split-group-caret";
+  networkCaret.appendChild(iconSvg("caret", 12));
+  head.appendChild(networkCaret);
   head.appendChild(createText("span", "trellis-split-group-title", t("dashboardTrellisLinksGroup")));
   const groups = trellisNetwork.open ? trellisNetworkGroups() : [];
   if (!trellisNetwork.loading && groups.length > 0) {
@@ -2579,7 +2671,12 @@ function computeTrellisViewSignature() {
 function renderTrellisView() {
   if (!trellisViewEl || activeView !== "trellis") return;
   const signature = computeTrellisViewSignature();
-  if (signature === lastTrellisViewSignature) return;
+  if (signature === lastTrellisViewSignature) {
+    // Nothing rebuilds — drop a stale entry animation arm so a later fold
+    // never replays the first-mount stagger (UI redesign 09-24 Batch D).
+    trellisSplit.entryPending = false;
+    return;
+  }
   lastTrellisViewSignature = signature;
 
   const fragment = document.createDocumentFragment();
@@ -2626,6 +2723,10 @@ function switchDashboardView(view) {
   if (trellisViewEl) trellisViewEl.hidden = !trellis;
   if (contentEl) contentEl.classList.toggle("hidden", trellis);
   if (sessionsHeaderExtrasEl) sessionsHeaderExtrasEl.hidden = trellis;
+  // Entry stagger plays on FIRST MOUNT only (UI redesign 09-24 Batch D):
+  // arming the flag right before render() lets the initial section build
+  // animate; every later rebuild (data ticks, selection, folds) is silent.
+  if (trellis) trellisSplit.entryPending = true;
   render({ force: true });
   if (trellis) refreshTrellisView();
 }
@@ -2815,6 +2916,7 @@ function trellisNetworkRefButton(ref) {
   } else {
     btn.disabled = true;
     btn.classList.add("is-missing");
+    btn.setAttribute("aria-disabled", "true");
     btn.appendChild(document.createTextNode(
       (ref && (ref.title || ref.taskPath || ref.name)) || t("dashboardTrellisLinksMissing")
     ));
@@ -3288,6 +3390,9 @@ function appendTrellisDetailSessions(card, request) {
 const trellisDocBuilder = {
   createElement: (tag) => document.createElement(tag),
   createTextNode: (text) => document.createTextNode(text),
+  createElementNS: (ns, tag) => (typeof document.createElementNS === "function"
+    ? document.createElementNS(ns, tag)
+    : document.createElement(tag)),
 };
 
 function trellisDocHeadingLevel(el) {
@@ -3306,7 +3411,8 @@ function toggleTrellisDocHeading(docRoot, heading) {
   if (!level) return;
   const collapsed = heading.classList.toggle("md-collapsed");
   heading.setAttribute("aria-expanded", collapsed ? "false" : "true");
-  if (heading.children[0]) heading.children[0].textContent = collapsed ? "▸" : "▾";
+  // The caret is an always-down SVG rotated via CSS (.md-collapsed rule)
+  // — no glyph flipping here (UI redesign 09-24 Batch C).
   const siblings = docRoot.children;
   for (let i = siblings.length - 1; i >= 0; i -= 1) {
     if (siblings[i] === heading) {
@@ -3418,7 +3524,7 @@ function buildTrellisDetailCard() {
   const close = document.createElement("button");
   close.type = "button";
   close.className = "trellis-detail-close";
-  close.textContent = "✕";
+  close.appendChild(iconSvg("close", 12));
   close.title = t("dashboardTrellisDetailClose");
   close.setAttribute("aria-label", t("dashboardTrellisDetailClose"));
   close.addEventListener("click", closeTrellisDetail);

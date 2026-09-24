@@ -188,6 +188,29 @@
   // h2/h3 headings get a collapse toggle; the click behavior lives in the
   // Dashboard renderer (this module stays DOM-event-free), which flips the
   // `md-collapsed` class and hides the section's following siblings.
+  // The toggle glyph is an inline SVG caret when the builder exposes
+  // createElementNS (real Dashboard); text-only builders (tests, embedders
+  // predating the SVG vocabulary) keep the ▾ fallback — the collapsed
+  // state rotates via CSS either way, so no JS glyph flipping is needed.
+  function buildHeadingCaretIcon(builder) {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = builder.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("width", "12");
+    svg.setAttribute("height", "12");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+    const path = builder.createElementNS(ns, "path");
+    path.setAttribute("d", "m6 9 6 6 6-6");
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", "currentColor");
+    path.setAttribute("stroke-width", "2");
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    svg.appendChild(path);
+    return svg;
+  }
+
   function appendHeading(builder, parent, level, text) {
     const el = builder.createElement("div");
     el.className = `md-h${level}`;
@@ -197,7 +220,11 @@
     el.setAttribute("aria-expanded", "true");
     const toggle = builder.createElement("span");
     toggle.className = "md-heading-toggle";
-    toggle.textContent = "▾";
+    if (typeof builder.createElementNS === "function") {
+      toggle.appendChild(buildHeadingCaretIcon(builder));
+    } else {
+      toggle.textContent = "▾";
+    }
     el.appendChild(toggle);
     appendInline(builder, el, text, 0);
     parent.appendChild(el);

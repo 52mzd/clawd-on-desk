@@ -388,6 +388,13 @@ async function switchToTrellis(app) {
   await flush();
 }
 
+// The v7 contract keeps `is-collapsed` on the group HEAD div, while the
+// click handler lives on the inner .trellis-split-group-toggle button
+// (UI redesign 09-24 Batch B). Dispatch at the toggle when present.
+function groupHeadToggle(head) {
+  return byClass(head, "trellis-split-group-toggle")[0] || head;
+}
+
 
 function loadDashboard({
   sessions = [],
@@ -1227,7 +1234,7 @@ describe("dashboard trellis independent view", () => {
     );
 
     // Expanding the archive opens the newest month by default.
-    await doneHead.dispatch("click");
+    await groupHeadToggle(doneHead).dispatch("click");
     await flush();
     const archivedRows = byClass(app.view, "trellis-split-row").filter(
       (el) => el.classList.contains("is-archived"),
@@ -1326,7 +1333,7 @@ describe("dashboard trellis independent view", () => {
     const archiveHead = byClass(app.view, "trellis-split-group-head").find(
       (el) => el.classList.contains("is-collapsed")
     );
-    await archiveHead.dispatch("click");
+    await groupHeadToggle(archiveHead).dispatch("click");
     await flush();
     await byClass(app.view, "trellis-split-row")[0].dispatch("click");
     await flush();
@@ -1405,7 +1412,7 @@ describe("dashboard trellis independent view", () => {
     const archiveHead = byClass(app.view, "trellis-split-group-head").find(
       (el) => el.classList.contains("is-collapsed"),
     );
-    await archiveHead.dispatch("click");
+    await groupHeadToggle(archiveHead).dispatch("click");
     await flush();
     assert.equal(
       byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-archived")).length,
@@ -1431,15 +1438,15 @@ describe("dashboard trellis independent view", () => {
     let archiveHead = byClass(app.view, "trellis-split-group-head").find(
       (el) => el.classList.contains("is-collapsed"),
     );
-    await archiveHead.dispatch("click");
+    await groupHeadToggle(archiveHead).dispatch("click");
     await flush();
-    const month = byClass(app.view, "trellis-split-month-head")[0];
-    assert.equal(month.attributes["aria-expanded"], "true", "newest month starts open");
+    const monthToggle = byClass(app.view, "trellis-split-month-toggle")[0];
+    assert.equal(monthToggle.attributes["aria-expanded"], "true", "newest month starts open");
 
-    await month.dispatch("click");
+    await monthToggle.dispatch("click");
     assert.equal(byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-archived")).length, 0,
       "collapsing the month hides its rows");
-    await byClass(app.view, "trellis-split-month-head")[0].dispatch("click");
+    await byClass(app.view, "trellis-split-month-toggle")[0].dispatch("click");
     assert.equal(byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-archived")).length, 1);
 
     // The archive group head carries its own ↻ refresh button.
@@ -1469,7 +1476,7 @@ describe("dashboard trellis independent view", () => {
     const archiveHead = byClass(app.view, "trellis-split-group-head").find(
       (el) => el.classList.contains("is-collapsed"),
     );
-    await archiveHead.dispatch("click");
+    await groupHeadToggle(archiveHead).dispatch("click");
     await flush();
     const text = textOf(app.view);
     assert.ok(text.includes(i18n.en.dashboardTrellisArchivedDurationMinutes.replace("{n}", "20")));
@@ -1603,7 +1610,7 @@ describe("dashboard trellis independent view", () => {
     await switchToTrellis(app);
 
     const heads = byClass(app.view, "trellis-split-group-head");
-    await heads.find((el) => textOf(el).includes(i18n.en.dashboardTrellisPhaseArchived)).dispatch("click");
+    await groupHeadToggle(heads.find((el) => textOf(el).includes(i18n.en.dashboardTrellisPhaseArchived))).dispatch("click");
 
     const rows = byClass(app.view, "trellis-split-row");
     const kid = rows.find((el) => textOf(el).includes("Done kid"));
@@ -1734,7 +1741,7 @@ describe("dashboard trellis project filter (rendering)", () => {
         textOf(el).includes(i18n.en.dashboardTrellisPhaseArchived)
       );
     };
-    await doneHead().dispatch("click");
+    await groupHeadToggle(doneHead()).dispatch("click");
     assert.equal(textOf(byClass(doneHead(), "trellis-split-group-count")[0]), "1");
     const archived = rows().filter((el) => el.classList.contains("is-archived"));
     assert.equal(archived.length, 1);
@@ -2029,7 +2036,7 @@ it("lists spec docs in the left-column group with status badges", async () => {
     // Filled docs show a body-line count, never a "filled" badge.
     assert.equal(textOf(byClass(rows[0], "trellis-spec-file-lines")[0]), "12 lines");
     assert.equal(byClass(rows[0], "trellis-spec-file-empty").length, 0);
-    assert.equal(textOf(byClass(rows[0], "trellis-spec-file-refs")[0]), "⛓3");
+    assert.equal(textOf(byClass(rows[0], "trellis-spec-file-refs")[0]), "3");
 
     // Heading-only docs read as empty instead of looking filled.
     assert.ok(rows[1].classList.contains("is-empty-spec"));
@@ -2043,7 +2050,7 @@ it("lists spec docs in the left-column group with status badges", async () => {
     assert.ok(!rows[2].classList.contains("is-empty-spec"));
     assert.equal(byClass(rows[2], "trellis-spec-file-empty").length, 0);
     assert.equal(byClass(rows[2], "trellis-spec-file-lines").length, 0);
-    assert.equal(textOf(byClass(rows[2], "trellis-spec-file-refs")[0]), "⛓1");
+    assert.equal(textOf(byClass(rows[2], "trellis-spec-file-refs")[0]), "1");
   });
 });
 
