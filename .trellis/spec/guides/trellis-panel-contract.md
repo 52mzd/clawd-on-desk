@@ -957,7 +957,7 @@ for (const [dir, relPath] of taskRelPaths) {
 **v7 R10（最终形态）**：规范地图是 split 左栏的一个**分组**——与
 计划/执行/检查/归档同构的折叠头（`dashboardTrellisSpecGroup`），
 默认收起，首次展开懒加载 `getTrellisSpecTree`；行=spec 文件（relPath +
-行数/待填/⛓N 徽标），点击行右栏（`.trellis-split-detail`）渲染文档
+行数/待填/引用计数徽标），点击行右栏（`.trellis-split-detail`）渲染文档
 （`trellis-spec-doc-content`）。关联分组（`dashboardTrellisLinksGroup`）
 同理：行=关联组（父→子/共享规范/共享 PRD），点击右栏渲染组成员
 （`trellis-network-group-content`），成员点击跳 `selectTrellisSplitTask`。
@@ -967,7 +967,8 @@ project bar 的 📐/⛓ 按钮、panelOpen 的 spec/network 槽位、
 `currentTrellisScopeRoot()`（selectedRoot 或 roots[0]，与 split 过滤同源），
 `renderTrellisView()` 每次先 `syncTrellisPanelScopes()`：展开中且 root
 变了（无在途 fetch）→ 清缓存重拉（spec: files+selected+doc cache；
-network: result）。
+network: result）。行内徽标现为行数/待填/引用计数（`iconSvg("link")`
++ 数字，替代旧 unicode ⛓）。
 
 **2. Signatures**：
 - activity：`readSpecTree(root)` → `{status:"ok", files:[{relPath,group,filled,lines,refCount}], truncated}` 或
@@ -1000,7 +1001,7 @@ network: result）。
 
 **5. Good/Base/Bad Cases**：
 - Good：`{root:"/proj"}` → 该 root spec 全量分组列表；点击 `guides/cross-layer-thinking-guide.md` 渲染全文；
-  v7 R6 列表行同时示行数/待填徽标/`⛓N` 引用计数（filled=false →
+  v7 R6 列表行同时示行数/待填徽标/`link N` 引用计数（filled=false →
   `is-empty` + `dashboardTrellisSpecEmptyDoc` 徽标，读不到 → 全静默）
 - Base：无 spec 目录的项目 → 空态文案（dashboardTrellisSpecEmpty）
 - Bad：relPath `"../tasks/x/task.json"` → `missing`，无读取发生
@@ -1157,7 +1158,9 @@ fade-out（`animateTrellisOverlayClose`：setTimeout 140ms 守卫，重开
 
 **7. 窄窗降级**：容器 ≤1100px 时右栏从并排变为覆盖左栏的 drawer（`absolute inset 0 0 auto 0`、`z-index: 3`，仅 `:has(.trellis-detail-card)` 时 `display: block`）。
 
-**8. 动画**：首次进入时分组头/行播 `group-in`（0.3s ease-out），嵌入卡播 `detail-in`（0.22s）；`is-entering` 只在首次构建时添加；`in_progress` state-dot 呼吸动画；`prefers-reduced-motion: reduce` 全部禁用。
+**8. 动画**：首次进入时分组头/行播 `group-in`（0.3s ease-out），嵌入卡播 `detail-in`（0.22s）；`is-entering` 只在首次构建时添加（UI 重设计后由 first-mount 守卫强制：数据刷新/选中/折叠引发的 rebuild 零重放入场动画，键盘导航选中为即时类切换无 transition）；`in_progress` state-dot 呼吸动画；`prefers-reduced-motion: reduce` 全部禁用。
+
+**8b. UI 设计基线（emil-design-eng 重设计，2026-09）**：trellis CSS 块顶部维护局部 token `--trellis-font-title: 600 13px/1.45` / `--trellis-font-sub: 400 12px/1.5` / `--trellis-font-meta: 500 11px/1.4` / `--trellis-radius` / `--trellis-press`；字号硬下限 11px（时间/计数用 `tabular-nums`）。交互元素必须有 hover/active（`scale(0.97)` via `--trellis-press`）/focus-visible（2px accent outline）三态；div 不承接 click——折叠头（group/month）由内部 button toggle 接管（stopPropagation 防双触发）。图标统一走 `iconSvg(name, size)` 内联 SVG（`currentColor` + `aria-hidden`），禁止新增 unicode 字符图标；caret 为 12px SVG 居中 15px button，折叠态用 CSS rotate。对比度：文本 ≥4.5:1，状态指示（dot/tick/空 progress-tick ≥3:1）；`is-archived`/`is-missing` 只对装饰元素（dot/badge）降透明，不整体降灰文本。
 
 **9. 红线**：
 - 键盘导航序列必须从 DOM querySelectorAll 派生，不得从内存任务数组推导
