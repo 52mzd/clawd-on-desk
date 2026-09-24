@@ -1935,7 +1935,67 @@ describe("dashboard trellis v7 single view (R5–R7)", () => {
     assert.equal(byClass(app.view, "trellis-root-row").length, 0, "⚙ folds it away again");
   });
 
-    it("lists spec docs in the left-column group with status badges", async () => {
+      it("resets spec and relations content when the project chip switches", async () => {
+    let specByRoot = new Map([
+      ["/proj/one", { status: "ok", truncated: false, files: [
+        { group: "frontend", relPath: "frontend/one.md", filled: true, lines: 9, refCount: 0 },
+      ] }],
+      ["/proj/two", { status: "ok", truncated: false, files: [
+        { group: "backend", relPath: "backend/two.md", filled: true, lines: 4, refCount: 0 },
+      ] }],
+    ]);
+    let netByRoot = new Map([
+      ["/proj/one", { status: "ok", nodes: [], edges: [
+        { parentTaskPath: ".trellis/tasks/one-p", childTaskPath: ".trellis/tasks/one-c", parentMissing: false },
+      ], specGroups: [], prdGroups: [], truncated: false }],
+      ["/proj/two", { status: "ok", nodes: [], edges: [
+        { parentTaskPath: ".trellis/tasks/two-p", childTaskPath: ".trellis/tasks/two-c", parentMissing: false },
+      ], specGroups: [], prdGroups: [], truncated: false }],
+    ]);
+    const app = loadDashboard({
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/one", "/proj/two"] },
+      activeResult: { status: "ok", tasks: [
+        { taskPath: ".trellis/tasks/a", title: "Task A", phase: "plan", progress: null, parent: null, cwd: "/proj/one" },
+      ] },
+      archiveResult: { status: "ok", tasks: [] },
+      specResult: (payload) => specByRoot.get(payload.root),
+      networkOverviewResult: (payload) => netByRoot.get(payload.root),
+    });
+    await flush();
+    await switchToTrellis(app);
+
+    // Expand both groups under the default scope (All → first root).
+    const headByText = (label) => byClass(app.view, "trellis-split-group-head")
+      .find((el) => textOf(el).includes(label));
+    await headByText(i18n.en.dashboardTrellisSpecGroup).dispatch("click");
+    await flush();
+    await headByText(i18n.en.dashboardTrellisLinksGroup).dispatch("click");
+    await flush();
+    assert.deepEqual(app.specCalls.map((p) => p.root), ["/proj/one"]);
+    assert.ok(byClass(app.view, "trellis-spec-row").some((el) => textOf(el).includes("frontend/one.md")));
+    assert.ok(byClass(app.view, "trellis-network-row").some((el) => textOf(el).includes("one-p")));
+
+    // Switch the chip (chips = [All, /proj/one, /proj/two]): both groups
+    // must refetch for the new root.
+    await byClass(app.view, "trellis-filter-chip")[2].dispatch("click");
+    await flush();
+    assert.deepEqual(app.specCalls.map((p) => p.root), ["/proj/one", "/proj/two"],
+      "the spec group refetches for the newly selected root");
+    assert.deepEqual(app.networkOverviewCalls.map((p) => p.root), ["/proj/one", "/proj/two"],
+      "the relations group refetches too");
+    assert.ok(byClass(app.view, "trellis-spec-row").every((el) => textOf(el).includes("two.md")),
+      "the spec rows now show the second root's docs");
+    assert.ok(byClass(app.view, "trellis-network-row").some((el) => textOf(el).includes("two-p")),
+      "and the relations rows show the second root's graph");
+
+    // Back to All: falls back to the first root again.
+    await byClass(app.view, "trellis-filter-chip")[0].dispatch("click");
+    await flush();
+    assert.deepEqual(app.specCalls.map((p) => p.root), ["/proj/one", "/proj/two", "/proj/one"]);
+    assert.ok(byClass(app.view, "trellis-spec-row").some((el) => textOf(el).includes("frontend/one.md")));
+  });
+it("lists spec docs in the left-column group with status badges", async () => {
     const app = loadDashboard({
       sessions: [],
       rootsResult: { status: "ok", roots: ["/proj/one"] },

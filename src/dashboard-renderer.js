@@ -2207,23 +2207,75 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
 }
 
 // ── v7 R10: spec list group (left column, below DONE) ──
+// The project scope the spec/relations groups follow: the selected chip,
+// or the first registered root in the merged "all" view.
+function currentTrellisScopeRoot() {
+  return trellisView.selectedRoot || trellisView.roots[0] || null;
+}
+
+// Reset the spec group for a (possibly new) scope root and refetch. Used
+// both by the first expand and by scope switches while it stays open.
+function refetchTrellisSpecForScope() {
+  const root = currentTrellisScopeRoot();
+  if (!root) return;
+  trellisSpec.open = true;
+  trellisSpec.loading = true;
+  trellisSpec.seq += 1;
+  trellisSpec.root = root;
+  trellisSpec.files = [];
+  trellisSpec.truncated = false;
+  trellisSpec.selected = null;
+  trellisSpecDocs.clear();
+  lastTrellisSpecSignature = null;
+  void fetchTrellisSpecTree(root);
+}
+
+function refetchTrellisNetworkForScope() {
+  const root = currentTrellisScopeRoot();
+  if (!root) return;
+  trellisNetwork.open = true;
+  trellisNetwork.loading = true;
+  trellisNetwork.seq += 1;
+  trellisNetwork.root = root;
+  trellisNetwork.result = null;
+  lastTrellisNetworkSignature = null;
+  void fetchTrellisNetworkOverview();
+}
+
+// v7 R10fix: the two extra groups follow the project filter. A rebuild
+// with a changed scope (chip click, root unregister fallback) resets the
+// cached content and refetches while the group stays expanded — otherwise
+// every project would keep showing the first-loaded root's data.
+function syncTrellisPanelScopes() {
+  const root = currentTrellisScopeRoot();
+  if (!root) return;
+  if (trellisSplit.specGroupOpen && trellisSpec.open && trellisSpec.root !== root
+    && !trellisSpec.loading) {
+    refetchTrellisSpecForScope();
+  }
+  if (trellisSplit.networkGroupOpen && trellisNetwork.open && trellisNetwork.root !== root
+    && !trellisNetwork.loading) {
+    refetchTrellisNetworkForScope();
+  }
+}
+
 function toggleTrellisSpecGroup() {
   trellisSplit.specGroupOpen = !trellisSplit.specGroupOpen;
   lastTrellisPanelSignature = null;
-  if (trellisSplit.specGroupOpen && !trellisSpec.loading && trellisSpec.files.length === 0) {
-    // First expand: lazy-load the tree for the current project scope.
-    const root = trellisView.selectedRoot || trellisView.roots[0];
-    if (root) {
-      trellisSpec.open = true;
-      trellisSpec.loading = true;
-      trellisSpec.seq += 1;
-      trellisSpec.root = root;
-      trellisSpec.files = [];
-      trellisSpec.truncated = false;
-      trellisSpec.selected = null;
-      lastTrellisSpecSignature = null;
-      void fetchTrellisSpecTree(root);
-    }
+  if (trellisSplit.specGroupOpen && !trellisSpec.loading
+    && (trellisSpec.root === null || trellisSpec.files.length === 0)) {
+    // First expand (or a previously empty scope): lazy-load the tree.
+    refetchTrellisSpecForScope();
+  }
+  renderTrellisViewBody();
+}
+
+function toggleTrellisNetworkGroup() {
+  trellisSplit.networkGroupOpen = !trellisSplit.networkGroupOpen;
+  lastTrellisPanelSignature = null;
+  if (trellisSplit.networkGroupOpen && !trellisNetwork.loading
+    && (trellisNetwork.root === null || !trellisNetwork.result)) {
+    refetchTrellisNetworkForScope();
   }
   renderTrellisViewBody();
 }
@@ -2344,24 +2396,6 @@ function trellisNetworkGroups() {
     });
   }
   return groups;
-}
-
-function toggleTrellisNetworkGroup() {
-  trellisSplit.networkGroupOpen = !trellisSplit.networkGroupOpen;
-  lastTrellisPanelSignature = null;
-  if (trellisSplit.networkGroupOpen && !trellisNetwork.loading && !trellisNetwork.result) {
-    const root = trellisView.selectedRoot || trellisView.roots[0];
-    if (root) {
-      trellisNetwork.open = true;
-      trellisNetwork.loading = true;
-      trellisNetwork.seq += 1;
-      trellisNetwork.root = root;
-      trellisNetwork.result = null;
-      lastTrellisNetworkSignature = null;
-      void fetchTrellisNetworkOverview();
-    }
-  }
-  renderTrellisViewBody();
 }
 
 function buildTrellisNetworkListGroup() {
@@ -2549,6 +2583,10 @@ function renderTrellisView() {
   lastTrellisViewSignature = signature;
 
   const fragment = document.createDocumentFragment();
+  // v7 R10fix: an open spec/relations group follows the project scope —
+  // a chip switch (or unregister fallback) that reaches this rebuild
+  // resets and refetches both groups instead of showing the old root.
+  syncTrellisPanelScopes();
   const projectBar = buildTrellisProjectBar();
   if (projectBar) fragment.appendChild(projectBar);
   const rootsSection = buildTrellisRootsSection();
@@ -2816,30 +2854,19 @@ function trellisSpecDocKey(root, relPath) {
 }
 
 function openTrellisSpec(root) {
-  // v7 R10: opening is just "expand the spec group" — the project bar
-  // button is gone; expand drives the lazy fetch.
-  const target = typeof root === "string" && root ? root : trellisView.selectedRoot || trellisView.roots[0];
-  if (!target) return;
+  // v7 R10fix: opening is just "expand the spec group" — the group then
+  // lazy-loads for the CURRENT scope root (chip selection or first root).
   if (!trellisSplit.specGroupOpen) {
     toggleTrellisSpecGroup();
-    return;
-  }
-  if (trellisSpec.root !== target) {
-    trellisSpec.root = target;
-    trellisSpec.files = [];
-    trellisSpec.selected = null;
-    trellisSpecDocs.clear();
-    lastTrellisSpecSignature = null;
-    void fetchTrellisSpecTree(target);
   }
 }
 
 
 function closeTrellisSpec() {
-  // v7 R10: closing = fold the spec group; selection/doc cache drops with it.
+  // v7 R10fix: closing = fold the spec group; selection/doc cache drops
+  // with the next expand (scope switch or re-open refetches).
   if (trellisSplit.specGroupOpen) {
     toggleTrellisSpecGroup();
-    return;
   }
 }
 
