@@ -1005,21 +1005,31 @@ h1 {
   gap: 8px;
 }
 
-/* v4-a spec map; v7 R8 renders it as an inline drawer under the project
-   bar instead of a near-fullscreen overlay card. */
-.trellis-spec-card {
+/* v4-a spec map; v7 R9 renders it INTO the split-view slot — same
+   master-detail frame as the task list (left file list / right doc),
+   replacing it while open instead of stacking above. */
+.trellis-spec-card.trellis-spec-split {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  /* Inline drawer: fills the project bar's width, bounded height so long
-     spec docs do not swallow the whole view. */
-  width: 100%;
-  height: auto;
-  max-height: 520px;
-  padding: 12px;
+  gap: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--surface);
+  padding: 0;
+}
+
+.trellis-spec-split .trellis-detail-header {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.trellis-spec-split .trellis-spec-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 8px 12px;
 }
 
 .trellis-spec-body {
@@ -1848,10 +1858,8 @@ h1 {
   color: inherit;
 }
 
-/* v7 R8 inline drawers: ⛓ network overview + 📐 spec map live inside the
-   project view (no overlay host, no backdrop). */
-.trellis-network-panel,
-.trellis-spec-panel {
+/* v7 R8 inline drawer: ⛓ network overview stays a top drawer. */
+.trellis-network-panel {
   margin: -6px 0 14px;
 }
 

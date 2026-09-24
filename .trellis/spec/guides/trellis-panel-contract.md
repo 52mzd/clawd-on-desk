@@ -955,9 +955,12 @@ for (const [dir, relPath] of taskRelPaths) {
 
 **1. Scope / Trigger**：Trellis 项目视图「规范地图」抽屉的两个只读一次性
 通道（f4bd8b82）。复刻 `dashboard:trellis-task-doc` 四层链路。
-**v7 R8**：规范地图不再是 overlay——入口在 project bar（📐），
-面板内嵌 #trellisView（`trellis-spec-panel`，与 ⛓/⚙ 共用互斥
-`panelOpen` 槽）；通道与数据面不变。
+**v7 R8**：规范地图不再是 overlay——入口在 project bar（📐）；
+**v7 R9**：`panelOpen==="spec"` 时 `buildTrellisSpecCard`（`.trellis-spec-split`，
+复用 `.trellis-split-section` 框架）**替换**任务 split 槽位：左侧文件列表
+（master）/右侧文档内容（detail），与任务视图同高同框同滚动；关闭
+（✕/再点/互斥切抽屉）后任务 split 恢复。⛓ 网络全景保持顶部抽屉；
+通道与数据面不变。
 
 **2. Signatures**：
 - activity：`readSpecTree(root)` → `{status:"ok", files:[{relPath,group,filled,lines,refCount}], truncated}` 或

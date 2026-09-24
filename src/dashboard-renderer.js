@@ -2336,12 +2336,11 @@ function renderTrellisView() {
   if (projectBar) fragment.appendChild(projectBar);
   const rootsSection = buildTrellisRootsSection();
   if (rootsSection) fragment.appendChild(rootsSection);
-  // v7 R8: the network overview (⛓) and the spec map (📐) render inline
-  // under the project bar — the same exclusive drawer slot as ⚙ manage.
+  // v7 R8: the network overview (⛓) stays a top drawer. The spec map
+  // (📐) instead REPLACES the task split below (v7 R9): same
+  // master-detail frame — left file list, right doc pane.
   if (trellisView.panelOpen === "network") {
     fragment.appendChild(buildTrellisNetworkPanel());
-  } else if (trellisView.panelOpen === "spec") {
-    fragment.appendChild(buildTrellisSpecPanel());
   }
   // The filter is render-layer only: the full lists stay in memory and
   // each rebuild slices them down to the selected root BEFORE the tree is
@@ -2351,8 +2350,13 @@ function renderTrellisView() {
   const activeFiltered = filterTrellisTasksByRoot(trellisView.active.tasks, trellisView.roots, selectedRoot);
   const archiveFiltered = filterTrellisTasksByRoot(trellisView.archive.tasks, trellisView.roots, selectedRoot);
   // v7: the split list is the single view — flat depth-annotated rows
-  // (left groups) with the selection detail pane on the right.
-  fragment.appendChild(buildTrellisSplitSection(activeFiltered, archiveFiltered));
+  // (left groups) with the selection detail pane on the right. The spec
+  // map swaps into the same slot: spec docs on the left, doc body right.
+  if (trellisView.panelOpen === "spec" && trellisSpec.open) {
+    fragment.appendChild(buildTrellisSpecCard());
+  } else {
+    fragment.appendChild(buildTrellisSplitSection(activeFiltered, archiveFiltered));
+  }
   trellisViewEl.replaceChildren(fragment);
 }
 
@@ -2893,10 +2897,14 @@ async function fetchTrellisSpecDoc(relPath) {
 }
 
 function buildTrellisSpecCard() {
+  // v7 R9: the spec map IS a split view now — same master-detail card the
+  // task list uses (left: file list / right: doc), not a panel bolted
+  // above it. Shares the `.trellis-split-section` frame so heights,
+  // borders and scrolling match the task view.
   const card = document.createElement("div");
-  card.className = "trellis-detail-card trellis-spec-card";
+  card.className = "trellis-view-section trellis-split-section trellis-spec-split";
 
-  // Header: title + (multi-root chips) + close — same shape as the detail card.
+  // Header row: title + (multi-root chips) + close.
   const header = document.createElement("div");
   header.className = "trellis-detail-header";
   header.appendChild(createText("h3", "trellis-detail-title", t("dashboardTrellisSpecTitle")));
@@ -2929,7 +2937,7 @@ function buildTrellisSpecCard() {
   const body = document.createElement("div");
   body.className = "trellis-spec-body";
 
-  // Left pane: grouped file list.
+  // Left pane: grouped file list (master).
   const list = document.createElement("div");
   list.className = "trellis-spec-list";
   if (trellisSpec.loading) {
@@ -3009,19 +3017,10 @@ function renderTrellisSpec() {
   ]);
   if (signature === lastTrellisSpecSignature) return;
   lastTrellisSpecSignature = signature;
-  // v7 R8: inline drawer — a spec-state change rerenders the whole view
-  // (the panel is a child of #trellisView now, no overlay element).
+  // v7 R9: the spec map IS the split view — a spec-state change rerenders
+  // the whole view (the card swaps into the task split's slot).
   lastTrellisViewSignature = null;
   renderTrellisView();
-}
-
-// The inline spec drawer body: file list + doc pane inside the project
-// view (v7 R8 replaces the near-fullscreen overlay).
-function buildTrellisSpecPanel() {
-  const section = document.createElement("div");
-  section.className = "trellis-view-section trellis-spec-panel";
-  section.appendChild(buildTrellisSpecCard());
-  return section;
 }
 // ── end spec map ───────────────────────────────────────────────────────────
 

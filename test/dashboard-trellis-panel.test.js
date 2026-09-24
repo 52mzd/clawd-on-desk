@@ -2047,15 +2047,16 @@ describe("dashboard trellis v7 R8 project drawers", () => {
 
     await byClass(app.view, "trellis-spec-open")[0].dispatch("click");
     await flush();
-    // Inline panel inside #trellisView, not the removed overlay host.
-    assert.equal(byClass(app.view, "trellis-spec-panel").length, 1);
+    // v7 R9: the spec map swaps INTO the split-view slot (same
+    // master-detail frame) — the task list is gone while it is open.
+    assert.equal(byClass(app.view, "trellis-spec-split").length, 1);
     assert.equal(byClass(app.view, "trellis-spec-file-button").length, 1);
     assert.equal(byClass(app.view, "trellis-spec-file-lines")[0].textContent, "8 lines");
     assert.equal(byClass(app.view, "trellis-spec-file-refs")[0].textContent, "⛓1");
 
     // The three drawers are mutually exclusive.
     await byClass(app.view, "trellis-filter-manage")[0].dispatch("click");
-    assert.equal(byClass(app.view, "trellis-spec-panel").length, 0, "⚙ closes the spec drawer");
+    assert.equal(byClass(app.view, "trellis-spec-split").length, 0, "⚙ closes the spec view");
     assert.equal(byClass(app.view, "trellis-root-row").length, 1, "and opens the roots drawer");
   });
 });
