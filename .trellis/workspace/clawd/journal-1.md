@@ -436,3 +436,12 @@ v5 可读性重构：① v5-a 8ff9c9aa 弹窗三卡（detail/spec/network）从 
 - 坑：FakeElement 无 textContent getter（断言用 textOf）；重渲染后旧
   row 引用失效需重查；doneHead 改按 phase label 匹配（不再是最后一个头）
 - 3fa1b200；11044/10978/20 预存不变
+
+## 2026-09-24 v7 R10fix 分组跟随项目过滤（09-24-v7-r10fix-scope-sync）
+
+- 四轮反馈：分组样式对但内容不跟项目走——首展开拉一次后切 chip 不变
+- 修复：currentTrellisScopeRoot()（chip 或 roots[0]，与 split 过滤同源）
+  + renderTrellisView 每次 syncTrellisPanelScopes()：展开中且 root 变
+  → 清缓存重拉；refetch 助手统一首展开/切换两条路径
+- 测试：All→proj/two→All 双分组断言 specCalls/networkOverviewCalls 序列
+- 9b2dedeb；11045/10979/20 预存不变
