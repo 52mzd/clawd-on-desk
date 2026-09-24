@@ -422,3 +422,17 @@ v5 可读性重构：① v5-a 8ff9c9aa 弹窗三卡（detail/spec/network）从 
   未挂类 = 静默零命中（无构建报错）
 - 修复：单类 .trellis-spec-split + 显式覆盖 row 方向与 view-section
   margin；cbd78fa4 提交；11044/10978/20 预存不变
+
+## 2026-09-24 v7 R10 规范/关联并入左栏分组（09-24-v7-r10-inline-groups）
+
+- 三轮反馈定稿：不是按钮不是面板——左栏计划/执行/检查/归档下面新增
+  「规范」「关联」两个分组，行点击右栏出内容
+- spec 分组：懒加载 getTrellisSpecTree；行=relPath+徽标；右栏 spec-doc-content
+- 关联分组：懒加载 getTrellisNetworkOverview；行=关联组+成员数；
+  右栏 network-group-content，成员点击跳 split 任务
+- 删 📐/⛓ 按钮、panelOpen spec/network 槽、SpecCard/NetworkPanel+CSS；
+  panelOpen 收敛 null|"manage"；签名加 specGroupOpen/networkGroupOpen/
+  detailKind/networkGroupKey
+- 坑：FakeElement 无 textContent getter（断言用 textOf）；重渲染后旧
+  row 引用失效需重查；doneHead 改按 phase label 匹配（不再是最后一个头）
+- 3fa1b200；11044/10978/20 预存不变
