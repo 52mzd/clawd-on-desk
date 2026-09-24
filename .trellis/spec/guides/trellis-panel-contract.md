@@ -452,10 +452,11 @@ Correct 聚合入 dashboard-trellis-panel.js UMD；阶段文案复用 sessionHud
   `ipcRenderer.invoke`
 - IPC `dashboard:trellis-task-detail`（handle，同步返回结果对象）
 - main `_trellisActivity.readTaskDetail(cwd, taskPath)` →
-  `{status:"ok",task:{title,phase,rawStatus,createdAt,completedAt,
+  `{status:"ok",task:{title,phase,rawStatus,priority,createdAt,completedAt,
   archived,checklist,docs}}` | `{status:"missing"}` | `{status:"error",message}`；
   `docs` 列出任务目录全部 `*.md`（`{name,size}`，prd → design → implement
-  优先，其余字典序；size 是 utf-8 字节数）
+  优先，其余字典序；size 是 utf-8 字节数）；`priority` 同 listArchivedTasks
+  口径（v7 R7）
 - main `_trellisActivity.readTaskDoc(cwd, taskPath, doc)` →
   `{status:"ok",name,size,truncated,content}` | `{status:"missing"}`
 - renderer `switchTrellisDetailTab(tab)` → doc tab 懒拉取一次，
@@ -549,18 +550,23 @@ Correct taskPath.slice(prefix).split(/[\\/]/) 后逐段拒绝
 **2. Signatures**（全链路，自渲染层起）：
 - `listArchivedTasks(fsApi, archiveBase, options?)`（`src/trellis-archive.js`，
   注入同步 fs）→ 冻结条目数组
-  `{name, month, dir, title, createdAt, completedAt, completedAtMs}`；
+  `{name, month, dir, title, parent, hasChildren, priority, createdAt,
+  completedAt, completedAtMs}`；
   `options.month`（"YYYY-MM"）限定单月目录（recap 语义，不多 readdir
   archive 根），缺省读全部 YYYY-MM 目录。task.json 不可读/损坏 →
   跳过；completedAt 无效时 fallback 目录 mtime（仅存 completedAtMs，
   由消费方投影到自己的时区——recap 用 timeZoneId，dashboard 用
-  toLocaleDateString(app lang)）
+  toLocaleDateString(app lang)）。v7 R7 起 entry 增 `priority`
+  （`normalizePriority`：`P0`/`p0`/`0`→`p0|p1|p2`，非法/缺失→null，
+  不冒充排名）与 `hasChildren`（children 数组非空）
 - renderer 首次切到独立 Trellis 视图 / 显式 ↻ 刷新 → 单次
   `dashboardAPI.getTrellisArchiveList()`（**无 payload**；根集完全
   来自 owner，无活跃会话也能列出，永不轮询）
 - main `readArchiveList()` → `{status:"ok", tasks:[…200]}`，
   newest-first（completedAtMs 降序，null 压尾）；条目
-  `{taskPath, title, createdAt, completedAt, completedAtMs, durationMs, cwd}`；
+  `{taskPath, title, parent, hasChildren, priority, createdAt, completedAt,
+  completedAtMs, durationMs, cwd}`（v7 R7 前六键后旧序不变；priority 口径同
+  listArchivedTasks）；
   `durationMs ≤ 0` 或缺失 → null（渲染 "—"）
 
 **3. Contracts**：
@@ -642,21 +648,23 @@ Correct readArchiveList() 无参；根集来自 collectKnownRootCwds()
 - add 的 tmp+rename 原子形状；duplicate 零写盘
 - remove 已注册成员持久化；未注册零写盘；cap 64
 
-#### §4.6 独立 Trellis 视图（双视图切换 + readActiveList）
+#### §4.6 独立 Trellis 视图（v7 起唯一任务视图 + readActiveList）
 
 **1. Scope/Trigger**：Dashboard 页内任何「与 Sessions 平级的 Trellis
 视图」代码。当前实现：`src/dashboard.html` 的 view-switch /
 `#trellisView` / `#sessionsHeaderExtras`、`src/dashboard-renderer.js` 的
 `switchDashboardView` / `renderTrellisView` / trellisView 状态、
 `src/trellis-activity.js` 的 `readActiveList`、`src/session-ipc.js` 的
-`dashboard:trellis-active-list`。
+`dashboard:trellis-active-list`。（v7 R1：不再有 tree/board 双视图切换，
+split 单视图见 §4.6f；spec 地图入口移至 project bar，见 §4.7。）
 
 **2. Signatures**：
 - `switchDashboardView("sessions"|"trellis")`：纯显示翻转（两个滚动
   main + sessions 专属 header extras），内存态不持久化；切入 trellis
   时一次性 `refreshTrellisView()`（roots/active/archive 三路并发拉取）
 - `readActiveList()` → `{status:"ok", tasks:[…200]}`，条目
-  `{taskPath, title, phase, progress, parent, cwd, nextStep?}`；
+  `{taskPath, title, phase, progress, parent, hasChildren, priority,
+  cwd, nextStep?}`（v7 R7 增 hasChildren/priority，口径同归档条目）；
   taskPath 是 snapshot 相对 posix 路径（readTaskDetail 接受）；
   与 readArchiveList 同根集（§4.4）且同鲜 `seenRoots` 去重
 
@@ -671,8 +679,8 @@ Correct readArchiveList() 无参；根集来自 collectKnownRootCwds()
   隐藏，但 `renderTrellisPanel()` 照常执行（签名防抖挡住无谓重建）
 - **每秒 render() 与视图**：`renderTrellisView()` 开头
   `activeView !== "trellis"` 直接 return；视图签名 =
-  `{lang, roots, selectedRoot, active, archive}` 全量 JSON（含
-  openMonths；selectedRoot 见 §4.7）
+  `{lang, roots, selectedRoot, manageOpen, active, archive}` 全量 JSON
+  （含 openMonths；selectedRoot/manageOpen 见 §4.7）
 - **会话内嵌面板保留**：活跃绑定视角（entry.trellis 聚合）仍是
   §4.2 面板；归档浏览只在独立视图——双入口不得回潮
 
@@ -751,8 +759,14 @@ Correct removeTrellisPick(pick 目录)      // 一次撤销整组
 
 **1. Scope/Trigger**：任何「在独立 Trellis 视图内按项目根切分/合并
 任务列表」的代码。当前实现：`src/dashboard-trellis-panel.js` 的三个
-纯函数 + `src/dashboard-renderer.js` 的 `buildTrellisFilterSection` /
-`trellisRowProjectLabel` / `trellisView.selectedRoot`。
+纯函数 + `src/dashboard-renderer.js` 的 `buildTrellisProjectBar` /
+`buildTrellisFilterChips` / `trellisRowProjectLabel` /
+`trellisView.selectedRoot`。**v7 R5**：项目区收成单行 project bar
+（标题 + chips + 规范地图入口 `trellis-spec-open` + ⚙
+`trellis-filter-manage`）；roots 列表（全路径行 + 移除按钮 +
+添加按钮）降级为 ⚙ 展开的 `manageOpen` 管理抽屉，默认收起，
+`buildTrellisRootsSection` 在有根且抽屉关闭时返回 null（错误/空态
+仍无条件渲染）；⚙ 按钮带 `aria-expanded`，签名含 `manageOpen`。
 
 **2. Signatures**：
 - `trellisTaskOwningRoot(cwd, roots)` → 拥有该 cwd 的注册 root
@@ -798,7 +812,17 @@ Correct removeTrellisPick(pick 目录)      // 一次撤销整组
   archive 且隐藏来源标签、空项目置灰可点、注销所选 root 后回退
   全部、重名 basename 的 chip 与行标签
 
-#### §4.8 任务树（独立视图，活跃 + 归档统一嵌套）
+#### §4.8 任务树（独立视图，活跃 + 归档统一嵌套）【v7 废弃】
+
+> **v7 (R1) 起本节大部分作废**：tree/board 视图与 mode 切换已整体删除，
+> split 是唯一任务视图（见 §4.6f）。`buildTrellisTree` /
+> `createTrellisTreeNodeEl` / `trellisTreeExpanded` / `bucketByBoardPhase` /
+> `boardPhaseFor` / `TRELLIS_TREE_DEPTH_CAP` 已删除。仍存活的是
+> `groupTrellisTasks`（split 单列表行序，v7 增跨表 basename 父子匹配：
+> 同目录 join 优先，失败时**唯一** basename 命中可跨 active/archive 认亲，
+> 重复 root taskPath 逐行渲染不再去重）、`groupTrellisArchiveByMonth` /
+> `trellisArchiveMonthOf`（split 归档月份子组）。本节其余内容仅作历史
+> 语义参考（孤儿降级、循环防护等规则已并入 groupTrellisTasks）。
 
 **1. Scope/Trigger**：任何「在独立 Trellis 视图内把活跃/归档任务按
 parent 嵌套成树」的代码。当前实现：`src/dashboard-trellis-panel.js`
@@ -929,8 +953,13 @@ for (const [dir, relPath] of taskRelPaths) {
 一次性通道（f4bd8b82）。复刻 `dashboard:trellis-task-doc` 四层链路。
 
 **2. Signatures**：
-- activity：`readSpecTree(root)` → `{status:"ok", files:[{relPath,group}], truncated}` 或
-  `{status:"missing"}`；`readSpecDoc(root, relPath)` → `{status:"ok", relPath, size,
+- activity：`readSpecTree(root)` → `{status:"ok", files:[{relPath,group,filled,lines,refCount}], truncated}` 或
+  `{status:"missing"}`（v7 R6 起 entry 增三键：`filled` 布尔/`null`（读不到时 null，
+  不冒充空）、`lines` 正文行数（空行/标题/`//` 注释不计）、`refCount` 任务文档
+  引用数；`filled` 阈值 `SPEC_FILL_MIN_LINES = 5` 正文行，引用计数帽
+  `SPEC_REF_MAX_FILES = 400` / `SPEC_REF_MAX_BYTES = 2MiB`，匹配串为
+  `.trellis/spec/<rel>` 全路径或**树内唯一**的裸文件名，重名文件只认全路径）；
+  `readSpecDoc(root, relPath)` → `{status:"ok", relPath, size,
   truncated, content}` / `{status:"missing"}`。深度帽 3、文件帽 200、大小帽复用
   `TASK_DOC_MAX_BYTES`（不新造数字）。
 - main api 表：`getTrellisSpecTree/getTrellisSpecDoc`（activity 缺失 →
@@ -953,7 +982,9 @@ for (const [dir, relPath] of taskRelPaths) {
 - spec 目录缺失 → tree 仍 `{status:"ok", files:[]}`（空态不是错误）
 
 **5. Good/Base/Bad Cases**：
-- Good：`{root:"/proj"}` → 该 root spec 全量分组列表；点击 `guides/cross-layer-thinking-guide.md` 渲染全文
+- Good：`{root:"/proj"}` → 该 root spec 全量分组列表；点击 `guides/cross-layer-thinking-guide.md` 渲染全文；
+  v7 R6 列表行同时示行数/待填徽标/`⛓N` 引用计数（filled=false →
+  `is-empty` + `dashboardTrellisSpecEmptyDoc` 徽标，读不到 → 全静默）
 - Base：无 spec 目录的项目 → 空态文案（dashboardTrellisSpecEmpty）
 - Bad：relPath `"../tasks/x/task.json"` → `missing`，无读取发生
 
@@ -973,14 +1004,23 @@ for (const [dir, relPath] of taskRelPaths) {
 #### §4.6d 通道契约：dashboard:trellis-task-network（7 段式，v4-b）
 
 **1. Scope / Trigger**：任务行「⛓ 关联」入口的只读一次性通道——读取单个
-task.json 的结构化关联（parent / children）。证据源**只有 task.json**；
-implement.jsonl/check.jsonl 实测不存在，明确不作证据源。
+task.json 的结构化关联（parent / children）。纵向证据源**只有 task.json**
+（v7 R2b 起横向边扩用任务文档文本，见第 2 段 specGroups/prdGroups；
+implement/check.jsonl 仍不作证据源）。
 
 **2. Signatures**：
 - activity：`readTaskNetwork(cwd, taskPath)` → `{status:"ok", parent,
-  children, childrenTruncated}` / `{status:"missing"}`。parent 为单个 ref 或
-  null；children ref 形态 `{taskPath, title, archived}` 或 `{name, missing:true}`。
-- 帽：`NETWORK_REF_MAX = 20`（children 截断标 `childrenTruncated`）。
+  children, childrenTruncated, specGroups, prdGroups}` / `{status:"missing"}`。
+  parent 为单个 ref 或 null；children ref 形态 `{taskPath, title, archived}` 或
+  `{name, missing:true}`。v7 R2b 新增两组横向边（对齐 `list_relations` 的
+  spec_groups / prd_groups）：`specGroups:[{specPath, tasks:[ref], truncated}]`
+  （同引 `.trellis/spec/<rel>` 文档的同层任务）、`prdGroups:[{prdPath,
+  owner:ref, tasks:[ref], truncated}]`（同引同层 `prd.md`；owner 是 PRD 所属
+  任务，缺失时 `{missing:true}` 仍渲染为禁用行）。证据源扩为任务文档文本
+  （prd/design/implement.md + implement/check.jsonl，`SPEC_REF_DOC_NAMES`）。
+- 帽：`NETWORK_REF_MAX = 20`（children/每组 tasks 截断标 `truncated`）、
+  `NETWORK_SIBLING_MAX = 200`（横向边同层扫描任务数）、
+  `SPEC_REF_MAX_BYTES = 2MiB`（横向边文档文本总帽）。
 - main api 表 `getTrellisTaskNetwork`（activity 缺失 → 既有 error envelope）。
 
 **3. Contracts**：
@@ -1020,10 +1060,11 @@ implement.jsonl/check.jsonl 实测不存在，明确不作证据源。
 
 #### §4.6e v5 UI 形态契约：board 模式 + overlay 近全屏（8 段式，v5）
 
-> **v6 起部分废弃（6741c776）**：board 布局已被 §4.6f split master-detail 取代。
-> 本节第 2 段（mode 值域）、第 4 段（FLIP 换列动画）、第 7 段中 board 列动画 /
-> 5×200px 横滚降级不再适用，行为以 §4.6f 为准；第 3 段（分桶纯函数）、第 5 段
->（overlay 近全屏）、第 6 段（可复制与动画）仍有效且被 split 视图复用。
+> **v6 起部分废弃（6741c776）；v7 (R1) 起整体废弃**：board 视图、mode 切换、
+> `bucketByBoardPhase` / `boardPhaseFor` / FLIP 换列动画均已删除，split 是唯一
+> 任务视图（见 §4.6f）。仅第 5 段（overlay 近全屏尺寸）、第 6 段（可复制与
+> 动画）、第 7 段仍有效且被 split 详情/规范卡复用；分桶纯函数已随死导出
+> 清理从 panel 模块移除。本节其余内容仅作历史语义参考。
 
 **1. Scope / Trigger**：Trellis 视图的两种展示模式与三种 doc overlay 的 UI
 层契约（39f656d2 / 8ff9c9aa）。纯渲染层，零新 IPC、零数据形态变更。
@@ -1065,9 +1106,14 @@ fade-out（`animateTrellisOverlayClose`：setTimeout 140ms 守卫，重开
 - Wrong：分桶逻辑内联在 renderer（不可测）/ 尺寸用 `92vw`（破坏 zoom 补偿）
 - Correct：分桶提为 panel 纯函数进单测；尺寸 percent 链接 overlay 父级 + px cap
 
-#### §4.6f v6 Split 视图：左右栏 master-detail（6741c776；v6.1 重设计）
+#### §4.6f v7 Split 单视图：左右栏 master-detail（6741c776；v6.1 重设计；v7 R1 起唯一任务视图）
 
-**1. Scope / Trigger**：Trellis 面板的第二种任务视图模式 `split`，替代 v5 board 成为默认任务浏览形态。纯渲染层，零新 IPC、零数据形态变更。视图模式经 `localStorage['trellisViewMode']` 持久化，值域 `'tree' | 'split'`；旧存量值 `'board'` 读取时映射为 `split`（不写回），其余未知值回退 `tree`。选中行路径（`trellisSplit.selectedTaskPath`）、展开状态（`collapsedPaths`）、`archiveOpen` 均为内存态，不持久化。
+**0. v7 (R1) 变更**：tree/board 视图与 mode 切换已删除，split 是唯一任务视图。
+`localStorage['trellisViewMode']` 读写、modeBtn、`trellisView.mode` 字段全部移除；
+`renderTrellisView` 无条件构建 split section，`openTrellisDetailFromTask` 无条件
+`{embedded:true}`（overlay 仅保留给 Sessions 卡片链路）。
+
+**1. Scope / Trigger**：Trellis 面板的任务浏览形态，纯渲染层，零新 IPC、零数据形态变更。选中行路径（`trellisSplit.selectedTaskPath`）、展开状态（`collapsedPaths`）、`archiveOpen`、项目过滤 `selectedRoot`（null=全部）、⚙ 管理抽屉 `manageOpen`（v7 R5）均为内存态，不持久化。
 
 **2. 左右栏结构（v6.1，单卡片框架）**：
 - 外框 `.trellis-split-section` 自身是圆角卡片（`border + border-radius + overflow:hidden`），左右两栏共享同一框体，高度天然对齐。
@@ -1075,11 +1121,11 @@ fade-out（`animateTrellisOverlayClose`：setTimeout 140ms 守卫，重开
 - 左栏 `.trellis-split-list`：`flex: 0 0 clamp(260px, 28%, 320px)` 定宽，tint 底色 + 右侧 1px 分隔线；底部 `.trellis-split-foot` 统计条（`dashboardTrellisSplitStat`，Active 计根数、Archive 计根+后代总数）。
 - 右栏 `.trellis-split-detail`：整栏主浏览面。空态为大号呼吸 orb + `dashboardTrellisSplitEmpty`；选中时嵌入 **完整 detail card**（与 overlay 同一组件，见第 3 段）。
 
-**3. 嵌入式详情卡（v6.1 核心变化）**：split 模式下 `openTrellisDetail(task, { embedded: true })` 把完整 detail card（含 prd/design/implement 等 doc tabs）渲染进右栏 host（`.trellis-split-detail`），不再弹 overlay。`trellisDetail.embedded` 状态位区分两种宿主；tree 模式仍走 overlay。`selectTrellisSplitTask` 是唯一入口：选中即重置详情态并重建视图体，由 `buildTrellisSplitDetailPane` 同步内联旧卡或触发新开。`closeTrellisDetail` 在 embedded 分支等价于清空选中行。
+**3. 嵌入式详情卡（v6.1 核心变化，v7 起唯一路径）**：`openTrellisDetail(task, { embedded: true })` 把完整 detail card（含 prd/design/implement 等 doc tabs）渲染进右栏 host（`.trellis-split-detail`），不弹 overlay。`trellisDetail.embedded` 状态位区分两种宿主。`selectTrellisSplitTask` 是唯一入口：选中即重置详情态并重建视图体，由 `buildTrellisSplitDetailPane` 同步内联旧卡或触发新开。`closeTrellisDetail` 在 embedded 分支等价于清空选中行。
 
 **4. 层级树（v6.1）**：左栏不再是扁平列表——`groupTrellisTasks` 的 DFS 序按根切分为 subtree，根行按 phase 分桶（archive 强制 `done` 桶），子任务缩进嵌在父行下（`.is-child`，`--split-depth` 缩进，封顶 3 层）。**每行都有 18px 前导 caret 槽**（`.trellis-split-caret-slot`；叶子行留空 spacer，保证 dot/标题列对齐），父行的槽内是 `.trellis-split-caret` 小按钮（15px、显式 `min-width:0` 覆盖全局 `button{min-width:82px}`、折叠时旋转 -90°；`stopPropagation` 不触发行选中），展开态为默认（`collapsedPaths` Set 记录折叠）。归档子任务同样保留层级。
 
-**5. 键盘导航**：面板可见且模式为 `split` 时，↑/↓ 在**DOM 实际可见行**间移动选中（折叠子树无 DOM 行自然跳过）；`Enter` 等价行 click（选中 + 嵌入详情）；`Esc` 清空选择；`scrollIntoView({ block: 'nearest' })` 保持可见。
+**5. 键盘导航**：面板可见时，↑/↓ 在**DOM 实际可见行**间移动选中（折叠子树无 DOM 行自然跳过）；`Enter` 等价行 click（选中 + 嵌入详情）；`Esc` 清空选择；`scrollIntoView({ block: 'nearest' })` 保持可见。
 
 **6. 进度显示**：详情卡的 checklist 进度用分段能量格 `buildTrellisProgressTicks`（与树视图同一组件，一格一步，`is-filled` 填充）+ 数字 `done/total`，不再用连续百分比条。
 
