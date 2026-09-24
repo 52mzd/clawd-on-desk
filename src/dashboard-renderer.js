@@ -1658,6 +1658,24 @@ let trellisSplitDetailHostEl = null;
 // the live DOM exposes the query APIs (the test sandbox does not, so it
 // keeps exercising the full-rebuild path). Returns false when the fast
 // path cannot run — callers fall back to the full renderTrellisViewBody().
+// Row lookup for post-rebuild selection reveal: mirrors the class-swap
+// selection predicate used by renderTrellisSplitSelectionOnly (task /
+// spec / network rows, kind-aware) so a structural rebuild scrolls to
+// exactly the row the fast path would have highlighted.
+function findTrellisSelectedRow() {
+  if (!trellisViewEl || typeof trellisViewEl.querySelectorAll !== "function") return null;
+  for (const row of trellisViewEl.querySelectorAll(".trellis-split-row")) {
+    if (row.dataset.taskPath !== undefined) {
+      if (trellisSplit.detailKind === "task" && row.dataset.taskPath === trellisSplit.selectedTaskPath) return row;
+    } else if (row.dataset.specPath !== undefined) {
+      if (trellisSplit.detailKind === "spec" && row.dataset.specPath === trellisSpec.selected) return row;
+    } else if (row.dataset.networkKey !== undefined) {
+      if (trellisSplit.detailKind === "network" && row.dataset.networkKey === trellisSplit.networkGroupKey) return row;
+    }
+  }
+  return null;
+}
+
 function renderTrellisSplitSelectionOnly() {
   if (!trellisViewEl || activeView !== "trellis") return false;
   if (typeof trellisViewEl.querySelectorAll !== "function"
@@ -1708,7 +1726,14 @@ function renderTrellisSplitSelectionOnly() {
       && typeof targetRow.scrollIntoView === "function") {
       targetRow.scrollIntoView({ block: "nearest" });
     }
-    if (typeof targetRow.focus === "function") targetRow.focus({ preventScroll: true });
+    // Focus only when the keyboard cursor already lives in the split
+    // section (keyboard navigation). Clicking a reference in the right
+    // pane keeps focus where the user clicked — no focus-ring jump.
+    const owner = typeof document !== "undefined" ? document.activeElement : null;
+    if (owner && typeof section.contains === "function" && section.contains(owner)
+      && typeof targetRow.focus === "function") {
+      targetRow.focus({ preventScroll: true });
+    }
   }
   return true;
 }
@@ -2479,7 +2504,9 @@ function buildTrellisSpecListGroup() {
     row.dataset.specPath = file.relPath;
     const main = document.createElement("div");
     main.className = "trellis-split-row-main";
-    main.appendChild(createText("span", "trellis-split-row-title", file.relPath));
+    const specTitle = createText("span", "trellis-split-row-title", file.relPath);
+    specTitle.title = file.relPath;
+    main.appendChild(specTitle);
     const side = document.createElement("div");
     side.className = "trellis-split-row-side trellis-spec-row-side";
     if (file.filled === false) {
@@ -2603,7 +2630,9 @@ function buildTrellisNetworkListGroup() {
     row.dataset.networkKey = group.key;
     const main = document.createElement("div");
     main.className = "trellis-split-row-main";
-    main.appendChild(createText("span", "trellis-split-row-title", group.label));
+    const groupTitle = createText("span", "trellis-split-row-title", group.label);
+    groupTitle.title = group.label;
+    main.appendChild(groupTitle);
     main.appendChild(createText("span", "trellis-split-row-sub", group.sub));
     row.appendChild(main);
     row.appendChild(createText("span", "trellis-split-row-side", String(group.members.length)));
@@ -2769,6 +2798,15 @@ function renderTrellisView() {
   }
   lastTrellisViewSignature = signature;
 
+  // Preserve the left-list scroll across structural rebuilds (folds,
+  // refreshes, cross-group jumps): the split list owns the scrolling and
+  // freshly built nodes would otherwise clamp it back to the top.
+  let savedScroll = null;
+  if (typeof trellisViewEl.querySelector === "function") {
+    const oldList = trellisViewEl.querySelector(".trellis-split-list");
+    if (oldList && Number.isFinite(oldList.scrollTop)) savedScroll = oldList.scrollTop;
+  }
+
   const fragment = document.createDocumentFragment();
   // v7 R10fix: an open spec/relations group follows the project scope —
   // a chip switch (or unregister fallback) that reaches this rebuild
@@ -2790,6 +2828,28 @@ function renderTrellisView() {
   // the spec + relations groups below the phase groups in the SAME list.
   fragment.appendChild(buildTrellisSplitSection(activeFiltered, archiveFiltered));
   trellisViewEl.replaceChildren(fragment);
+
+  if (typeof trellisViewEl.querySelector === "function") {
+    const newList = trellisViewEl.querySelector(".trellis-split-list");
+    if (newList) {
+      if (savedScroll !== null) {
+        const maxScroll = newList.scrollHeight - newList.clientHeight;
+        const cap = Number.isFinite(maxScroll) ? Math.max(0, maxScroll) : savedScroll;
+        newList.scrollTop = Math.min(savedScroll, cap);
+      }
+      // After a structural rebuild that changed the selection (cross-group
+      // jump from a network ref, archive expand, root switch), reveal the
+      // newly selected row. scroll-keeping above wins when the row is
+      // already visible; scrollIntoView(nearest) moves the minimum needed.
+      if (trellisSplit.selectedTaskPath !== null || trellisSplit.networkGroupKey !== null
+        || trellisSpec.selected !== null) {
+        const selectedRow = findTrellisSelectedRow();
+        if (selectedRow && typeof selectedRow.scrollIntoView === "function") {
+          selectedRow.scrollIntoView({ block: "nearest" });
+        }
+      }
+    }
+  }
 }
 
 // ── Dashboard view switching ─────────────────────────────────────────────
@@ -3127,8 +3187,14 @@ async function fetchTrellisSpecDoc(relPath) {
   const key = trellisSpecDocKey(root, relPath);
   if (trellisSpecDocs.has(key)) return;
   trellisSpecDocs.set(key, { loading: true, result: null });
-  lastTrellisSpecSignature = null;
-  renderTrellisSpec();
+  // Doc loading state only affects the RIGHT pane — keep the left list
+  // untouched: same fast path as selection changes (class swap is an
+  // idempotent no-op here, pane gets rebuilt, focus/scroll stay put).
+  // Fall back to the full spec render when the pane is not live yet.
+  if (!renderTrellisSplitSelectionOnly()) {
+    lastTrellisSpecSignature = null;
+    renderTrellisSpec();
+  }
   let result = null;
   try {
     result = await window.dashboardAPI.getTrellisSpecDoc({ root, relPath });
@@ -3139,8 +3205,10 @@ async function fetchTrellisSpecDoc(relPath) {
   if (!entry) return; // closed / switched root dropped the cache
   entry.loading = false;
   entry.result = result && typeof result === "object" ? result : { status: "error" };
-  lastTrellisSpecSignature = null;
-  renderTrellisSpec();
+  if (!renderTrellisSplitSelectionOnly()) {
+    lastTrellisSpecSignature = null;
+    renderTrellisSpec();
+  }
 }
 
 // v7 R10: spec document content for the RIGHT pane (detail slot), driven
@@ -4735,6 +4803,7 @@ async function init() {
   // card) or quick mode blocks navigation (09-25 split polish).
   if (typeof document.addEventListener === "function") {
     document.addEventListener("keydown", (event) => {
+      if (activeView !== "trellis") return;
       if (trellisDetail.open && !trellisDetail.embedded) return;
       if (quick.active || quick.pending) return;
       if (event.key !== "ArrowUp" && event.key !== "ArrowDown" && event.key !== "Enter" && event.key !== "Escape") return;

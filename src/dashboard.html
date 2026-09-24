@@ -267,11 +267,10 @@ h1 {
 
 .trellis-task-row {
   border-radius: 8px;
-  transition: background-color 0.12s ease, transform 0.12s ease;
+  transition: background-color 0.12s ease;
 }
 .trellis-task-row:hover, .trellis-archive-row:hover {
   background: color-mix(in srgb, #7aa2f7 8%, transparent);
-  transform: translateX(2px);
 }
   display: flex;
   flex-direction: column;
@@ -285,7 +284,6 @@ h1 {
 
 .trellis-task-row:hover {
   background: var(--surface-alt);
-  transform: translateX(2px);
 }
 
 .trellis-task-main {
@@ -1144,6 +1142,13 @@ h1 {
   min-height: 0;
   height: auto;
   text-align: left;
+  /* Group headers stick to the top of the scrolling list so the user
+     always knows which group the visible rows belong to. */
+  position: sticky;
+  top: 0;
+  /* opaque surface so rows scrolling under the header don't bleed through */
+  background: color-mix(in srgb, var(--surface, rgba(127, 127, 127, 0.06)) 100%, transparent);
+  z-index: 1;
 }
 
 .trellis-split-group-head:hover:not(:disabled) {
@@ -1237,14 +1242,14 @@ h1 {
   cursor: pointer;
   border-left: 3px solid transparent;
   /* Keyboard-first selection (UI redesign 09-24 Batch D): background and
-     border-left flip INSTANTLY so ↑/↓ navigation has zero transition lag;
-     only the hover nudge (transform) animates. */
-  transition: transform 0.15s ease;
+     border-left flip INSTANTLY so ↑/↓ navigation has zero transition lag.
+     Hover uses a background tint only — translateX nudges shift content
+     under the cursor and feel laggy (09-25 R2). */
+  transition: background-color 0.12s ease;
 }
 
 .trellis-split-row:hover {
   background: var(--hover, rgba(127, 127, 127, 0.12));
-  transform: translateX(2px);
 }
 
 .trellis-split-row.is-selected {
@@ -1468,6 +1473,12 @@ h1 {
   align-items: center;
   padding: 5px 6px 3px 14px;
   user-select: none;
+  /* Same sticky treatment as group headers: month dividers stay visible
+     while archive rows scroll. */
+  position: sticky;
+  top: 0;
+  background: color-mix(in srgb, var(--surface, rgba(127, 127, 127, 0.06)) 100%, transparent);
+  z-index: 1;
 }
 
 .trellis-split-month-toggle {
