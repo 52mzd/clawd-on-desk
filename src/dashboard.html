@@ -1007,18 +1007,22 @@ h1 {
 
 /* v4-a spec map; v7 R9 renders it INTO the split-view slot — same
    master-detail frame as the task list (left file list / right doc),
-   replacing it while open instead of stacking above. */
-.trellis-spec-card.trellis-spec-split {
+   replacing it while open instead of stacking above. Must beat
+   .trellis-split-section's row direction AND .trellis-view-section's
+   column gap/margin — the card is a column: header on top, panes below. */
+.trellis-spec-split {
   display: flex;
   flex-direction: column;
   gap: 0;
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
+  margin: 0; /* override .trellis-view-section margin-bottom:18px */
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
   padding: 0;
+  overflow: hidden;
 }
 
 .trellis-spec-split .trellis-detail-header {
