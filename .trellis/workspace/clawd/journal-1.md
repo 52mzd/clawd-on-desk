@@ -380,3 +380,12 @@ v5 可读性重构：① v5-a 8ff9c9aa 弹窗三卡（detail/spec/network）从 
 ### Status
 
 [OK] **Completed**
+
+## 2026-09-24 v7 split 单视图收尾（09-23-v7-split-single-view）
+
+- R1 落地：renderer 删 18 个 tree/board 函数与 mode 切换，split 成唯一任务视图；i18n 清 mode 键；15 个 v6 契约测试改写到 v7 split DOM（85398dec）
+- R5–R7 落地：project bar（标题+chips+规范入口+⚙ 抽屉）、spec 地图 filled/lines/refCount（阈值 SPEC_FILL_MIN_LINES=5 正文行）、priority 徽章贯穿 active/archive/detail（0826d4a9）
+- R2b 补齐：readTaskNetwork 增 specGroups/prdGroups 横向边，有界只读扫描（6f0b64b9 前一提交）
+- panel 死导出（buildTrellisTree/bucketByBoardPhase 等）随测试清理移除；groupTrellisTasks 增跨表 basename 认亲 + 重复 root 逐行渲染
+- 全量 11044/10978 pass，失败集与 HEAD 完全一致（20 预存）
+- 坑：CLAUDE.md 的 list_relations spec_groups 在 0.7.0-beta.4 CLI 已不存在，横向边按 PRD 语义（共享 spec/PRD 文档）直接实现
