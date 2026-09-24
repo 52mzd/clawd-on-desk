@@ -963,7 +963,11 @@ for (const [dir, relPath] of taskRelPaths) {
 （`trellis-network-group-content`），成员点击跳 `selectTrellisSplitTask`。
 project bar 的 📐/⛓ 按钮、panelOpen 的 spec/network 槽位、
 `.trellis-spec-split`/`.trellis-network-panel` CSS 均已删除（⚙ 管理抽屉
-保留）。通道与数据面不变。
+保留）。通道与数据面不变。**R10fix：两组跟随项目过滤**——scope 真相是
+`currentTrellisScopeRoot()`（selectedRoot 或 roots[0]，与 split 过滤同源），
+`renderTrellisView()` 每次先 `syncTrellisPanelScopes()`：展开中且 root
+变了（无在途 fetch）→ 清缓存重拉（spec: files+selected+doc cache；
+network: result）。
 
 **2. Signatures**：
 - activity：`readSpecTree(root)` → `{status:"ok", files:[{relPath,group,filled,lines,refCount}], truncated}` 或

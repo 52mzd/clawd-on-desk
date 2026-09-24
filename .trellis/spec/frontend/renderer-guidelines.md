@@ -104,3 +104,44 @@ flex 链路填满：`main` 改 `flex column`，section `flex:1 1 auto; min-heigh
 - 行内按钮 `stopPropagation()`（防触发行选中/展开）
 - renderer 内 `setTimeout`/`requestAnimationFrame` 必须可取消（存 id，关闭路径 clear）；
   参照 `renderer.js` 的 swapToken 防竞态写法
+
+## CSS 选择器必须核对 renderer 实际 className（v7 R9fix 踩过）
+
+**改/写任何 CSS 规则前，先 grep renderer 里元素实际挂的 className 串。**
+复合选择器（`.a.b { }`）若 `a` 类从未挂上元素，整套规则**静默零命中**——
+无构建报错、无测试红牌，只有运行时布局崩坏（v7 R9：CSS 写
+`.trellis-spec-card.trellis-spec-split`，renderer 挂的是
+`trellis-view-section trellis-split-section trellis-spec-split`，列方向规则全灭，
+header/list/doc 挤成一行，用户截图打回）：
+
+```js
+// 改 CSS 前必核对：
+//   grep -n 'className = .*你要选的类' src/dashboard-renderer.js
+// 元素挂多类时，CSS 用单类选择器 + 显式覆盖冲突基类
+//（如 .trellis-spec-split 显式 flex-direction:column 盖掉 split-section 的 row、
+//  margin:0 盖掉 view-section 的 margin-bottom）。
+```
+
+判据：新写的选择器在 renderer 里 grep 不到完整类名组合 = 大概率写错了。
+沙盒测试（FakeElement）不跑 CSS，选择器失配只能靠人工核对或真机截图发现。
+
+## 派生内容必须跟随过滤作用域（v7 R10fix 踩过）
+
+**懒加载的副视图（分组/面板/抽屉）若从全局状态（selectedRoot/过滤词）派生
+数据源，切作用域时必须重拉**，否则每个入口看到的都是首次加载的那份
+（v7 R10：spec/关联分组只在首展开拉取一次，切项目 chip 后内容不变，四轮
+反馈打回）。固定形态：
+
+```js
+// 单一 scope 真相函数（与列表过滤同源，不要另写一份判断）：
+function currentScopeRoot() { return state.selectedRoot || state.roots[0] || null; }
+// 每次视图重建时同步检查：展开中 + root 变了 + 无在途 fetch → 清缓存重拉
+function syncPanelScopes() {
+  const root = currentScopeRoot();
+  if (panelOpen && panel.open && panel.root !== root && !panel.loading) refetchPanel(root);
+}
+// 主 render 入口开头调 syncPanelScopes()
+```
+
+判据：任何按 root/cwd/过滤词取数的缓存，问一句"切 chip 后它重拉吗？"
+答不上来就是漏了。
