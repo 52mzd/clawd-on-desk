@@ -1112,7 +1112,7 @@ h1 {
 /* ── Left master list (fixed width, tinted) ─────────────────────── */
 
 .trellis-split-list {
-  flex: 0 0 clamp(260px, 28%, 320px);
+  flex: 0 0 clamp(280px, 30%, 344px);
   min-width: 0;
   min-height: 0;
   align-self: stretch;
@@ -1302,7 +1302,8 @@ h1 {
   gap: 2px;
 }
 
-/* Title line: title + priority chip + origin tag. */
+/* Title line: the title spans the full head width (ellipsized; the
+   native title tooltip on the span reveals the full name on hover). */
 .trellis-split-row-head {
   display: flex;
   align-items: center;
@@ -1336,8 +1337,28 @@ h1 {
   border-radius: 999px;
 }
 
+/* Hierarchy cues (09-25 split polish): children indent 16px per level,
+   with a 1px guide line (--border) centered in each level's indent slot
+   so nesting reads at a glance; children also drop to 13px/400 + muted
+   against the parents' 13px/600 + text, so parent rows read as group
+   heads without relying on the indent alone. */
 .trellis-split-row.is-child {
-  margin-left: calc(var(--split-depth, 1) * 14px);
+  margin-left: calc(var(--split-depth, 1) * 16px);
+  position: relative;
+}
+
+.trellis-split-row.is-child::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  /* Midpoint of this row's own indent slot; deeper rows place their
+     guide one slot further out (16px per level). */
+  left: calc(8px - var(--split-depth, 1) * 16px);
+  width: 1px;
+  border-radius: 1px;
+  background: var(--border);
+  pointer-events: none;
 }
 
 .trellis-split-row.is-child .trellis-split-row-dot {
@@ -1346,8 +1367,9 @@ h1 {
 }
 
 .trellis-split-row.is-child .trellis-split-row-title {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 400;
+  color: var(--muted);
 }
 
 /* Caret slot: fixed leading column for every row; parents get a real

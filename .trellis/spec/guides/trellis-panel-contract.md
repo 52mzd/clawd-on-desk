@@ -1145,14 +1145,14 @@ fade-out（`animateTrellisOverlayClose`：setTimeout 140ms 守卫，重开
 **2. 左右栏结构（v6.1，单卡片框架）**：
 - 外框 `.trellis-split-section` 自身是圆角卡片（`border + border-radius + overflow:hidden`），左右两栏共享同一框体，高度天然对齐。
 - 高度自适应：`.content.trellis-view` 是 flex column，section `flex:1 1 auto; min-height:0` 填满窗口剩余高度；两栏各自 `min-height:0` 内部滚动。**禁止 `max-height` 固定像素 / vh 死高度**。
-- 左栏 `.trellis-split-list`：`flex: 0 0 clamp(260px, 28%, 320px)` 定宽，tint 底色 + 右侧 1px 分隔线；底部 `.trellis-split-foot` 统计条（`dashboardTrellisSplitStat`，Active 计根数、Archive 计根+后代总数）。
+- 左栏 `.trellis-split-list`：`flex: 0 0 clamp(280px, 30%, 344px)` 定宽，tint 底色 + 右侧 1px 分隔线；底部 `.trellis-split-foot` 统计条（`dashboardTrellisSplitStat`，Active 计根数、Archive 计根+后代总数）。
 - 右栏 `.trellis-split-detail`：整栏主浏览面。空态为大号呼吸 orb + `dashboardTrellisSplitEmpty`；选中时嵌入 **完整 detail card**（与 overlay 同一组件，见第 3 段）。
 
-**3. 嵌入式详情卡（v6.1 核心变化，v7 起唯一路径）**：`openTrellisDetail(task, { embedded: true })` 把完整 detail card（含 prd/design/implement 等 doc tabs）渲染进右栏 host（`.trellis-split-detail`），不弹 overlay。`trellisDetail.embedded` 状态位区分两种宿主。`selectTrellisSplitTask` 是唯一入口：选中即重置详情态并重建视图体，由 `buildTrellisSplitDetailPane` 同步内联旧卡或触发新开。`closeTrellisDetail` 在 embedded 分支等价于清空选中行。
+**3. 嵌入式详情卡（v6.1 核心变化，v7 起唯一路径）**：`openTrellisDetail(task, { embedded: true })` 把完整 detail card（含 prd/design/implement 等 doc tabs）渲染进右栏 host（`.trellis-split-detail`），不弹 overlay。`trellisDetail.embedded` 状态位区分两种宿主。`selectTrellisSplitTask` 是唯一入口：选中即重置详情态，然后走 selection-only 快路径（`renderTrellisSplitSelectionOnly`，09-25 split polish）——仅切换左栏行的 `is-selected` class、只重建右栏 pane（`buildTrellisSplitDetailPane` 仍同步内联旧卡或触发新开，`buildTrellisDetailCard` 保持单一来源），左栏 DOM 不重建；目标行不在列表视口时才 `scrollIntoView({block:'nearest'})`。结构签名（`computeTrellisViewSignature`，不含 selection 字段，含 `archiveOpen`/`collapsedPaths`）过期（root 切换/折叠/归档开关/filter/列表数据变化）或沙箱 DOM 无 query API 时回退全量 rebuild。`selectTrellisSpecDoc` 与 network 组行点击同规则。`closeTrellisDetail` 在 embedded 分支等价于清空选中行。
 
-**4. 层级树（v6.1）**：左栏不再是扁平列表——`groupTrellisTasks` 的 DFS 序按根切分为 subtree，根行按 phase 分桶（archive 强制 `done` 桶），子任务缩进嵌在父行下（`.is-child`，`--split-depth` 缩进，封顶 3 层）。**每行都有 18px 前导 caret 槽**（`.trellis-split-caret-slot`；叶子行留空 spacer，保证 dot/标题列对齐），父行的槽内是 `.trellis-split-caret` 小按钮（15px、显式 `min-width:0` 覆盖全局 `button{min-width:82px}`、折叠时旋转 -90°；`stopPropagation` 不触发行选中），展开态为默认（`collapsedPaths` Set 记录折叠）。归档子任务同样保留层级。
+**4. 层级树（v6.1）**：左栏不再是扁平列表——`groupTrellisTasks` 的 DFS 序按根切分为 subtree，根行按 phase 分桶（archive 强制 `done` 桶），子任务缩进嵌在父行下（`.is-child`，`--split-depth` 缩进 16px/层，封顶 3 层，每层缩进槽中点有 1px `--border` 竖线 guide，child 标题 13px/400 + muted 与 parent 13px/600 + text 拉开层级）。**每行都有 18px 前导 caret 槽**（`.trellis-split-caret-slot`；叶子行留空 spacer，保证 dot/标题列对齐），父行的槽内是 `.trellis-split-caret` 小按钮（15px、显式 `min-width:0` 覆盖全局 `button{min-width:82px}`、折叠时旋转 -90°；`stopPropagation` 不触发行选中），展开态为默认（`collapsedPaths` Set 记录折叠）。归档子任务同样保留层级。
 
-**5. 键盘导航**：面板可见时，↑/↓ 在**DOM 实际可见行**间移动选中（折叠子树无 DOM 行自然跳过）；`Enter` 等价行 click（选中 + 嵌入详情）；`Esc` 清空选择；`scrollIntoView({ block: 'nearest' })` 保持可见。
+**5. 键盘导航**：面板可见时，↑/↓ 在**DOM 实际可见行**间移动选中（折叠子树无 DOM 行自然跳过）；`Enter` 等价行 click（选中 + 嵌入详情）；`Esc` 清空选择；导航走 selection-only 快路径（无 DOM 重建，focus ring 平滑跟随），`scrollIntoView({ block: 'nearest' })` 仅在目标行离开列表视口时触发。
 
 **6. 进度显示**：详情卡的 checklist 进度用分段能量格 `buildTrellisProgressTicks`（与树视图同一组件，一格一步，`is-filled` 填充）+ 数字 `done/total`，不再用连续百分比条。
 

@@ -1649,6 +1649,70 @@ const trellisSplit = {
 // buildTrellisSplitDetailPane on every list rebuild; null when no pane.
 let trellisSplitDetailHostEl = null;
 
+// Selection-only fast path (09-25 split polish): swap the is-selected
+// class between rows and rebuild JUST the right detail pane, leaving the
+// left list DOM untouched — no flicker, no scroll jump, no focus loss
+// when a right-pane reference re-selects a row. Available only when the
+// structural view signature is still current (filter chips, folds,
+// archive toggle, list/drawer data changes make it stale on purpose) and
+// the live DOM exposes the query APIs (the test sandbox does not, so it
+// keeps exercising the full-rebuild path). Returns false when the fast
+// path cannot run — callers fall back to the full renderTrellisViewBody().
+function renderTrellisSplitSelectionOnly() {
+  if (!trellisViewEl || activeView !== "trellis") return false;
+  if (typeof trellisViewEl.querySelectorAll !== "function"
+    || typeof trellisViewEl.querySelector !== "function") return false;
+  if (computeTrellisViewSignature() !== lastTrellisViewSignature) return false;
+  const section = trellisViewEl.querySelector(".trellis-split-section");
+  const pane = trellisViewEl.querySelector(".trellis-split-detail");
+  if (!section || !pane || typeof pane.replaceWith !== "function") return false;
+
+  // 1) Class swap only: task / spec / network rows toggle is-selected,
+  // the row nodes themselves are never replaced.
+  let targetRow = null;
+  for (const row of trellisViewEl.querySelectorAll(".trellis-split-row")) {
+    let selected = false;
+    if (row.dataset.taskPath !== undefined) {
+      selected = trellisSplit.detailKind === "task"
+        && row.dataset.taskPath === trellisSplit.selectedTaskPath;
+    } else if (row.dataset.specPath !== undefined) {
+      selected = trellisSplit.detailKind === "spec"
+        && row.dataset.specPath === trellisSpec.selected;
+    } else if (row.dataset.networkKey !== undefined) {
+      selected = trellisSplit.detailKind === "network"
+        && row.dataset.networkKey === trellisSplit.networkGroupKey;
+    }
+    row.classList.toggle("is-selected", selected);
+    if (selected) targetRow = row;
+  }
+
+  // 2) Rebuild just the right pane. Same builder as the full path, so
+  // buildTrellisDetailCard stays the single source for task cards; the
+  // module-level host reference is reassigned with the new pane.
+  const task = trellisSplit.detailKind === "task" && trellisSplit.selectedTaskPath
+    ? trellisSplit.tasksByPath.get(trellisSplit.selectedTaskPath) || null
+    : null;
+  pane.replaceWith(buildTrellisSplitDetailPane(task));
+
+  // 3) Reveal + focus the target row: scroll ONLY when it sits outside
+  // the list viewport (stable when already visible); focus is scroll-free
+  // so viewport alignment stays owned by the scrollIntoView above. Both
+  // guarded — sandbox elements carry neither method.
+  if (targetRow) {
+    const list = section.querySelector(".trellis-split-list");
+    const rowRect = typeof targetRow.getBoundingClientRect === "function"
+      ? targetRow.getBoundingClientRect() : null;
+    const listRect = list && typeof list.getBoundingClientRect === "function"
+      ? list.getBoundingClientRect() : null;
+    if (rowRect && listRect && (rowRect.top < listRect.top || rowRect.bottom > listRect.bottom)
+      && typeof targetRow.scrollIntoView === "function") {
+      targetRow.scrollIntoView({ block: "nearest" });
+    }
+    if (typeof targetRow.focus === "function") targetRow.focus({ preventScroll: true });
+  }
+  return true;
+}
+
 function selectTrellisSplitTask(taskPath) {
   const next = typeof taskPath === "string" ? taskPath : null;
   // Idempotent re-click: only early-return when the detail card is already
@@ -1663,10 +1727,13 @@ function selectTrellisSplitTask(taskPath) {
   trellisSplit.selectedTaskPath = next;
   trellisSplit.detailKind = "task";
   trellisSplit.networkGroupKey = null;
-  // The detail card lifecycle follows the selection: rebuild resets any
-  // stale embedded card, then buildTrellisSplitDetailPane() re-opens the
-  // FULL detail card inside the pane for the new selection (no overlay).
+  // The detail card lifecycle follows the selection: any stale embedded
+  // card is reset first, then the selection-only fast path (class swap +
+  // pane rebuild, left list DOM untouched) or — when the structure went
+  // stale — the full body rebuild re-opens the FULL detail card inside
+  // the pane for the new selection (no overlay).
   resetTrellisDetailState();
+  if (renderTrellisSplitSelectionOnly()) return;
   lastTrellisPanelSignature = null;
   renderTrellisViewBody();
 }
@@ -1692,10 +1759,12 @@ function moveTrellisSplitSelection(delta) {
     : Math.min(Math.max(index + delta, 0), paths.length - 1);
   if (paths[nextIndex] !== trellisSplit.selectedTaskPath) {
     selectTrellisSplitTask(paths[nextIndex]);
-    // Rebuilt rows are fresh nodes — focus the new selected row so the
-    // :focus-visible outline tracks the keyboard cursor (guarded: the
-    // test sandbox elements have no focus()); focusing also scrolls the
-    // row into view, replacing the stale pre-rebuild scrollIntoView call.
+    // Focus the newly selected row so the :focus-visible outline tracks
+    // the keyboard cursor. On the selection-only fast path the row node
+    // is NOT rebuilt and the fast path already focused it (guarded: the
+    // test sandbox elements have no focus()); this query re-focuses the
+    // node in place after a structural fallback rebuild, and is an
+    // idempotent no-op otherwise.
     const focused = trellisViewEl
       ? trellisViewEl.querySelectorAll(".trellis-split-row[data-task-path]")[nextIndex]
       : null;
@@ -1752,7 +1821,11 @@ function buildTrellisSplitRow(task, meta, labels, archived = false) {
   // keyboard-active row (UI redesign 09-24 Batch B).
   row.setAttribute("tabindex", "-1");
   row.dataset.taskPath = task.taskPath || "";
-  if (task.taskPath === trellisSplit.selectedTaskPath) {
+  // Mirror the selection-only fast path (renderTrellisSplitSelectionOnly):
+  // a task row is only highlighted when the detail kind is actually "task";
+  // otherwise a network-group selection would double-highlight after a
+  // structural rebuild.
+  if (task.taskPath === trellisSplit.selectedTaskPath && trellisSplit.detailKind === "task") {
     row.classList.add("is-selected");
   }
   // Archive rows keep their original phase field, so month-group rows
@@ -1806,19 +1879,14 @@ function buildTrellisSplitRow(task, meta, labels, archived = false) {
 
   const main = document.createElement("div");
   main.className = "trellis-split-row-main";
-  // Title line: title + priority chip + origin tag share one flex row so
-  // the chip hugs the title instead of stacking under it.
+  // Title line: the title owns the full head width (native title tooltip
+  // reveals the full name on hover since the ellipsis can hide it).
   const headRow = document.createElement("div");
   headRow.className = "trellis-split-row-head";
-  headRow.appendChild(createText("span", "trellis-split-row-title", task.title || task.taskPath || "?"));
-  // Origin tag: merged "all" view only, and only for rows that belong to
-  // a registered root — same semantics and class as the v6 tree rows
-  // (trellis-task-project), so disambiguated labels survive the split
-  // migration while filtered / session-resolved rows stay untagged.
-  const originLabel = trellisRowProjectLabel(task, labels);
-  if (originLabel) {
-    headRow.appendChild(createText("span", "trellis-task-project", originLabel));
-  }
+  const titleText = task.title || task.taskPath || "?";
+  const titleEl = createText("span", "trellis-split-row-title", titleText);
+  titleEl.title = titleText;
+  headRow.appendChild(titleEl);
   main.appendChild(headRow);
   const subBits = [];
   if (task.sessions && task.sessions.length > 0) {
@@ -1828,17 +1896,26 @@ function buildTrellisSplitRow(task, meta, labels, archived = false) {
   if (meta && meta.hasChildren) {
     subBits.push(t("dashboardTrellisSplitChildren").replace("{n}", String(childCount != null ? childCount : "")));
   }
+  // Origin tag: merged "all" view only, and only for rows that belong to
+  // a registered root — same semantics and class as the v6 tree rows
+  // (trellis-task-project), so disambiguated labels survive the split
+  // migration while filtered / session-resolved rows stay untagged.
+  // Rides the SUB line (09-25 split polish) so the title keeps its width.
+  const originLabel = trellisRowProjectLabel(task, labels);
   // Priority chip (v7 R7) rides the sub line, ahead of the metadata bits:
   // P0/P1 highlight, P2 stays muted. The chip text is the badge itself
   // (locale-independent), the modifier class carries the rank.
   const priority = normalizeTrellisPriority(task.priority);
-  if (priority || subBits.length > 0) {
+  if (priority || originLabel || subBits.length > 0) {
     const sub = document.createElement("div");
     sub.className = "trellis-split-row-sub";
     if (priority) {
       const chip = createText("span", `trellis-priority pri-${priority}`, priority.toUpperCase());
       chip.setAttribute("aria-label", t("dashboardTrellisPriority").replace("{p}", priority.toUpperCase()));
       sub.appendChild(chip);
+    }
+    if (originLabel) {
+      sub.appendChild(createText("span", "trellis-task-project", originLabel));
     }
     if (subBits.length > 0) {
       sub.appendChild(createText("span", "trellis-split-row-sub-text", subBits.join(" · ")));
@@ -2533,8 +2610,12 @@ function buildTrellisNetworkListGroup() {
     row.addEventListener("click", () => {
       trellisSplit.detailKind = "network";
       trellisSplit.networkGroupKey = group.key;
-      lastTrellisPanelSignature = null;
-      renderTrellisViewBody();
+      // Same selection-only fast path as task/spec rows: class swap +
+      // right-pane rebuild, full rebuild only when stale/sandboxed.
+      if (!renderTrellisSplitSelectionOnly()) {
+        lastTrellisPanelSignature = null;
+        renderTrellisViewBody();
+      }
     });
     wrap.appendChild(row);
   }
@@ -2637,19 +2718,28 @@ function computeTrellisViewSignature() {
     selectedRoot: trellisView.selectedRoot,
     panelOpen: trellisView.panelOpen,
     // v7 R8 drawers carry their own async state — a loading→result flip
-    // must rerender the view even when nothing else changed.
+    // must rerender the view even when nothing else changed. NOTE: the
+    // spec group's SELECTED doc is deliberately absent — selection changes
+    // take the selection-only fast path (see renderTrellisSplitSelectionOnly)
+    // and must not invalidate this structural signature.
     network: trellisNetwork.open
       ? { loading: trellisNetwork.loading, root: trellisNetwork.root, result: trellisNetwork.result }
       : null,
     spec: trellisSpec.open
-      ? { loading: trellisSpec.loading, root: trellisSpec.root, selected: trellisSpec.selected }
+      ? { loading: trellisSpec.loading, root: trellisSpec.root }
       : null,
-    // v7 R10: the two extra groups + right-pane routing are list-body
-    // state — a flip must rerender even when lists did not change.
+    // v7 R10: the two extra groups are list-body state — a flip must
+    // rerender even when lists did not change. detailKind /
+    // networkGroupKey are selection state (fast path), NOT structure.
     specGroupOpen: trellisSplit.specGroupOpen,
     networkGroupOpen: trellisSplit.networkGroupOpen,
-    detailKind: trellisSplit.detailKind,
-    networkGroupKey: trellisSplit.networkGroupKey,
+    // Split-list structure (09-25 split polish): archive fold + collapse
+    // set live here instead of relying on every mutation site clearing
+    // the signature — cross-entry jumps (jumpToTrellisNetworkTask) mutate
+    // them directly before selecting, and the fast path must see the
+    // structure go stale and fall back to the full rebuild.
+    archiveOpen: trellisSplit.archiveOpen,
+    collapsedPaths: [...trellisSplit.collapsedPaths].sort(),
     active: {
       loading: trellisView.active.loading,
       loaded: trellisView.active.loaded,
@@ -2990,9 +3080,15 @@ function selectTrellisSpecDoc(relPath) {
   trellisSplit.detailKind = "spec";
   trellisSplit.selectedTaskPath = null;
   trellisSplit.networkGroupKey = null;
-  lastTrellisSpecSignature = null;
-  lastTrellisPanelSignature = null;
-  renderTrellisViewBody();
+  // Selection-only fast path (09-25 split polish): swap the spec row's
+  // is-selected class and rebuild just the right pane (spec doc content
+  // renders from the cache / loading hint). Structural fallback keeps
+  // the full rebuild for a stale signature or sandbox DOM.
+  if (!renderTrellisSplitSelectionOnly()) {
+    lastTrellisSpecSignature = null;
+    lastTrellisPanelSignature = null;
+    renderTrellisViewBody();
+  }
   void fetchTrellisSpecDoc(relPath);
 }
 
@@ -4633,9 +4729,13 @@ async function init() {
   // visible rows in group order, Enter opens the full detail overlay, Esc
   // clears the selection (never the window). Only active while the split
   // view is the current tab and no overlay/quick mode holds the key.
+  // Since v7 the detail card lives EMBEDDED in the split pane (open on
+  // every selection) and spec/relations are left-column groups — none of
+  // them owns the keyboard — so only a true overlay (non-embedded detail
+  // card) or quick mode blocks navigation (09-25 split polish).
   if (typeof document.addEventListener === "function") {
     document.addEventListener("keydown", (event) => {
-      if (trellisDetail.open || trellisSpec.open || trellisNetwork.open) return;
+      if (trellisDetail.open && !trellisDetail.embedded) return;
       if (quick.active || quick.pending) return;
       if (event.key !== "ArrowUp" && event.key !== "ArrowDown" && event.key !== "Enter" && event.key !== "Escape") return;
       if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
