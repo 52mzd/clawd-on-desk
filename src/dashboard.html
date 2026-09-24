@@ -583,26 +583,6 @@ h1 {
   margin: 0 0 14px;
 }
 
-/* v7 R5: the project bar's trailing controls — the spec-map entry and the
-   ⚙ drawer toggle that reveals the root list below. */
-.trellis-filter-section .trellis-view-section-title .trellis-spec-open {
-  margin-left: auto;
-  height: 22px;
-  padding: 0 8px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.trellis-spec-open:hover {
-  background: var(--hover, rgba(127, 127, 127, 0.14));
-  color: var(--text);
-}
-
 .trellis-filter-manage {
   flex: 0 0 auto;
   width: 22px;
@@ -986,14 +966,10 @@ h1 {
 .trellis-detail-doc,
 .trellis-spec-doc,
 .trellis-spec-list,
-.trellis-network-card {
-  user-select: text;
-}
-
 .trellis-detail-doc button,
 .trellis-spec-doc button,
 .trellis-spec-list button,
-.trellis-network-card button,
+.trellis-network-group-content button,
 .trellis-detail-header,
 .trellis-detail-close {
   user-select: none;
@@ -1005,42 +981,45 @@ h1 {
   gap: 8px;
 }
 
-/* v4-a spec map; v7 R9 renders it INTO the split-view slot — same
-   master-detail frame as the task list (left file list / right doc),
-   replacing it while open instead of stacking above. Must beat
-   .trellis-split-section's row direction AND .trellis-view-section's
-   column gap/margin — the card is a column: header on top, panes below. */
-.trellis-spec-split {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  flex: 1 1 auto;
-  min-height: 0;
-  min-width: 0;
-  margin: 0; /* override .trellis-view-section margin-bottom:18px */
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
-  padding: 0;
-  overflow: hidden;
-}
-
-.trellis-spec-split .trellis-detail-header {
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-}
-
-.trellis-spec-split .trellis-spec-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  padding: 8px 12px;
-}
-
 .trellis-spec-body {
   display: flex;
   gap: 12px;
   flex: 1;
   min-height: 0;
+}
+
+/* v7 R10: spec doc content / network group content in the RIGHT pane. */
+.trellis-spec-doc-content,
+.trellis-network-group-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.trellis-spec-doc-content .trellis-detail-title,
+.trellis-network-group-content .trellis-detail-title {
+  font-size: 13px;
+  margin: 0;
+}
+
+/* Left-column spec/relations group rows (v7 R10) reuse the split-row
+   anatomy; the spec rows' side badges stack tighter than task rows. */
+.trellis-spec-row-side {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.trellis-spec-row .trellis-split-row-title {
+  font-size: 12.5px;
+}
+
+.trellis-spec-row.is-empty-spec .trellis-split-row-title {
+  color: var(--muted);
 }
 
 .trellis-network-group {
@@ -1860,82 +1839,6 @@ h1 {
   background: transparent;
   cursor: pointer;
   color: inherit;
-}
-
-/* v7 R8 inline drawer: ⛓ network overview stays a top drawer. */
-.trellis-network-panel {
-  margin: -6px 0 14px;
-}
-
-.trellis-network-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  width: 100%;
-  max-height: 520px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-}
-
-.trellis-network-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.trellis-network-title {
-  font-size: 12.5px;
-  font-weight: 600;
-}
-
-.trellis-network-body {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  overflow-y: auto;
-  min-height: 0;
-}
-
-.trellis-panel-close {
-  flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 14px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.trellis-panel-close:hover {
-  background: var(--hover, rgba(127, 127, 127, 0.14));
-  color: var(--text);
-}
-
-.trellis-network-open {
-  flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.trellis-network-open:hover,
-.trellis-network-open[aria-expanded="true"] {
-  background: var(--hover, rgba(127, 127, 127, 0.14));
-  color: var(--text);
 }
 
 /* v7 R6: fill status + reference count per spec doc. An empty doc (only

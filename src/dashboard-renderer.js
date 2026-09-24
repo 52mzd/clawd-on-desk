@@ -1633,6 +1633,13 @@ const trellisSplit = {
   // taskPath -> panel task object (flat, both groups); lets the detail
   // card reopen from selection alone without re-deriving from the tree.
   tasksByPath: new Map(),
+  // v7 R10: spec docs and task relations are LEFT-COLUMN GROUPS now
+  // (below plan/execute/check/done), each starting collapsed with a
+  // lazy first-expand fetch. Right-pane content routes on detailKind.
+  specGroupOpen: false,
+  networkGroupOpen: false,
+  detailKind: "task", // "task" | "spec" | "network"
+  networkGroupKey: null, // "v|<parent>" | "s|<relPath>" | "p|<prdPath>"
 };
 
 // Embedded detail-card host inside the split right pane. Reassigned by
@@ -1651,6 +1658,8 @@ function selectTrellisSplitTask(taskPath) {
     return;
   }
   trellisSplit.selectedTaskPath = next;
+  trellisSplit.detailKind = "task";
+  trellisSplit.networkGroupKey = null;
   // The detail card lifecycle follows the selection: rebuild resets any
   // stale embedded card, then buildTrellisSplitDetailPane() re-opens the
   // FULL detail card inside the pane for the new selection (no overlay).
@@ -1825,6 +1834,17 @@ function buildTrellisSplitDetailPane(task) {
   // instead of querying the DOM, so the embedded path works in test
   // sandboxes without document.querySelector.
   trellisSplitDetailHostEl = pane;
+  // v7 R10: the right pane hosts three content kinds — task detail (the
+  // default), a spec document, or a network group. Selection routing is
+  // `trellisSplit.detailKind`.
+  if (trellisSplit.detailKind === "spec" && trellisSpec.selected) {
+    pane.appendChild(buildTrellisSpecDocContent(trellisSpec.selected));
+    return pane;
+  }
+  if (trellisSplit.detailKind === "network" && trellisSplit.networkGroupKey) {
+    pane.appendChild(buildTrellisNetworkGroupContent(trellisSplit.networkGroupKey));
+    return pane;
+  }
   if (!task) {
     // Empty state: oversized state-dot + guide text (noty-ui flavor).
     const empty = document.createElement("div");
@@ -2171,12 +2191,228 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
   footTools.appendChild(collapseAll);
   foot.appendChild(footTools);
   listPane.appendChild(foot);
+
+  // v7 R10: spec docs and task relations as left-column groups below the
+  // phase groups — same head anatomy, collapsed by default, first expand
+  // triggers the one-shot fetch.
+  listPane.appendChild(buildTrellisSpecListGroup());
+  listPane.appendChild(buildTrellisNetworkListGroup());
+
   section.appendChild(listPane);
 
   // Selection may point at a task that filters just removed — show the
   // empty pane rather than a stale card.
   section.appendChild(buildTrellisSplitDetailPane(selectedTask));
   return section;
+}
+
+// ── v7 R10: spec list group (left column, below DONE) ──
+function toggleTrellisSpecGroup() {
+  trellisSplit.specGroupOpen = !trellisSplit.specGroupOpen;
+  lastTrellisPanelSignature = null;
+  if (trellisSplit.specGroupOpen && !trellisSpec.loading && trellisSpec.files.length === 0) {
+    // First expand: lazy-load the tree for the current project scope.
+    const root = trellisView.selectedRoot || trellisView.roots[0];
+    if (root) {
+      trellisSpec.open = true;
+      trellisSpec.loading = true;
+      trellisSpec.seq += 1;
+      trellisSpec.root = root;
+      trellisSpec.files = [];
+      trellisSpec.truncated = false;
+      trellisSpec.selected = null;
+      lastTrellisSpecSignature = null;
+      void fetchTrellisSpecTree(root);
+    }
+  }
+  renderTrellisViewBody();
+}
+
+function buildTrellisSpecListGroup() {
+  const head = document.createElement("div");
+  head.className = "trellis-split-group-head trellis-split-group-toggle"
+    + (trellisSplit.specGroupOpen ? "" : " is-collapsed");
+  head.setAttribute("role", "button");
+  head.setAttribute("aria-expanded", trellisSplit.specGroupOpen ? "true" : "false");
+  head.appendChild(createText("span", "trellis-split-group-caret", trellisSplit.specGroupOpen ? "▾" : "▸"));
+  head.appendChild(createText("span", "trellis-split-group-title", t("dashboardTrellisSpecGroup")));
+  const files = trellisSpec.open ? trellisSpec.files : [];
+  if (!trellisSpec.loading && files.length > 0) {
+    head.appendChild(createText("span", "trellis-split-group-count", String(files.length)));
+  }
+  head.addEventListener("click", toggleTrellisSpecGroup);
+  const wrap = document.createElement("div");
+  wrap.className = "trellis-split-group trellis-spec-group";
+  wrap.appendChild(head);
+  if (!trellisSplit.specGroupOpen) {
+    return wrap;
+  }
+  if (trellisSpec.loading) {
+    wrap.appendChild(createText("div", "trellis-split-archive-hint", t("dashboardTrellisArchivedLoading")));
+    return wrap;
+  }
+  if (trellisSpec.error || (!trellisSpec.truncated && files.length === 0 && trellisSpec.open)) {
+    wrap.appendChild(createText("div", "trellis-split-archive-hint", t("dashboardTrellisSpecEmpty")));
+    return wrap;
+  }
+  for (const file of files) {
+    const row = document.createElement("div");
+    row.className = "trellis-split-row trellis-spec-row";
+    if (file.relPath === trellisSpec.selected && trellisSplit.detailKind === "spec") {
+      row.classList.add("is-selected");
+    }
+    if (file.filled === false) row.classList.add("is-empty-spec");
+    row.dataset.specPath = file.relPath;
+    const main = document.createElement("div");
+    main.className = "trellis-split-row-main";
+    main.appendChild(createText("span", "trellis-split-row-title", file.relPath));
+    const side = document.createElement("div");
+    side.className = "trellis-split-row-side trellis-spec-row-side";
+    if (file.filled === false) {
+      side.appendChild(createText("span", "trellis-spec-file-empty", t("dashboardTrellisSpecEmptyDoc")));
+    } else if (typeof file.lines === "number" && file.lines > 0) {
+      side.appendChild(createText(
+        "span",
+        "trellis-spec-file-lines",
+        t("dashboardTrellisSpecLines").replace("{n}", String(file.lines))
+      ));
+    }
+    if (file.refCount > 0) {
+      const refs = createText("span", "trellis-spec-file-refs", `⛓${file.refCount}`);
+      refs.setAttribute("title", t("dashboardTrellisSpecRefs").replace("{n}", String(file.refCount)));
+      side.appendChild(refs);
+    }
+    row.appendChild(main);
+    row.appendChild(side);
+    row.addEventListener("click", () => {
+      trellisSplit.detailKind = "spec";
+      selectTrellisSpecDoc(file.relPath);
+    });
+    wrap.appendChild(row);
+  }
+  if (trellisSpec.truncated) {
+    wrap.appendChild(createText("div", "trellis-split-archive-hint", t("dashboardTrellisArchivedTruncated")));
+  }
+  return wrap;
+}
+
+// ── v7 R10: network relations group (left column, below spec) ──
+function trellisNetworkGroups() {
+  const result = trellisNetwork.result;
+  if (!result || result.status !== "ok") return [];
+  const groups = [];
+  const edges = Array.isArray(result.edges) ? result.edges : [];
+  const byParent = new Map();
+  for (const edge of edges) {
+    if (!byParent.has(edge.parentTaskPath)) byParent.set(edge.parentTaskPath, []);
+    byParent.get(edge.parentTaskPath).push(edge.childTaskPath);
+  }
+  const nodeByTaskPath = new Map(
+    (Array.isArray(result.nodes) ? result.nodes : []).map((n) => [n.taskPath, n])
+  );
+  const refOf = (taskPath) => {
+    const node = nodeByTaskPath.get(taskPath);
+    return node
+      ? { taskPath, title: node.title, archived: node.archived }
+      : { taskPath, title: taskPath, archived: String(taskPath).includes("/archive/"), missing: true };
+  };
+  for (const [parentTaskPath, children] of [...byParent.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0])))) {
+    groups.push({
+      key: `v|${parentTaskPath}`,
+      label: t("dashboardTrellisLinksChildren").replace("{n}", String(children.length)),
+      sub: parentTaskPath || t("dashboardTrellisLinksMissing"),
+      members: [
+        ...(parentTaskPath ? [refOf(parentTaskPath)] : []),
+        ...children.map(refOf),
+      ],
+    });
+  }
+  for (const group of Array.isArray(result.specGroups) ? result.specGroups : []) {
+    groups.push({
+      key: `s|${group.specPath}`,
+      label: t("dashboardTrellisLinksSharedSpec"),
+      sub: group.specPath,
+      members: group.tasks.slice(),
+    });
+  }
+  for (const group of Array.isArray(result.prdGroups) ? result.prdGroups : []) {
+    groups.push({
+      key: `p|${group.prdPath}`,
+      label: t("dashboardTrellisLinksSharedPrd"),
+      sub: group.prdPath,
+      members: [group.owner, ...group.tasks],
+    });
+  }
+  return groups;
+}
+
+function toggleTrellisNetworkGroup() {
+  trellisSplit.networkGroupOpen = !trellisSplit.networkGroupOpen;
+  lastTrellisPanelSignature = null;
+  if (trellisSplit.networkGroupOpen && !trellisNetwork.loading && !trellisNetwork.result) {
+    const root = trellisView.selectedRoot || trellisView.roots[0];
+    if (root) {
+      trellisNetwork.open = true;
+      trellisNetwork.loading = true;
+      trellisNetwork.seq += 1;
+      trellisNetwork.root = root;
+      trellisNetwork.result = null;
+      lastTrellisNetworkSignature = null;
+      void fetchTrellisNetworkOverview();
+    }
+  }
+  renderTrellisViewBody();
+}
+
+function buildTrellisNetworkListGroup() {
+  const head = document.createElement("div");
+  head.className = "trellis-split-group-head trellis-split-group-toggle"
+    + (trellisSplit.networkGroupOpen ? "" : " is-collapsed");
+  head.setAttribute("role", "button");
+  head.setAttribute("aria-expanded", trellisSplit.networkGroupOpen ? "true" : "false");
+  head.appendChild(createText("span", "trellis-split-group-caret", trellisSplit.networkGroupOpen ? "▾" : "▸"));
+  head.appendChild(createText("span", "trellis-split-group-title", t("dashboardTrellisLinksGroup")));
+  const groups = trellisNetwork.open ? trellisNetworkGroups() : [];
+  if (!trellisNetwork.loading && groups.length > 0) {
+    head.appendChild(createText("span", "trellis-split-group-count", String(groups.length)));
+  }
+  head.addEventListener("click", toggleTrellisNetworkGroup);
+  const wrap = document.createElement("div");
+  wrap.className = "trellis-split-group trellis-network-group-list";
+  wrap.appendChild(head);
+  if (!trellisSplit.networkGroupOpen) {
+    return wrap;
+  }
+  if (trellisNetwork.loading) {
+    wrap.appendChild(createText("div", "trellis-split-archive-hint", t("dashboardTrellisArchivedLoading")));
+    return wrap;
+  }
+  if (groups.length === 0) {
+    wrap.appendChild(createText("div", "trellis-split-archive-hint", t("dashboardTrellisLinksEmpty")));
+    return wrap;
+  }
+  for (const group of groups) {
+    const row = document.createElement("div");
+    row.className = "trellis-split-row trellis-network-row";
+    if (group.key === trellisSplit.networkGroupKey && trellisSplit.detailKind === "network") {
+      row.classList.add("is-selected");
+    }
+    row.dataset.networkKey = group.key;
+    const main = document.createElement("div");
+    main.className = "trellis-split-row-main";
+    main.appendChild(createText("span", "trellis-split-row-title", group.label));
+    main.appendChild(createText("span", "trellis-split-row-sub", group.sub));
+    row.appendChild(main);
+    row.appendChild(createText("span", "trellis-split-row-side", String(group.members.length)));
+    row.addEventListener("click", () => {
+      trellisSplit.detailKind = "network";
+      trellisSplit.networkGroupKey = group.key;
+      lastTrellisPanelSignature = null;
+      renderTrellisViewBody();
+    });
+    wrap.appendChild(row);
+  }
+  return wrap;
 }
 
 function buildTrellisFilterChips(labels, activeCounts, archiveCounts) {
@@ -2243,32 +2479,7 @@ function buildTrellisProjectBar() {
     selected === null ? t("dashboardTrellisFilterAll") : labels.get(selected) || selected
   ));
 
-  const spec = document.createElement("button");
-  spec.type = "button";
-  // Distinct class from `trellis-view-add-root`: the spec-map entry and
-  // the add-root control live in different places and must stay separately
-  // addressable.
-  spec.className = "trellis-spec-open";
-  spec.textContent = t("dashboardTrellisSpecOpen");
-  spec.setAttribute("aria-expanded", trellisView.panelOpen === "spec" ? "true" : "false");
-  spec.addEventListener("click", () => {
-    openTrellisSpec(trellisView.selectedRoot || trellisView.roots[0]);
-  });
-  titleRow.appendChild(spec);
 
-  // ⛓ project-wide network overview (v7 R8): the relation graph entry
-  // lives on the project bar, not on individual task detail cards.
-  const network = document.createElement("button");
-  network.type = "button";
-  network.className = "trellis-network-open";
-  network.textContent = "⛓";
-  network.title = t("dashboardTrellisLinksTitle");
-  network.setAttribute("aria-expanded", trellisView.panelOpen === "network" ? "true" : "false");
-  network.setAttribute("aria-label", t("dashboardTrellisLinksTitle"));
-  network.addEventListener("click", () => {
-    openTrellisNetworkOverview();
-  });
-  titleRow.appendChild(network);
 
   const manage = document.createElement("button");
   manage.type = "button";
@@ -2307,6 +2518,12 @@ function computeTrellisViewSignature() {
     spec: trellisSpec.open
       ? { loading: trellisSpec.loading, root: trellisSpec.root, selected: trellisSpec.selected }
       : null,
+    // v7 R10: the two extra groups + right-pane routing are list-body
+    // state — a flip must rerender even when lists did not change.
+    specGroupOpen: trellisSplit.specGroupOpen,
+    networkGroupOpen: trellisSplit.networkGroupOpen,
+    detailKind: trellisSplit.detailKind,
+    networkGroupKey: trellisSplit.networkGroupKey,
     active: {
       loading: trellisView.active.loading,
       loaded: trellisView.active.loaded,
@@ -2336,12 +2553,6 @@ function renderTrellisView() {
   if (projectBar) fragment.appendChild(projectBar);
   const rootsSection = buildTrellisRootsSection();
   if (rootsSection) fragment.appendChild(rootsSection);
-  // v7 R8: the network overview (⛓) stays a top drawer. The spec map
-  // (📐) instead REPLACES the task split below (v7 R9): same
-  // master-detail frame — left file list, right doc pane.
-  if (trellisView.panelOpen === "network") {
-    fragment.appendChild(buildTrellisNetworkPanel());
-  }
   // The filter is render-layer only: the full lists stay in memory and
   // each rebuild slices them down to the selected root BEFORE the tree is
   // built, so the nesting always reflects the filtered view (a parent
@@ -2350,13 +2561,9 @@ function renderTrellisView() {
   const activeFiltered = filterTrellisTasksByRoot(trellisView.active.tasks, trellisView.roots, selectedRoot);
   const archiveFiltered = filterTrellisTasksByRoot(trellisView.archive.tasks, trellisView.roots, selectedRoot);
   // v7: the split list is the single view — flat depth-annotated rows
-  // (left groups) with the selection detail pane on the right. The spec
-  // map swaps into the same slot: spec docs on the left, doc body right.
-  if (trellisView.panelOpen === "spec" && trellisSpec.open) {
-    fragment.appendChild(buildTrellisSpecCard());
-  } else {
-    fragment.appendChild(buildTrellisSplitSection(activeFiltered, archiveFiltered));
-  }
+  // (left groups) with the selection detail pane on the right. R10 adds
+  // the spec + relations groups below the phase groups in the SAME list.
+  fragment.appendChild(buildTrellisSplitSection(activeFiltered, archiveFiltered));
   trellisViewEl.replaceChildren(fragment);
 }
 
@@ -2520,38 +2727,6 @@ const trellisNetwork = {
 let lastTrellisNetworkSignature = null;
 let trellisNetworkPanelEl = null;
 
-function openTrellisNetworkOverview() {
-  const root = trellisView.selectedRoot || trellisView.roots[0];
-  if (!root) return;
-  // Same-click toggle: closing counts as a real state change.
-  if (trellisView.panelOpen === "network" && trellisNetwork.root === root) {
-    closeTrellisNetworkOverview();
-    return;
-  }
-  trellisView.panelOpen = "network";
-  trellisNetwork.open = true;
-  trellisNetwork.loading = true;
-  trellisNetwork.seq += 1;
-  trellisNetwork.root = root;
-  trellisNetwork.result = null;
-  lastTrellisNetworkSignature = null;
-  lastTrellisViewSignature = null;
-  renderTrellisView();
-  void fetchTrellisNetworkOverview();
-}
-
-function closeTrellisNetworkOverview() {
-  if (!trellisNetwork.open) return;
-  trellisNetwork.open = false;
-  trellisNetwork.loading = false;
-  trellisNetwork.root = null;
-  trellisNetwork.result = null;
-  if (trellisView.panelOpen === "network") trellisView.panelOpen = null;
-  lastTrellisNetworkSignature = null;
-  lastTrellisViewSignature = null;
-  renderTrellisView();
-}
-
 async function fetchTrellisNetworkOverview() {
   const seq = trellisNetwork.seq;
   const root = trellisNetwork.root;
@@ -2566,7 +2741,7 @@ async function fetchTrellisNetworkOverview() {
   trellisNetwork.result = result && typeof result === "object" ? result : { status: "error" };
   lastTrellisNetworkSignature = null;
   lastTrellisViewSignature = null;
-  renderTrellisView();
+  renderTrellisViewBody();
 }
 
 // Clicking a task inside the overview jumps to it in the split list: make
@@ -2582,7 +2757,6 @@ function jumpToTrellisNetworkTask(taskPath) {
     trellisSplit.archiveOpen = true;
   }
   if (trellisSplit.collapsedPaths) trellisSplit.collapsedPaths.delete(taskPath);
-  closeTrellisNetworkOverview();
   selectTrellisSplitTask(taskPath);
 }
 
@@ -2615,153 +2789,7 @@ function trellisNetworkRefButton(ref) {
   return btn;
 }
 
-function buildTrellisNetworkPanel() {
-  const section = document.createElement("div");
-  section.className = "trellis-view-section trellis-network-panel";
-  const signature = JSON.stringify([
-    trellisNetwork.loading,
-    trellisNetwork.root,
-    trellisNetwork.result,
-  ]);
-  const unchanged = signature === lastTrellisNetworkSignature;
-  if (unchanged && trellisNetworkPanelEl) {
-    return trellisNetworkPanelEl;
-  }
-  lastTrellisNetworkSignature = signature;
 
-  const card = document.createElement("div");
-  card.className = "trellis-network-card";
-
-  const header = document.createElement("div");
-  header.className = "trellis-network-head";
-  const title = document.createElement("div");
-  title.className = "trellis-network-title";
-  title.appendChild(document.createTextNode(t("dashboardTrellisLinksTitle")));
-  header.appendChild(title);
-  const close = document.createElement("button");
-  close.type = "button";
-  close.className = "trellis-panel-close";
-  close.textContent = "×";
-  close.setAttribute("aria-label", t("dashboardTrellisDetailClose"));
-  close.addEventListener("click", () => {
-    closeTrellisNetworkOverview();
-  });
-  header.appendChild(close);
-  card.appendChild(header);
-
-  const body = document.createElement("div");
-  body.className = "trellis-network-body";
-  card.appendChild(body);
-
-  const result = trellisNetwork.result;
-  if (trellisNetwork.loading) {
-    body.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisDetailLoading")));
-    section.appendChild(card);
-    trellisNetworkPanelEl = section;
-    return section;
-  }
-  if (!result || result.status === "error") {
-    body.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksFailed")));
-    section.appendChild(card);
-    trellisNetworkPanelEl = section;
-    return section;
-  }
-  if (result.status === "missing") {
-    body.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisDetailMissing")));
-    section.appendChild(card);
-    trellisNetworkPanelEl = section;
-    return section;
-  }
-
-  const edges = Array.isArray(result.edges) ? result.edges : [];
-  const specGroups = Array.isArray(result.specGroups) ? result.specGroups : [];
-  const prdGroups = Array.isArray(result.prdGroups) ? result.prdGroups : [];
-  const nodeByTaskPath = new Map(
-    (Array.isArray(result.nodes) ? result.nodes : []).map((n) => [n.taskPath, n])
-  );
-  const refOf = (taskPath) => {
-    const node = nodeByTaskPath.get(taskPath);
-    return node
-      ? { taskPath, title: node.title, archived: node.archived }
-      : { taskPath, title: taskPath, archived: taskPath.includes("/archive/"), missing: true };
-  };
-
-  if (edges.length === 0 && specGroups.length === 0 && prdGroups.length === 0) {
-    body.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksEmpty")));
-    section.appendChild(card);
-    trellisNetworkPanelEl = section;
-    return section;
-  }
-
-  // ── Vertical: group children under their parent task.
-  if (edges.length > 0) {
-    const byParent = new Map(); // parentTaskPath|null -> [childTaskPath]
-    for (const edge of edges) {
-      const key = edge.parentTaskPath || null;
-      if (!byParent.has(key)) byParent.set(key, []);
-      byParent.get(key).push(edge.childTaskPath);
-    }
-    body.appendChild(createText(
-      "div",
-      "trellis-spec-group-label",
-      `${t("dashboardTrellisLinksParent")} → ${t("dashboardTrellisLinksChildren")} (${edges.length})`
-    ));
-    for (const [parentTaskPath, children] of [...byParent.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0])))) {
-      const group = document.createElement("div");
-      group.className = "trellis-network-group";
-      if (parentTaskPath === null) {
-        // Children whose parent name no longer resolves to any node.
-        group.appendChild(trellisNetworkRefButton({ taskPath: null, missing: true }));
-      } else {
-        group.appendChild(trellisNetworkRefButton(refOf(parentTaskPath)));
-      }
-      for (const childTaskPath of children) {
-        group.appendChild(trellisNetworkRefButton(refOf(childTaskPath)));
-      }
-      body.appendChild(group);
-    }
-  }
-
-  // ── Horizontal: shared spec docs.
-  for (const group of specGroups) {
-    body.appendChild(createText(
-      "div",
-      "trellis-spec-group-label",
-      `${t("dashboardTrellisLinksSharedSpec")} · ${group.specPath} (${group.tasks.length})`
-    ));
-    const wrap = document.createElement("div");
-    wrap.className = "trellis-network-group";
-    for (const ref of group.tasks) wrap.appendChild(trellisNetworkRefButton(ref));
-    if (group.truncated) {
-      body.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksTruncated")));
-    }
-    body.appendChild(wrap);
-  }
-
-  // ── Horizontal: shared sibling PRDs (owner first, then citers).
-  for (const group of prdGroups) {
-    body.appendChild(createText(
-      "div",
-      "trellis-spec-group-label",
-      `${t("dashboardTrellisLinksSharedPrd")} (${group.tasks.length})`
-    ));
-    const wrap = document.createElement("div");
-    wrap.className = "trellis-network-group";
-    wrap.appendChild(trellisNetworkRefButton(group.owner));
-    for (const ref of group.tasks) wrap.appendChild(trellisNetworkRefButton(ref));
-    if (group.truncated) {
-      body.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksTruncated")));
-    }
-    body.appendChild(wrap);
-  }
-
-  if (result.truncated) {
-    body.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksTruncated")));
-  }
-  section.appendChild(card);
-  trellisNetworkPanelEl = section;
-  return section;
-}
 // ── end task network ──────────────────────────────────────────────────────
 
 let lastTrellisDetailSignature = null;
@@ -2788,43 +2816,33 @@ function trellisSpecDocKey(root, relPath) {
 }
 
 function openTrellisSpec(root) {
+  // v7 R10: opening is just "expand the spec group" — the project bar
+  // button is gone; expand drives the lazy fetch.
   const target = typeof root === "string" && root ? root : trellisView.selectedRoot || trellisView.roots[0];
   if (!target) return;
-  // v7 R8: the spec map is an inline drawer under the project bar. The
-  // same click toggles it closed when it already shows this root.
-  if (trellisView.panelOpen === "spec" && trellisSpec.root === target) {
-    closeTrellisSpec();
+  if (!trellisSplit.specGroupOpen) {
+    toggleTrellisSpecGroup();
     return;
   }
-  trellisView.panelOpen = "spec";
-  trellisSpec.open = true;
-  trellisSpec.loading = trellisSpec.root !== target;
-  trellisSpec.seq += 1;
-  trellisSpec.root = target;
-  trellisSpec.files = [];
-  trellisSpec.truncated = false;
-  trellisSpec.selected = null;
-  trellisSpecDocs.clear();
-  lastTrellisSpecSignature = null;
-  renderTrellisSpec();
-  void fetchTrellisSpecTree(target);
+  if (trellisSpec.root !== target) {
+    trellisSpec.root = target;
+    trellisSpec.files = [];
+    trellisSpec.selected = null;
+    trellisSpecDocs.clear();
+    lastTrellisSpecSignature = null;
+    void fetchTrellisSpecTree(target);
+  }
 }
 
+
 function closeTrellisSpec() {
-  if (!trellisSpec.open) return;
-  trellisSpec.open = false;
-  trellisSpec.loading = false;
-  trellisSpec.root = null;
-  trellisSpec.files = [];
-  trellisSpec.truncated = false;
-  trellisSpec.selected = null;
-  // Ephemeral by contract: closing drops every cached document content.
-  trellisSpecDocs.clear();
-  lastTrellisSpecSignature = null;
-  if (trellisView.panelOpen === "spec") trellisView.panelOpen = null;
-  lastTrellisViewSignature = null;
-  renderTrellisView();
+  // v7 R10: closing = fold the spec group; selection/doc cache drops with it.
+  if (trellisSplit.specGroupOpen) {
+    toggleTrellisSpecGroup();
+    return;
+  }
 }
+
 
 function switchTrellisSpecRoot(root) {
   if (!trellisSpec.open || typeof root !== "string" || !root || root === trellisSpec.root) return;
@@ -2839,12 +2857,17 @@ function switchTrellisSpecRoot(root) {
 }
 
 function selectTrellisSpecDoc(relPath) {
-  if (!trellisSpec.open || typeof relPath !== "string" || !relPath) return;
+  if (typeof relPath !== "string" || !relPath) return;
   trellisSpec.selected = relPath;
+  trellisSplit.detailKind = "spec";
+  trellisSplit.selectedTaskPath = null;
+  trellisSplit.networkGroupKey = null;
   lastTrellisSpecSignature = null;
-  renderTrellisSpec();
+  lastTrellisPanelSignature = null;
+  renderTrellisViewBody();
   void fetchTrellisSpecDoc(relPath);
 }
+
 
 async function fetchTrellisSpecTree(root) {
   if (typeof window.dashboardAPI.getTrellisSpecTree !== "function") return;
@@ -2896,110 +2919,53 @@ async function fetchTrellisSpecDoc(relPath) {
   renderTrellisSpec();
 }
 
-function buildTrellisSpecCard() {
-  // v7 R9: the spec map IS a split view now — same master-detail card the
-  // task list uses (left: file list / right: doc), not a panel bolted
-  // above it. Shares the `.trellis-split-section` frame so heights,
-  // borders and scrolling match the task view.
-  const card = document.createElement("div");
-  card.className = "trellis-view-section trellis-split-section trellis-spec-split";
-
-  // Header row: title + (multi-root chips) + close.
-  const header = document.createElement("div");
-  header.className = "trellis-detail-header";
-  header.appendChild(createText("h3", "trellis-detail-title", t("dashboardTrellisSpecTitle")));
-  const roots = trellisView.roots;
-  if (roots.length > 1) {
-    const labels = buildTrellisRootLabels(roots);
-    const chips = document.createElement("div");
-    chips.className = "trellis-spec-roots";
-    for (const root of roots) {
-      const chip = document.createElement("button");
-      chip.type = "button";
-      chip.className = "trellis-filter-chip";
-      if (root === trellisSpec.root) chip.classList.add("is-active");
-      chip.appendChild(document.createTextNode(labels.get(root) || root));
-      chip.addEventListener("click", () => switchTrellisSpecRoot(root));
-      chips.appendChild(chip);
-    }
-    header.appendChild(chips);
+// v7 R10: spec document content for the RIGHT pane (detail slot), driven
+// by the spec group row click. Reuses the same doc cache and whitelisted
+// markdown renderer the old spec card used.
+function buildTrellisSpecDocContent(relPath) {
+  const pane = document.createElement("div");
+  pane.className = "trellis-spec-doc-content";
+  pane.appendChild(createText("h3", "trellis-detail-title", relPath));
+  const entry = trellisSpecDocs.get(trellisSpecDocKey(trellisSpec.root, relPath));
+  if (!entry || entry.loading) {
+    pane.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisDetailLoading")));
+    return pane;
   }
-  const close = document.createElement("button");
-  close.type = "button";
-  close.className = "trellis-detail-close";
-  close.textContent = "✕";
-  close.title = t("dashboardTrellisDetailClose");
-  close.setAttribute("aria-label", t("dashboardTrellisDetailClose"));
-  close.addEventListener("click", closeTrellisSpec);
-  header.appendChild(close);
-  card.appendChild(header);
-
-  const body = document.createElement("div");
-  body.className = "trellis-spec-body";
-
-  // Left pane: grouped file list (master).
-  const list = document.createElement("div");
-  list.className = "trellis-spec-list";
-  if (trellisSpec.loading) {
-    list.appendChild(createText("div", "trellis-detail-hint", "…"));
-  } else if (trellisSpec.files.length === 0) {
-    list.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisSpecEmpty")));
-  } else {
-    let lastGroup = null;
-    for (const file of trellisSpec.files) {
-      if (file.group !== lastGroup) {
-        lastGroup = file.group;
-        list.appendChild(createText("div", "trellis-spec-group-label", file.group));
-      }
-      const item = document.createElement("button");
-      item.type = "button";
-      item.className = "trellis-spec-file-button";
-      // v7 R6: fill status + reference count. `filled === false` means the
-      // doc exists but still holds only headings — the placeholder shape
-      // `trellis init` writes. `null` means the read failed, so we stay
-      // quiet instead of claiming it is empty.
-      if (file.filled === false) item.classList.add("is-empty");
-      if (file.relPath === trellisSpec.selected) item.setAttribute("aria-current", "true");
-      item.appendChild(createText("span", "trellis-spec-file-name", file.relPath));
-      if (file.filled === false) {
-        item.appendChild(createText("span", "trellis-spec-file-empty", t("dashboardTrellisSpecEmptyDoc")));
-      } else if (typeof file.lines === "number" && file.lines > 0) {
-        item.appendChild(
-          createText("span", "trellis-spec-file-lines", t("dashboardTrellisSpecLines").replace("{n}", String(file.lines)))
-        );
-      }
-      if (file.refCount > 0) {
-        const refs = createText("span", "trellis-spec-file-refs", `⛓${file.refCount}`);
-        refs.setAttribute("title", t("dashboardTrellisSpecRefs").replace("{n}", String(file.refCount)));
-        item.appendChild(refs);
-      }
-      item.addEventListener("click", () => selectTrellisSpecDoc(file.relPath));
-      list.appendChild(item);
+  if (entry.result && entry.result.status === "ok") {
+    const rendered = renderMarkdownDoc(trellisDocBuilder, entry.result.content || "");
+    pane.appendChild(rendered.root);
+    if (rendered.truncated) {
+      pane.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisDocTruncated")));
     }
+    return pane;
   }
-  body.appendChild(list);
-
-  // Right pane: selected document through the whitelisted renderer.
-  const docPane = document.createElement("div");
-  docPane.className = "trellis-spec-doc";
-  if (trellisSpec.selected) {
-    const entry = trellisSpecDocs.get(trellisSpecDocKey(trellisSpec.root, trellisSpec.selected));
-    if (!entry || entry.loading) {
-      docPane.appendChild(createText("div", "trellis-detail-hint", "…"));
-    } else if (entry.result && entry.result.status === "ok") {
-      const rendered = renderMarkdownDoc(trellisDocBuilder, entry.result.content || "");
-      docPane.appendChild(rendered.root);
-      if (rendered.truncated) {
-        docPane.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisDocTruncated")));
-      }
-    } else {
-      docPane.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisSpecLoadFailed")));
-    }
-  }
-  body.appendChild(docPane);
-  card.appendChild(body);
-  return card;
+  pane.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisSpecLoadFailed")));
+  return pane;
 }
+
+// v7 R10: one network group's content for the RIGHT pane — label, sub and
+// member rows; clicking a member jumps to that task in the split list.
+function buildTrellisNetworkGroupContent(key) {
+  const pane = document.createElement("div");
+  pane.className = "trellis-network-group-content";
+  const group = trellisNetworkGroups().find((g) => g.key === key);
+  if (!group) {
+    pane.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksEmpty")));
+    return pane;
+  }
+  pane.appendChild(createText("h3", "trellis-detail-title", group.label));
+  if (group.sub) {
+    pane.appendChild(createText("div", "trellis-detail-hint", group.sub));
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "trellis-network-group";
+  for (const ref of group.members) {
+    wrap.appendChild(trellisNetworkRefButton(ref));
+  }
+  pane.appendChild(wrap);
+  return pane;
+}
+
 
 function renderTrellisSpec() {
   if (!trellisSpec.open) {
@@ -3017,11 +2983,12 @@ function renderTrellisSpec() {
   ]);
   if (signature === lastTrellisSpecSignature) return;
   lastTrellisSpecSignature = signature;
-  // v7 R9: the spec map IS the split view — a spec-state change rerenders
-  // the whole view (the card swaps into the task split's slot).
-  lastTrellisViewSignature = null;
-  renderTrellisView();
+  // v7 R10: spec state drives the LEFT group rows and the RIGHT pane —
+  // rerender the split body (not the whole view header).
+  lastTrellisPanelSignature = null;
+  renderTrellisViewBody();
 }
+
 // ── end spec map ───────────────────────────────────────────────────────────
 
 function trellisDetailDocKey(taskPath, doc) {
@@ -4526,9 +4493,7 @@ async function init() {
       if (!trellisDetail.open && !trellisSpec.open && !trellisNetwork.open) return;
       if (quick.active || quick.pending) return;
       if (event.key === "Escape") {
-        if (trellisSpec.open) closeTrellisSpec();
-        else if (trellisNetwork.open) closeTrellisNetworkOverview();
-        else closeTrellisDetail();
+        closeTrellisDetail();
       }
     });
   }

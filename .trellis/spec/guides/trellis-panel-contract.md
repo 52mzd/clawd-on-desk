@@ -765,12 +765,11 @@ Correct removeTrellisPick(pick 目录)      // 一次撤销整组
 `trellisView.selectedRoot`。**v7 R5**：项目区收成单行 project bar
 （标题 + chips + 规范地图入口 `trellis-spec-open` + ⚙
 `trellis-filter-manage`）；roots 列表（全路径行 + 移除按钮 +
-添加按钮）降级为 ⚙ 展开的管理抽屉，默认收起；**v7 R8**：⚙ 与 ⛓（关联
-全景）和 📐（规范地图）共用互斥抽屉槽 `trellisView.panelOpen: null |
-"manage" | "network" | "spec"`（会话态）。`buildTrellisRootsSection`
-在 panelOpen!=="manage" 时返回 null（错误/空态仍无条件渲染）；三个按钮
-都带 `aria-expanded`，签名含 `panelOpen`。⛓/📐 面板内嵌在 #trellisView
-（project bar 之下），不再有 overlay 宿主。
+添加按钮）降级为 ⚙ 展开的管理抽屉，默认收起；**v7 R10**：project bar 只
+剩 ⚙（📐/⛓ 改为左栏分组，见 §4.6c/§4.6d），`panelOpen` 收敛为
+`null | "manage"` 单槽（会话态）。`buildTrellisRootsSection` 在
+panelOpen!=="manage" 时返回 null（错误/空态仍无条件渲染）；⚙ 带
+`aria-expanded`，签名含 `panelOpen`。
 
 **2. Signatures**：
 - `trellisTaskOwningRoot(cwd, roots)` → 拥有该 cwd 的注册 root
@@ -955,12 +954,16 @@ for (const [dir, relPath] of taskRelPaths) {
 
 **1. Scope / Trigger**：Trellis 项目视图「规范地图」抽屉的两个只读一次性
 通道（f4bd8b82）。复刻 `dashboard:trellis-task-doc` 四层链路。
-**v7 R8**：规范地图不再是 overlay——入口在 project bar（📐）；
-**v7 R9**：`panelOpen==="spec"` 时 `buildTrellisSpecCard`（`.trellis-spec-split`，
-复用 `.trellis-split-section` 框架）**替换**任务 split 槽位：左侧文件列表
-（master）/右侧文档内容（detail），与任务视图同高同框同滚动；关闭
-（✕/再点/互斥切抽屉）后任务 split 恢复。⛓ 网络全景保持顶部抽屉；
-通道与数据面不变。
+**v7 R10（最终形态）**：规范地图是 split 左栏的一个**分组**——与
+计划/执行/检查/归档同构的折叠头（`dashboardTrellisSpecGroup`），
+默认收起，首次展开懒加载 `getTrellisSpecTree`；行=spec 文件（relPath +
+行数/待填/⛓N 徽标），点击行右栏（`.trellis-split-detail`）渲染文档
+（`trellis-spec-doc-content`）。关联分组（`dashboardTrellisLinksGroup`）
+同理：行=关联组（父→子/共享规范/共享 PRD），点击右栏渲染组成员
+（`trellis-network-group-content`），成员点击跳 `selectTrellisSplitTask`。
+project bar 的 📐/⛓ 按钮、panelOpen 的 spec/network 槽位、
+`.trellis-spec-split`/`.trellis-network-panel` CSS 均已删除（⚙ 管理抽屉
+保留）。通道与数据面不变。
 
 **2. Signatures**：
 - activity：`readSpecTree(root)` → `{status:"ok", files:[{relPath,group,filled,lines,refCount}], truncated}` 或
@@ -1013,11 +1016,11 @@ for (const [dir, relPath] of taskRelPaths) {
 
 #### §4.6d 通道契约：dashboard:trellis-network-overview（7 段式，v4-b；v7 R8 改造）
 
-**1. Scope / Trigger**：项目栏「⛓」按钮的只读一次性通道——一次遍历整个
-root 产出**全项目关联图**（nodes + 纵向 parent 边 + 横向共享 spec/PRD
-组）。v7 R8 起取代旧的单任务 `dashboard:trellis-task-network`（该通道、
-数据面 `readTaskNetwork`、详情卡 ⛓ 入口均已删除；关联是项目级视图，
-不是逐任务钻取）。纵向证据源**只有 task.json**；横向边用任务文档文本
+**1. Scope / Trigger**：split 左栏「关联」分组首次展开的只读一次性通道——
+一次遍历整个 root 产出**全项目关联图**（nodes + 纵向 parent 边 + 横向共享
+spec/PRD 组）。v7 R8 起取代旧的单任务 `dashboard:trellis-task-network`
+（该通道、数据面 `readTaskNetwork`、详情卡 ⛓ 入口均已删除；关联是项目级
+视图，不是逐任务钻取）；v7 R10 起入口是左栏分组展开（懒加载），非按钮。纵向证据源**只有 task.json**；横向边用任务文档文本
 （prd/design/implement.md + implement/check.jsonl，
 `SPEC_REF_DOC_NAMES`）。
 

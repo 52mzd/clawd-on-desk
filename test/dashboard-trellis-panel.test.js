@@ -1206,16 +1206,19 @@ describe("dashboard trellis independent view", () => {
     assert.ok(textOf(app.view).includes("1/2"));
 
     // Archive group starts COLLAPSED (v7): the collapsed head is a
-    // button carrying the phase label + root count + refresh.
+    // button carrying the phase label + root count + refresh. The spec /
+    // relations groups (v7 R10) also start collapsed — three heads total,
+    // the DONE one is found by its phase label.
     const collapsedHeads = byClass(app.view, "trellis-split-group-head").filter(
       (el) => el.classList.contains("is-collapsed"),
     );
-    assert.equal(collapsedHeads.length, 1,
-      "the archive group renders one collapsed head");
-    assert.ok(textOf(collapsedHeads[0]).includes(
-      i18n.en.dashboardTrellisPhaseArchived
-    ), "the collapsed head carries the phase label");
-    assert.ok(textOf(collapsedHeads[0]).includes("1"),
+    assert.equal(collapsedHeads.length, 3,
+      "done + spec + relations groups each render one collapsed head");
+    const doneHead = collapsedHeads.find((el) =>
+      textOf(el).includes(i18n.en.dashboardTrellisPhaseArchived)
+    );
+    assert.ok(doneHead, "the collapsed done head carries the phase label");
+    assert.ok(textOf(doneHead).includes("1"),
       "the collapsed head carries the loaded count");
     assert.equal(
       byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-archived")).length,
@@ -1224,7 +1227,7 @@ describe("dashboard trellis independent view", () => {
     );
 
     // Expanding the archive opens the newest month by default.
-    await collapsedHeads[0].dispatch("click");
+    await doneHead.dispatch("click");
     await flush();
     const archivedRows = byClass(app.view, "trellis-split-row").filter(
       (el) => el.classList.contains("is-archived"),
@@ -1549,8 +1552,11 @@ describe("dashboard trellis independent view", () => {
     await switchToTrellis(app);
 
     const doneHead = () => {
-      const heads = byClass(app.view, "trellis-split-group-head");
-      return heads[heads.length - 1];
+      // v7 R10: spec + relations groups render BELOW the phase groups, so
+      // "last head" is no longer DONE — match by the archived phase label.
+      return byClass(app.view, "trellis-split-group-head").find((el) =>
+        textOf(el).includes(i18n.en.dashboardTrellisPhaseArchived)
+      );
     };
     // v7 ships the archived group folded: the head carries the modifier and
     // no archived row is materialized yet.
@@ -1597,7 +1603,7 @@ describe("dashboard trellis independent view", () => {
     await switchToTrellis(app);
 
     const heads = byClass(app.view, "trellis-split-group-head");
-    await heads[heads.length - 1].dispatch("click");
+    await heads.find((el) => textOf(el).includes(i18n.en.dashboardTrellisPhaseArchived)).dispatch("click");
 
     const rows = byClass(app.view, "trellis-split-row");
     const kid = rows.find((el) => textOf(el).includes("Done kid"));
@@ -1680,8 +1686,11 @@ describe("dashboard trellis project filter (rendering)", () => {
 
     // The archived group follows the same selection and counts its rows.
     const doneHead = () => {
-      const heads = byClass(app.view, "trellis-split-group-head");
-      return heads[heads.length - 1];
+      // v7 R10: spec + relations groups render BELOW the phase groups, so
+      // "last head" is no longer DONE — match by the archived phase label.
+      return byClass(app.view, "trellis-split-group-head").find((el) =>
+        textOf(el).includes(i18n.en.dashboardTrellisPhaseArchived)
+      );
     };
     assert.equal(textOf(byClass(doneHead(), "trellis-split-group-count")[0]), "1");
   });
@@ -1719,8 +1728,11 @@ describe("dashboard trellis project filter (rendering)", () => {
 
     // The archived group honors the same selection.
     const doneHead = () => {
-      const heads = byClass(app.view, "trellis-split-group-head");
-      return heads[heads.length - 1];
+      // v7 R10: spec + relations groups render BELOW the phase groups, so
+      // "last head" is no longer DONE — match by the archived phase label.
+      return byClass(app.view, "trellis-split-group-head").find((el) =>
+        textOf(el).includes(i18n.en.dashboardTrellisPhaseArchived)
+      );
     };
     await doneHead().dispatch("click");
     assert.equal(textOf(byClass(doneHead(), "trellis-split-group-count")[0]), "1");
@@ -1902,7 +1914,8 @@ describe("dashboard trellis v7 single view (R5–R7)", () => {
     // The bar is primary: title + chips + spec entry + ⚙.
     assert.equal(textOf(byClass(app.view, "trellis-filter-title")[0]), i18n.en.dashboardTrellisFilterAll);
     assert.equal(byClass(app.view, "trellis-filter-chip").length, 3);
-    assert.equal(byClass(app.view, "trellis-spec-open").length, 1);
+    // v7 R10: no 📐 button anymore — spec docs live in a left-column group.
+    assert.equal(byClass(app.view, "trellis-spec-open").length, 0);
     const manage = byClass(app.view, "trellis-filter-manage");
     assert.equal(manage.length, 1);
     assert.equal(manage[0].attributes["aria-expanded"], "false");
@@ -1922,7 +1935,7 @@ describe("dashboard trellis v7 single view (R5–R7)", () => {
     assert.equal(byClass(app.view, "trellis-root-row").length, 0, "⚙ folds it away again");
   });
 
-  it("opens the spec map from the project bar and marks unfilled docs with reference counts", async () => {
+    it("lists spec docs in the left-column group with status badges", async () => {
     const app = loadDashboard({
       sessions: [],
       rootsResult: { status: "ok", roots: ["/proj/one"] },
@@ -1937,43 +1950,45 @@ describe("dashboard trellis v7 single view (R5–R7)", () => {
     await flush();
     await switchToTrellis(app);
 
-    assert.deepEqual(app.specCalls, [], "nothing is fetched before the entry is clicked");
-    await byClass(app.view, "trellis-spec-open")[0].dispatch("click");
-    await flush();
-    assert.deepEqual(app.specCalls, [{ root: "/proj/one" }]);
+    // The spec group starts collapsed with the other phase groups.
+    const heads = byClass(app.view, "trellis-split-group-head");
+    const specHead = heads.find((el) => textOf(el).includes(i18n.en.dashboardTrellisSpecGroup));
+    assert.ok(specHead, "the spec group head renders below the phase groups");
+    assert.ok(specHead.classList.contains("is-collapsed"));
+    assert.equal(byClass(app.view, "trellis-spec-row").length, 0, "collapsed → no rows");
+    assert.deepEqual(app.specCalls, [], "nothing is fetched before expanding");
 
-    // v7 R8: the spec map renders inline under the project bar (no overlay).
-    const files = byClass(app.view, "trellis-spec-file-button");
-    assert.equal(files.length, 3);
-    assert.deepEqual(
-      files.map((el) => textOf(byClass(el, "trellis-spec-file-name")[0])),
-      ["frontend/index.md", "guides/index.md", "guides/legacy.md"],
-    );
+    await specHead.dispatch("click");
+    await flush();
+    assert.deepEqual(app.specCalls, [{ root: "/proj/one" }], "first expand lazy-loads the tree");
+
+    const rows = byClass(app.view, "trellis-spec-row");
+    assert.equal(rows.length, 3);
+    assert.ok(textOf(rows[0]).includes("frontend/index.md"));
 
     // Filled docs show a body-line count, never a "filled" badge.
-    assert.equal(textOf(byClass(files[0], "trellis-spec-file-lines")[0]), "12 lines");
-    assert.equal(byClass(files[0], "trellis-spec-file-empty").length, 0);
-    assert.equal(textOf(byClass(files[0], "trellis-spec-file-refs")[0]), "⛓3");
+    assert.equal(textOf(byClass(rows[0], "trellis-spec-file-lines")[0]), "12 lines");
+    assert.equal(byClass(rows[0], "trellis-spec-file-empty").length, 0);
+    assert.equal(textOf(byClass(rows[0], "trellis-spec-file-refs")[0]), "⛓3");
 
     // Heading-only docs read as empty instead of looking filled.
-    assert.ok(files[1].classList.contains("is-empty"));
+    assert.ok(rows[1].classList.contains("is-empty-spec"));
     assert.equal(
-      textOf(byClass(files[1], "trellis-spec-file-empty")[0]),
+      textOf(byClass(rows[1], "trellis-spec-file-empty")[0]),
       i18n.en.dashboardTrellisSpecEmptyDoc,
     );
-    assert.equal(byClass(files[1], "trellis-spec-file-refs").length, 0);
+    assert.equal(byClass(rows[1], "trellis-spec-file-refs").length, 0);
 
     // A doc that could not be read stays neutral: no empty badge, no count.
-    assert.ok(!files[2].classList.contains("is-empty"));
-    assert.equal(byClass(files[2], "trellis-spec-file-empty").length, 0);
-    assert.equal(byClass(files[2], "trellis-spec-file-lines").length, 0);
-    assert.equal(textOf(byClass(files[2], "trellis-spec-file-refs")[0]), "⛓1");
+    assert.ok(!rows[2].classList.contains("is-empty-spec"));
+    assert.equal(byClass(rows[2], "trellis-spec-file-empty").length, 0);
+    assert.equal(byClass(rows[2], "trellis-spec-file-lines").length, 0);
+    assert.equal(textOf(byClass(rows[2], "trellis-spec-file-refs")[0]), "⛓1");
   });
 });
 
 describe("dashboard trellis v7 R8 project drawers", () => {
-  it("opens the project-wide network overview from the bar and jumps on click", async () => {
-
+    it("lists relations in the left-column group and jumps on click", async () => {
     const app = loadDashboard({
       sessions: [],
       rootsResult: { status: "ok", roots: ["/proj/one"] },
@@ -1987,56 +2002,52 @@ describe("dashboard trellis v7 R8 project drawers", () => {
         { taskPath: ".trellis/tasks/kid", title: "Kid", archived: false, priority: null },
       ], edges: [
         { parentTaskPath: ".trellis/tasks/a", childTaskPath: ".trellis/tasks/kid", parentMissing: false },
-      ], specGroups: [
-        { specPath: "frontend/index.md", tasks: [
-          { taskPath: ".trellis/tasks/a", title: "Task A", archived: false },
-          { taskPath: ".trellis/tasks/kid", title: "Kid", archived: false },
-        ], truncated: false },
-      ], prdGroups: [], truncated: false },
+      ], specGroups: [], prdGroups: [], truncated: false },
     });
     await flush();
     await switchToTrellis(app);
 
-    // The ⛓ entry sits on the project bar; the drawer starts closed.
-    const btn = byClass(app.view, "trellis-network-open");
-    assert.equal(btn.length, 1);
-    assert.equal(btn[0].attributes["aria-expanded"], "false");
-    assert.equal(byClass(app.view, "trellis-network-panel").length, 0);
-    assert.deepEqual(app.networkOverviewCalls, [], "nothing fetched before the click");
+    // The relations group starts collapsed with the others.
+    const netHead = byClass(app.view, "trellis-split-group-head")
+      .find((el) => textOf(el).includes(i18n.en.dashboardTrellisLinksGroup));
+    assert.ok(netHead, "the relations group head renders");
+    assert.ok(netHead.classList.contains("is-collapsed"));
+    assert.equal(byClass(app.view, "trellis-network-row").length, 0);
+    assert.deepEqual(app.networkOverviewCalls, [], "nothing fetched before expanding");
 
-    await btn[0].dispatch("click");
+    await netHead.dispatch("click");
     await flush();
-    assert.deepEqual(app.networkOverviewCalls, [{ root: "/proj/one" }]);
-    assert.equal(byClass(app.view, "trellis-network-panel").length, 1, "the overview renders inline");
-    // The view rerendered on open — re-query instead of holding the stale btn.
-    assert.equal(byClass(app.view, "trellis-network-open")[0].attributes["aria-expanded"], "true");
+    assert.deepEqual(app.networkOverviewCalls, [{ root: "/proj/one" }], "first expand lazy-loads");
+    const rows = byClass(app.view, "trellis-network-row");
+    assert.equal(rows.length, 1, "one vertical group row");
+    assert.ok(textOf(rows[0]).includes(".trellis/tasks/a"),
+      "the group row carries its parent path");
+    const side = byClass(rows[0], "trellis-split-row-side")[0];
+    assert.ok(textOf(side).includes("2"), "the side carries the member count");
 
-    // Three sections: vertical group + shared-spec group.
-    const labels = byClass(app.view, "trellis-spec-group-label").map(textOf);
-    assert.ok(labels.some((x) => x.includes("frontend/index.md")), "shared-spec group shows");
-    const refs = byClass(app.view, "trellis-network-ref");
-    assert.equal(refs.length, 4, "parent+child+two spec citers");
-
-    // Clicking a ref jumps: the drawer closes and the split row selects.
-    await refs[1].dispatch("click");
+    // Clicking the group row shows members in the right pane.
+    await rows[0].dispatch("click");
     await flush();
-    assert.equal(byClass(app.view, "trellis-network-panel").length, 0, "jump closes the drawer");
+    const pane = byClass(app.view, "trellis-split-detail")[0];
+    assert.equal(byClass(pane, "trellis-network-group-content").length, 1);
+    const members = byClass(pane, "trellis-network-ref");
+    assert.equal(members.length, 2, "parent + child");
+
+    // Clicking a member jumps to that task in the split list.
+    await members[1].dispatch("click");
+    await flush();
     assert.deepEqual(app.detailCalls, [{ taskPath: ".trellis/tasks/kid", cwd: "/proj/one" }]);
-
-    // The same ⛓ click re-opens it; a second click toggles it closed.
-    await byClass(app.view, "trellis-network-open")[0].dispatch("click");
-    await flush();
-    assert.equal(byClass(app.view, "trellis-network-panel").length, 1, "re-open after a jump");
-    await byClass(app.view, "trellis-network-open")[0].dispatch("click");
-    await flush();
-    assert.equal(byClass(app.view, "trellis-network-panel").length, 0);
+    assert.equal(byClass(app.view, "trellis-network-group-content").length, 0,
+      "a task selection replaces the group view in the pane");
   });
 
-  it("renders the spec map inline under the project bar (no overlay)", async () => {
+  it("shows the spec doc in the right pane when its row is clicked", async () => {
     const app = loadDashboard({
       sessions: [],
       rootsResult: { status: "ok", roots: ["/proj/one"] },
-      activeResult: { status: "ok", tasks: [] },
+      activeResult: { status: "ok", tasks: [
+        { taskPath: ".trellis/tasks/a", title: "Task A", phase: "plan", progress: null, parent: null, cwd: "/proj/one" },
+      ] },
       archiveResult: { status: "ok", tasks: [] },
       specResult: { status: "ok", truncated: false, files: [
         { group: "frontend", relPath: "frontend/index.md", filled: true, lines: 8, refCount: 1 },
@@ -2045,18 +2056,26 @@ describe("dashboard trellis v7 R8 project drawers", () => {
     await flush();
     await switchToTrellis(app);
 
-    await byClass(app.view, "trellis-spec-open")[0].dispatch("click");
+    const specHead = byClass(app.view, "trellis-split-group-head")
+      .find((el) => textOf(el).includes(i18n.en.dashboardTrellisSpecGroup));
+    await specHead.dispatch("click");
     await flush();
-    // v7 R9: the spec map swaps INTO the split-view slot (same
-    // master-detail frame) — the task list is gone while it is open.
-    assert.equal(byClass(app.view, "trellis-spec-split").length, 1);
-    assert.equal(byClass(app.view, "trellis-spec-file-button").length, 1);
-    assert.equal(byClass(app.view, "trellis-spec-file-lines")[0].textContent, "8 lines");
-    assert.equal(byClass(app.view, "trellis-spec-file-refs")[0].textContent, "⛓1");
 
-    // The three drawers are mutually exclusive.
-    await byClass(app.view, "trellis-filter-manage")[0].dispatch("click");
-    assert.equal(byClass(app.view, "trellis-spec-split").length, 0, "⚙ closes the spec view");
-    assert.equal(byClass(app.view, "trellis-root-row").length, 1, "and opens the roots drawer");
+    await byClass(app.view, "trellis-spec-row")[0].dispatch("click");
+    await flush();
+
+    const row = byClass(app.view, "trellis-spec-row")[0];
+    assert.ok(row.classList.contains("is-selected"), "the clicked row highlights");
+    const pane = byClass(app.view, "trellis-split-detail")[0];
+    assert.ok(byClass(pane, "trellis-spec-doc-content").length === 1,
+      "the right pane renders the spec doc, not the task card");
+    assert.ok(textOf(pane).includes("frontend/index.md"));
+
+    // Clicking a task row routes the pane back to the task detail.
+    await byClass(app.view, "trellis-split-row")
+      .filter((el) => !el.classList.contains("is-archived"))[0].dispatch("click");
+    await flush();
+    assert.equal(byClass(app.view, "trellis-spec-doc-content").length, 0,
+      "a task selection replaces the spec doc in the pane");
   });
 });
