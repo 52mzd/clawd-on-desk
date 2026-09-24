@@ -389,3 +389,16 @@ v5 可读性重构：① v5-a 8ff9c9aa 弹窗三卡（detail/spec/network）从 
 - panel 死导出（buildTrellisTree/bucketByBoardPhase 等）随测试清理移除；groupTrellisTasks 增跨表 basename 认亲 + 重复 root 逐行渲染
 - 全量 11044/10978 pass，失败集与 HEAD 完全一致（20 预存）
 - 坑：CLAUDE.md 的 list_relations spec_groups 在 0.7.0-beta.4 CLI 已不存在，横向边按 PRD 语义（共享 spec/PRD 文档）直接实现
+
+## 2026-09-24 v7 R8 关联全景 + 规范地图内嵌（09-24-v7-r8-project-inline-panels）
+
+- 用户反馈修正方向：⛓ 是项目级入口（project bar 按钮 → 全项目关联面板），
+  不是逐任务详情卡钻取；📐 规范地图要内嵌项目视图而非独立 overlay
+- readTaskNetworkOverview：一遍有界只读扫描（nodes + 纵向 parent 边 +
+  共享 spec ≥2 引用者 / 共享 PRD 横向组）；旧单任务 channel/API/详情卡
+  入口全链路删除
+- panelOpen 互斥抽屉槽（⚙ manage / ⛓ network / 📐 spec），三按钮
+  aria-expanded，签名含抽屉异步态（loading→result 翻转重渲染）
+- 坑：renderer 里 IPC 调用是 window.dashboardAPI（非 window.dashboard）；
+  沙盒测试重渲染后必须重新 byClass 取按钮（旧引用指向被替换的 DOM）
+- 0f894c07 提交；全量 11044/10978 pass，失败集与 HEAD 一致（20 预存）
