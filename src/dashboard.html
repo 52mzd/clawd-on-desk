@@ -111,6 +111,9 @@ body { user-select: none; }
   padding: 18px 20px 14px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
+  box-shadow: inset 0 1px 0 var(--bar-edge), 0 6px 14px -8px rgba(0, 0, 0, 0.1);
+  position: relative;
+  z-index: 2;
 }
 
 .title-row {
@@ -126,7 +129,6 @@ h1 {
   line-height: 1.2;
   font-weight: 700;
   letter-spacing: -0.02em;
-  letter-spacing: 0;
 }
 
 .count {
@@ -943,6 +945,7 @@ h1 {
   justify-content: center;
   padding: 24px;
   background: rgba(15, 15, 20, 0.45);
+  backdrop-filter: blur(8px) saturate(150%);
 }
 
 /* Author display overrides the UA [hidden] rule — same pattern as the
@@ -1025,6 +1028,13 @@ h1 {
   .trellis-detail-overlay.is-closing:not([hidden]),
   .trellis-detail-overlay.is-closing:not([hidden]) .trellis-detail-card {
     animation: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .trellis-detail-overlay {
+    background: rgba(15, 15, 20, 0.72);
+    backdrop-filter: none;
   }
 }
 
@@ -2711,6 +2721,12 @@ h1 {
   border: 1px solid var(--border);
   border-radius: var(--radius-m);
   background: var(--surface);
+  box-shadow: var(--shadow-1);
+  transition: box-shadow var(--dur-2) var(--ease-out-apple), border-color var(--dur-2) var(--ease-out-apple);
+}
+
+.card:hover {
+  box-shadow: var(--shadow-2);
 }
 
 .card-unfocusable {
@@ -3010,6 +3026,28 @@ h1 {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  padding: 3px 8px;
+  border-radius: var(--radius-s);
+  background: color-mix(in srgb, var(--idle) 12%, transparent);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+
+.badge-running {
+  background: color-mix(in srgb, var(--running) 12%, transparent);
+  color: var(--running);
+}
+
+.badge-done {
+  background: color-mix(in srgb, var(--done) 12%, transparent);
+  color: var(--done);
+}
+
+.badge-interrupted {
+  background: color-mix(in srgb, var(--interrupted) 12%, transparent);
+  color: var(--interrupted);
 }
 
 .dot {
