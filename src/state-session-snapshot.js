@@ -344,6 +344,18 @@ function buildSessionSnapshotEntry(id, session, sessionAliases = {}, options = {
     })
     : { canFocus: false, type: null, url: null };
   const source = deriveSourceInfo(session && session.host);
+  // Trellis phase awareness (phase 3): an injected resolver maps the session
+  // id onto read-only Trellis task info (src/trellis-activity.js cache);
+  // absent resolver, null return, or a throwing resolver all degrade to
+  // `null`, which renderers render as "no badge" — never an error.
+  let trellis = null;
+  if (typeof options.trellisResolver === "function") {
+    try {
+      trellis = options.trellisResolver(id) || null;
+    } catch {
+      trellis = null;
+    }
+  }
   const automationRecord = options.sessionAutomationRecord || null;
   const automationIdentity = session && session.sessionAutomationIdentity;
   const canConfigureSessionAutomation = !!(
@@ -397,6 +409,7 @@ function buildSessionSnapshotEntry(id, session, sessionAliases = {}, options = {
     codexOriginator: (session && session.codexOriginator) || null,
     codexSource: (session && session.codexSource) || null,
     contextUsage: snapshotContextUsage(session),
+    trellis,
     assistantLastOutput: (session && typeof session.assistantLastOutput === "string")
       ? session.assistantLastOutput
       : null,
@@ -624,6 +637,10 @@ function sessionSnapshotSignature(snapshot) {
       codexOriginator: entry.codexOriginator,
       codexSource: entry.codexSource,
       contextUsage: entry.contextUsage,
+      // Trellis binding feeds a HUD badge whose changes must reach renderers
+      // even when no other snapshot field moves, so it participates in the
+      // signature (emitSessionSnapshot only broadcasts on signature change).
+      trellis: entry.trellis,
       assistantLastOutput: entry.assistantLastOutput,
       assistantLastOutputTruncated: !!entry.assistantLastOutputTruncated,
       lastEventLabelKey: entry.lastEvent ? entry.lastEvent.labelKey : null,

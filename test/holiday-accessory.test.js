@@ -225,3 +225,98 @@ describe("holiday accessory runtime", () => {
     assert.strictEqual(harness.calls.at(-1)[1].payloads.head.id, "halo");
   });
 });
+
+// ── head-slot phase override (avatar R3: trellis planning wizard-hat) ──
+
+describe("holiday accessory runtime head-slot override (avatar R3)", () => {
+  function makeOverrideHarness({ snapshot, overrideId }) {
+    const calls = [];
+    const runtime = createHolidayAccessoryRuntime({
+      getSettingsSnapshot: () => snapshot,
+      getActiveTheme: () => ({ _id: "clawd", _builtin: true, _capabilities: { accessories: true } }),
+      sendToRenderer: (channel, payload) => { calls.push([channel, payload]); return true; },
+      onAccessoryChange: () => ({ applied: true }),
+      now: () => localDate(6, 15), // no holiday window
+      setTimeout: () => ({ unref() {} }),
+      clearTimeout: () => {},
+      logWarn: () => {},
+      resolveHeadAccessoryOverride: () => overrideId,
+    });
+    return { runtime, calls };
+  }
+
+  it("fills an empty head slot from the override", () => {
+    const { runtime, calls } = makeOverrideHarness({
+      snapshot: { petAccessory: {}, holidayAccessoryEnabled: {} },
+      overrideId: "wizard-hat",
+    });
+    runtime.start();
+    runtime.dispose();
+
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(calls[0][0], "pet-accessory-slots-change");
+    assert.strictEqual(calls[0][1].payloads.head.id, "wizard-hat");
+    assert.strictEqual(calls[0][1].payloads.head.assetFile, "wizard-hat.svg");
+  });
+
+  it("never overrides a manual accessory pick", () => {
+    const { runtime, calls } = makeOverrideHarness({
+      snapshot: { petAccessory: { clawd: "cowboy-hat" }, holidayAccessoryEnabled: {} },
+      overrideId: "wizard-hat",
+    });
+    runtime.start();
+    runtime.dispose();
+
+    assert.strictEqual(calls[0][1].payloads.head.id, "cowboy-hat");
+  });
+
+  it("never overrides an active holiday accessory", () => {
+    const base = makeOverrideHarness({
+      snapshot: { petAccessory: {}, holidayAccessoryEnabled: { clawd: true } },
+      overrideId: "wizard-hat",
+    });
+    const pumpkinCalls = [];
+    const pumpkin = createHolidayAccessoryRuntime({
+      getSettingsSnapshot: () => ({ petAccessory: {}, holidayAccessoryEnabled: { clawd: true } }),
+      getActiveTheme: () => ({ _id: "clawd", _builtin: true, _capabilities: { accessories: true } }),
+      sendToRenderer: (channel, payload) => { pumpkinCalls.push([channel, payload]); return true; },
+      onAccessoryChange: () => ({ applied: true }),
+      now: () => localDate(10, 31),
+      setTimeout: () => ({ unref() {} }),
+      clearTimeout: () => {},
+      logWarn: () => {},
+      resolveHeadAccessoryOverride: () => "wizard-hat",
+    });
+    base.runtime.start();
+    base.runtime.dispose();
+    pumpkin.start();
+    pumpkin.dispose();
+
+    // Same prefs, outside the halloween window: the override fills the empty slot.
+    assert.strictEqual(base.calls[0][1].payloads.head.id, "wizard-hat");
+    // Inside the window: the opt-in holiday accessory wins.
+    assert.strictEqual(pumpkinCalls[0][1].payloads.head.id, "pumpkin-hat");
+  });
+
+  it("ignores override ids outside the accessory catalog", () => {
+    const { runtime, calls } = makeOverrideHarness({
+      snapshot: { petAccessory: {}, holidayAccessoryEnabled: {} },
+      overrideId: "not-an-accessory",
+    });
+    runtime.start();
+    runtime.dispose();
+
+    assert.strictEqual(calls[0][1].payloads.head.id, "none");
+  });
+
+  it("delivers no override when the probe returns null", () => {
+    const { runtime, calls } = makeOverrideHarness({
+      snapshot: { petAccessory: {}, holidayAccessoryEnabled: {} },
+      overrideId: null,
+    });
+    runtime.start();
+    runtime.dispose();
+
+    assert.strictEqual(calls[0][1].payloads.head.id, "none");
+  });
+});

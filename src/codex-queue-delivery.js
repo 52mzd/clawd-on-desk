@@ -625,6 +625,7 @@ module.exports = {
   createCodexQueueDeliveryAdapter,
   getCodexThreadId,
   isCodexQueueTarget,
+  mergedExecutionEnv,
   normalizeCodexThreadId,
   resolveNpmCodexShimInvocation,
   resolveCodexQueueExecutableCandidates,

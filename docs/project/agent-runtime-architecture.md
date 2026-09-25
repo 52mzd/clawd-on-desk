@@ -453,6 +453,37 @@ The recap is a local projection of accepted runtime activity, not a second obser
 
 DND remains an interaction/visual gate and does not stop recap or coverage. Suspend, process shutdown, and `recapEnabled=false` close coverage. Historical records retain the time zone, UTC offset, local date, and local hour captured at acceptance; Codex JSONL uses only an accepted line's trusted timestamp. See `docs/guides/recap.md` for the full metric, privacy, and DST contract.
 
+## Trellis Binding And Pet Feedback
+
+Trellis 绑定是**叠加层，不是宠物状态源**。宠物的主状态（优先级表、`REQUIRED_STATES`、sleep/DND）仍由 session 状态与权限队列决定；Trellis 只在具名通道上做 display-only 叠加，且每条通道都要求绑定会话仍在 live snapshot 里 —— 最后一个绑定会话消失后 `clearStaleBindings()` 会在一个 poll 轮次内把聚合值归零，防止 stale binding 继续养着 wizard-hat 或 juggling tier。
+
+绑定解析（`src/trellis-activity.js`）：
+
+```
+.trellis/.runtime/sessions/<agent>_<sessionId>.json 的 current_task
+  → readTaskInfo：task.json 的 status + implement.md checkbox（无则 prd.md 兜底）
+  → src/trellis-checklist.js  ├  无 checklist 时由 src/trellis-phase.js 派生
+  → TrellisInfo { taskPath, title, phase, progress, nextStep, parent, parallelCount }
+```
+
+`getTrellisInfo(sessionId)` 是纯内存读（sessionCache，未命中缓存的 `null` 本身也是一种已确认状态，避免每轮重复 notify）。轮询用自调度 `setTimeout` 链（ACTIVE 5s / IDLE 15s），永不 `setInterval`；`stop()` 先 bump lifecycle token 再清 timer，已触发未运行的 timer 比对 token 后成为 no-op。聚合值 `executingCount`（跨 root 计数，同一 project 的多个会话只算一次）与 `planningActive` 变化时回调 `onAggregateChange`。
+
+| 宠物行为 | 触发条件 | 实现位置 |
+|---|---|---|
+| 杂耍视觉（`working` → `juggling` display lift） | 宠物为 `working` 且绑定项目里 ≥2 个 executing 任务 | `src/state.js` 的 `TRELLIS_JUGGLING_MIN_PARALLEL = 2` 与 `getSvgOverride`；count 由 `main.js` 注入（`getTrellisProjectExecutingCount`，aggregate cache 纯内存读） |
+| 巫师帽配件 | 任一绑定会话的任务处于 `plan` 相位 | `main.js` 的 `TRELLIS_PLANNING_ACCESSORY_ID` / `getTrellisPhaseAccessoryId()` → 标准 accessory 投递（受 DND 与 renderer-ack 契约约束） |
+| 相位切换气泡（任务名 + 本地化相位标签） | 每次真实 phase 转变，diff 驱动，无额外 timer | `main.js#onPhaseTransition` → `src/trellis-bubble.js#showPhaseTransitionBubble`；10s 内重复切换不重弹 |
+| 待办提醒气泡 | 非 DND / 宠物未隐藏 / 非 mini / 宠物 state === `idle` / 有绑定任务 / 该任务本次启动未展示过 | `src/trellis-bubble.js#evaluateGates`，`shownTasks` 去重 |
+| 完成庆祝 | 到达 `finish` / `done`，或检测到归档完成 | `main.js#onCelebration` → `src/trellis-celebration.js` → `requestClickReaction`；主题缺 `reactions.double` 素材时降级为仅气泡 |
+
+边界（改动前必须复核）：
+
+- 全部 getter 缺失（单元测试 runtime、未接线）时归零，上述叠加全部 inert；新增注入点必须保留这一降级
+- `waiting-auth` 视觉优先级高于 trellis juggling：`WAITING_AUTH_SOURCE_STATES` 判定在前，juggling lift 只在 base 仍为 `working` 时生效
+- **两个 juggling 来源不要混为一谈**：`session.state === "juggling"`（subagent 活跃，priority 4）来自 session 状态机，本来就压过 `working`，trellis lift 不会也不该覆盖它；trellis 的 lift 只在 `getSvgOverride` 里临时改写返回的 display state，不改优先级表、session state 或 `REQUIRED_STATES`
+- `src/renderer.js` 不读 Trellis。宠物渲染只消费 `state.js` 解析出的 display state、配件 payload 与气泡 payload
+- snapshot 只挂 `trellisResolver` **函数**（`sessionId → TrellisInfo`），Dashboard 与 Session HUD 按 sessionId 现取。不要把它复制成 snapshot 里的数据字段，否则会与 poll 轮次的缓存语义脱钩
+
 ## Runtime Ownership Boundaries
 
 `src/main.js` 是 composition root，不再是各子系统的实现 owner。新增或修改行为时先进入对应 owner，避免把逻辑重新堆回 `main.js`：

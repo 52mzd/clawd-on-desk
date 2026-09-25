@@ -27,6 +27,19 @@ Footprints counts accepted Clawd activity signals. It never guesses work time fr
 
 Agent integrations do not expose identical signals. A dash (`—`) means that Clawd cannot reliably measure that value for that agent. It is intentionally different from `0`, which means a supported metric was observed and its count was actually zero. Registered custom HTTP agents are not included in Footprints v1 because their event vocabulary is user-defined and has no trusted metric mapping.
 
+## Trellis tasks
+
+In the **Today** view, Footprints can also show a small Trellis strip with two counts:
+
+| Value | Meaning |
+|---|---|
+| Trellis tasks · new today | Tasks in projects whose `.trellis` root Clawd observed this process, whose `task.json` `createdAt` is today's local date |
+| Trellis tasks · completed today | Archived tasks whose `task.json` `completedAt` is today's local date |
+
+The strip appears only when at least one count is non-zero; with no observed `.trellis` root it stays hidden, matching the `null` convention. These counts are recomputed from the task trees on every query — nothing about Trellis tasks is written into the recap storage under `~/.clawd/recap-v1/`, and no task title, path, or content ever leaves the project.
+
+The dates come from `task.py`, which records them as local-date strings of the machine that ran the command. Footprints compares them with the desktop's current local date without timezone conversion (a date has no timestamp to convert). Tasks archived without `task.py` have no `completedAt`; for those the task directory's modification time is projected into the queried timezone as a fallback, and only inside standard `archive/<month>/` folders.
+
 The views do not show tokens, cost, models, reasoning level, skills, work/coding duration, streaks, longest sessions, peak days, rankings, or productivity/efficiency scores. There is no cross-agent productivity headline; inspection stays scoped to each hour or day.
 
 ## Recorded, not recorded, and clock changes
@@ -70,6 +83,7 @@ Turn off **Record footprints** to stop new event tickets and close the current c
 
 - Record only after the agent gate and all source, replay, deduplication, subagent, and completion arbitration have accepted the event. `updateSession()` entry is not an acceptance boundary.
 - Metric support belongs to the explicit table in `src/recap-metrics.js`; do not infer it from registry capabilities or normalized event names.
+- The Trellis strip is a stateless per-query projection in `src/recap-trellis.js`: counts only, no persistence, no watcher, and no task content. Keep it out of the store/journal pipeline.
 - Keep ephemeral ingress identities separate from the persisted allowlist. Persist only HMAC values when a stable identity is required.
 - Preserve `null` for unsupported metrics. Never render or aggregate it as zero.
 - DND must not stop recap coverage or discard pending completion arbitration. Suspend, process shutdown, and the recording preference do stop coverage.

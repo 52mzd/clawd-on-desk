@@ -1100,6 +1100,9 @@ function buildSessionSnapshot() {
     permissionAutomationMode: typeof ctx.getPermissionAutomationMode === "function"
       ? ctx.getPermissionAutomationMode()
       : "off",
+    trellisResolver: typeof ctx.trellisResolver === "function"
+      ? ctx.trellisResolver
+      : null,
   });
 }
 
@@ -3450,13 +3453,68 @@ function disposeKimiPermissionSession(sessionId) {
   stopKimiPermissionPoll(sessionId);
 }
 
+// Injected by main.js from the trellis-activity aggregate cache (pure memory
+// read). Absent getter — unit-test runtimes, no trellis wiring — means 0 and
+// the display upgrade below is inert.
+const TRELLIS_JUGGLING_MIN_PARALLEL = 2;
+function getTrellisExecutingCount() {
+  if (typeof ctx.getTrellisProjectExecutingCount !== "function") return 0;
+  try {
+    const n = Number(ctx.getTrellisProjectExecutingCount());
+    return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+// Waiting-auth display override: while permission requests are pending and
+// the pet would otherwise show a plain working/thinking visual, swap in the
+// theme's optional "waiting" state (e.g. a reading sprite). Display-only —
+// the priority table, session states and REQUIRED_STATES stay untouched.
+// Themes without a waiting binding keep the exact current behavior, so this
+// is inert for all built-in themes. Injected by main.js from the permission
+// runtime; an absent getter (unit-test runtimes) means 0. sleeping/DND and
+// one-shot states never reach the override (base is working/thinking only);
+// idle is excluded on purpose so the waiting visual never fights the idle
+// animation cycle, and mini mode keeps its own working visual.
+const WAITING_AUTH_STATE = "waiting";
+const WAITING_AUTH_SOURCE_STATES = new Set(["working", "thinking"]);
+function getPendingAuthPermissionCount() {
+  if (typeof ctx.getPendingPermissionCount !== "function") return 0;
+  try {
+    const n = Number(ctx.getPendingPermissionCount());
+    return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
+  } catch {
+    return 0;
+  }
+}
+
 function resolveDisplayState() {
-  return resolveDisplayStateFromSessions(sessions, {
+  const base = resolveDisplayStateFromSessions(sessions, {
     statePriority: STATE_PRIORITY,
     permissionLocked: hasPermissionAnimationLock(),
     updateVisualState,
     updateVisualPriority,
   });
+  // Waiting-auth outranks the trellis juggling lift: a human approval is
+  // more important than the parallel task count.
+  if (
+    WAITING_AUTH_SOURCE_STATES.has(base)
+    && !ctx.doNotDisturb
+    && !ctx.miniMode
+    && getPendingAuthPermissionCount() > 0
+    && hasOwnVisualFiles(WAITING_AUTH_STATE)
+  ) {
+    return WAITING_AUTH_STATE;
+  }
+  // Trellis parallel-task juggling (avatar R3.1): a working pet with ≥2
+  // executing trellis tasks across bound projects shows the juggling visual.
+  // Display-only lift of "working" — subagent juggling (session.state ===
+  // "juggling", priority 4) already outranks working and is never touched.
+  if (base === "working" && getTrellisExecutingCount() >= TRELLIS_JUGGLING_MIN_PARALLEL) {
+    return "juggling";
+  }
+  return base;
 }
 
 function setUpdateVisualState(kind) {
@@ -3484,6 +3542,7 @@ function getSvgOverride(state) {
     displayHintMap: DISPLAY_HINT_MAP,
     theme,
     stateSvgs: STATE_SVGS,
+    trellisParallelCount: getTrellisExecutingCount(),
   });
 }
 
@@ -3611,7 +3670,7 @@ function cleanup() {
 }
 
 return {
-  setState, applyState, updateSession, recordRecapEventOnly, restoreSessionFromLease, resolveDisplayState, resolveVisualBinding, setUpdateVisualState,
+  setState, applyState, applyResolvedDisplayState, updateSession, recordRecapEventOnly, restoreSessionFromLease, resolveDisplayState, resolveVisualBinding, setUpdateVisualState,
   shouldDropForDnd,
   enableDoNotDisturb, disableDoNotDisturb,
   startStaleCleanup, stopStaleCleanup, startWakePoll, stopWakePoll,

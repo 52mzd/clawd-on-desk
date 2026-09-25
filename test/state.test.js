@@ -6747,3 +6747,181 @@ describe("antigravity trailing PostToolUse filter", () => {
     assert.ok(after.lastToolBoundaryAt > after.lastStopAt, "new turn should refresh tool boundary after Stop");
   });
 });
+
+// ── trellis parallel-task juggling (avatar R3.1) ──
+
+describe("trellis parallel-task juggling (avatar R3.1)", () => {
+  const JUGGLE = "clawd-working-juggling.svg";
+  const GROOVE = "clawd-headphones-groove.svg";
+
+  function makeApi(trellisCount) {
+    return require("../src/state")(makeCtx(
+      typeof trellisCount === "number"
+        ? { getTrellisProjectExecutingCount: () => trellisCount }
+        : {}
+    ));
+  }
+  function shown(api) { return api.getSvgOverride(api.resolveDisplayState()); }
+
+  it("working + >=2 executing trellis tasks shows juggling with the 2+ tier", () => {
+    const api = makeApi(2);
+    api.sessions.set("s1", rawSession("working"));
+    assert.strictEqual(api.resolveDisplayState(), "juggling");
+    assert.strictEqual(shown(api), JUGGLE);
+    api.cleanup();
+  });
+
+  it("working + 1 executing trellis task stays working", () => {
+    const api = makeApi(1);
+    api.sessions.set("s1", rawSession("working"));
+    assert.strictEqual(api.resolveDisplayState(), "working");
+    api.cleanup();
+  });
+
+  it("non-working states are never lifted by trellis parallel tasks", () => {
+    for (const state of ["idle", "thinking", "error", "sleeping", "notification"]) {
+      const api = makeApi(5);
+      api.sessions.set("s1", rawSession(state));
+      assert.strictEqual(api.resolveDisplayState(), state, state);
+      api.cleanup();
+    }
+  });
+
+  it("subagent juggling keeps its priority and sums tiers with trellis tasks", () => {
+    // One confirmed subagent (tier 1 = groove) + one trellis task → tier 2.
+    const api = makeApi(1);
+    update(api, { id: "s1", state: "juggling", event: "SubagentStart", subagentId: "child-1", subagentLifecycleSource: "native" });
+    assert.strictEqual(api.resolveDisplayState(), "juggling");
+    assert.strictEqual(shown(api), JUGGLE);
+    api.cleanup();
+
+    // Zero trellis tasks: the same subagent stays on tier 1.
+    const plain = makeApi(0);
+    update(plain, { id: "s1", state: "juggling", event: "SubagentStart", subagentId: "child-1", subagentLifecycleSource: "native" });
+    assert.strictEqual(plain.resolveDisplayState(), "juggling");
+    assert.strictEqual(shown(plain), GROOVE);
+    plain.cleanup();
+  });
+
+  it("garbage or throwing trellis getters degrade to no upgrade", () => {
+    for (const getter of [() => Number.NaN, () => -2, () => "lots", () => { throw new Error("boom"); }]) {
+      const api = require("../src/state")(makeCtx({ getTrellisProjectExecutingCount: getter }));
+      api.sessions.set("s1", rawSession("working"));
+      assert.strictEqual(api.resolveDisplayState(), "working");
+      assert.strictEqual(api.getSvgOverride("juggling"), GROOVE);
+      api.cleanup();
+    }
+  });
+
+  it("absent trellis getter leaves the display state untouched", () => {
+    const api = makeApi(null);
+    api.sessions.set("s1", rawSession("working"));
+    assert.strictEqual(api.resolveDisplayState(), "working");
+    api.cleanup();
+  });
+});
+
+// ── waiting-auth display override ──
+
+describe("waiting-auth display override", () => {
+  const WAITING_SVG = "clawd-idle-reading.svg";
+  const waitingTheme = cloneTheme(_defaultTheme);
+  waitingTheme.states.waiting = [WAITING_SVG];
+
+  function makeApi(overrides = {}) {
+    return require("../src/state")(makeCtx({
+      theme: waitingTheme,
+      getPendingPermissionCount: () => 1,
+      ...overrides,
+    }));
+  }
+
+  it("working + pending permission shows the theme waiting visual", () => {
+    const api = makeApi();
+    api.sessions.set("s1", rawSession("working"));
+    assert.strictEqual(api.resolveDisplayState(), "waiting");
+    assert.strictEqual(api.resolveVisualBinding("waiting"), WAITING_SVG);
+    api.cleanup();
+  });
+
+  it("thinking + pending permission also waits", () => {
+    const api = makeApi();
+    api.sessions.set("s1", rawSession("thinking"));
+    assert.strictEqual(api.resolveDisplayState(), "waiting");
+    api.cleanup();
+  });
+
+  it("pending count dropping to zero falls back to working", () => {
+    let pending = 1;
+    const api = makeApi({ getPendingPermissionCount: () => pending });
+    api.sessions.set("s1", rawSession("working"));
+    assert.strictEqual(api.resolveDisplayState(), "waiting");
+    pending = 0;
+    assert.strictEqual(api.resolveDisplayState(), "working");
+    api.cleanup();
+  });
+
+  it("themes without a waiting binding keep the current behavior", () => {
+    const noWaitingTheme = cloneTheme(_defaultTheme);
+    delete noWaitingTheme.states.waiting;
+    // buildStateBindings prefers a theme's cached _stateBindings over states,
+    // so drop the waiting entry there too — that's what a theme without a
+    // waiting binding actually looks like after loadTheme.
+    if (noWaitingTheme._stateBindings) delete noWaitingTheme._stateBindings.waiting;
+    const api = require("../src/state")(makeCtx({ theme: noWaitingTheme, getPendingPermissionCount: () => 1 }));
+    api.sessions.set("s1", rawSession("working"));
+    assert.strictEqual(api.resolveDisplayState(), "working");
+    api.cleanup();
+  });
+
+  it("the stock clawd theme ships a waiting binding (idle-reading)", () => {
+    const api = require("../src/state")(makeCtx({ getPendingPermissionCount: () => 1 }));
+    api.sessions.set("s1", rawSession("working"));
+    assert.strictEqual(api.resolveDisplayState(), "waiting");
+    assert.strictEqual(api.resolveVisualBinding("waiting"), "clawd-idle-reading.svg");
+    api.cleanup();
+  });
+
+  it("idle and sleeping are never lifted into waiting", () => {
+    for (const state of ["idle", "sleeping"]) {
+      const api = makeApi();
+      api.sessions.set("s1", rawSession(state));
+      assert.strictEqual(api.resolveDisplayState(), state, state);
+      api.cleanup();
+    }
+  });
+
+  it("DND keeps its semantics: no waiting override under do-not-disturb", () => {
+    const api = makeApi({ doNotDisturb: true });
+    api.sessions.set("s1", rawSession("working"));
+    assert.strictEqual(api.resolveDisplayState(), "working");
+    api.cleanup();
+  });
+
+  it("mini mode keeps its own working visual", () => {
+    const api = makeApi({ miniMode: true });
+    api.sessions.set("s1", rawSession("working"));
+    assert.strictEqual(api.resolveDisplayState(), "working");
+    api.cleanup();
+  });
+
+  it("waiting outranks the trellis juggling lift", () => {
+    const api = makeApi({ getTrellisProjectExecutingCount: () => 2 });
+    api.sessions.set("s1", rawSession("working"));
+    assert.strictEqual(api.resolveDisplayState(), "waiting");
+    api.cleanup();
+  });
+
+  it("garbage, throwing or absent pending getters degrade to no override", () => {
+    for (const getter of [() => Number.NaN, () => -3, () => "lots", () => { throw new Error("boom"); }]) {
+      const api = makeApi({ getPendingPermissionCount: getter });
+      api.sessions.set("s1", rawSession("working"));
+      assert.strictEqual(api.resolveDisplayState(), "working");
+      api.cleanup();
+    }
+    const absent = require("../src/state")(makeCtx({ theme: waitingTheme }));
+    absent.sessions.set("s1", rawSession("working"));
+    assert.strictEqual(absent.resolveDisplayState(), "working");
+    absent.cleanup();
+  });
+});

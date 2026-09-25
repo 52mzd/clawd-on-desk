@@ -23,6 +23,29 @@
 //                                       previewPosterCacheKey }) — incremental
 //                                       animation override preview poster
 //
+//   Trellis panel (Settings → Trellis):
+//   trellisScan({ channel? })            Promise<{ status, roots, projects,
+//                                       remote, global, channelCatalog }> —
+//                                       read-only; channel is an optional
+//                                       latest/beta/rc override
+//   trellisPickRoot()                   Promise<{ status, path? }>
+//   trellisSetRoots(roots)              Promise<{ status, roots? }> — prefs write
+//                                       through settings-controller
+//   trellisPreview({ paths, platforms?, channel? })
+//                                       Promise<{ status, plan, addPlan? }> —
+//                                       pure computation, zero spawn
+//   trellisUpgradeProject(path)         Promise<{ status, from, to, output }>
+//   trellisUpgradeAll(paths)            Promise<{ status, batchId, skipped }>
+//   trellisCancelBatch()                Promise<{ status, cancelled }>
+//   trellisAddPlatform(path, platforms) Promise<{ status, added, output }> —
+//                                       platforms is a known-id whitelist
+//   trellisUpgradeGlobal({ channel? })
+//                                       Promise<{ status, from, to, output }> —
+//                                       channel is an optional latest/beta/rc
+//                                       dist-tag; empty means auto
+//   onTrellisProgress(cb)               cb({ batchId, path, phase, from, to,
+//                                       message? }) — returns unsubscribe
+//
 // All writes go through the main-process "settings:update" handler, which
 // routes through the controller. The renderer never owns state — it always
 // re-renders from the snapshot delivered via onChanged broadcasts (or the
@@ -52,6 +75,7 @@ const recapChangedListeners = new Set();
 const updateCheckStatusListeners = new Set();
 const requestedTabListeners = new Set();
 const officialThemeProgressListeners = new Set();
+const trellisProgressListeners = new Set();
 let pendingRequestedTab = null;
 ipcRenderer.on("settings-changed", (_event, payload) => {
   for (const cb of listeners) {
@@ -116,6 +140,11 @@ ipcRenderer.on("settings:select-tab", (_event, tab) => {
 ipcRenderer.on("officialTheme:progress", (_event, payload) => {
   for (const cb of officialThemeProgressListeners) {
     try { cb(payload); } catch (err) { console.warn("official theme progress listener threw:", err); }
+  }
+});
+ipcRenderer.on("settings:trellis-progress", (_event, payload) => {
+  for (const cb of trellisProgressListeners) {
+    try { cb(payload); } catch (err) { console.warn("trellis progress listener threw:", err); }
   }
 });
 
@@ -239,6 +268,30 @@ contextBridge.exposeInMainWorld("settingsAPI", {
     if (typeof cb !== "function") return () => {};
     shortcutRecordKeyListeners.add(cb);
     return () => shortcutRecordKeyListeners.delete(cb);
+  },
+  // ── Trellis panel ──
+  // Reads (scan / preview) are side-effect free. The two writes behind
+  // `trellisUpgradeProject` / `trellisUpgradeAll` / `trellisAddPlatform` run
+  // only because a button invoked them; the main process validates the path
+  // and maps platform ids to CLI flags.
+  trellisScan: (payload) => ipcRenderer.invoke("settings:trellis-scan", payload || {}),
+  trellisPickRoot: () => ipcRenderer.invoke("settings:trellis-pick-root"),
+  trellisSetRoots: (roots) => ipcRenderer.invoke("settings:trellis-set-roots", { roots }),
+  trellisPreview: (payload) => ipcRenderer.invoke("settings:trellis-preview", payload || {}),
+  trellisDryRun: (projectPath) =>
+    ipcRenderer.invoke("settings:trellis-dry-run", { path: projectPath }),
+  trellisUpgradeProject: (projectPath) =>
+    ipcRenderer.invoke("settings:trellis-upgrade-project", { path: projectPath }),
+  trellisUpgradeAll: (paths) => ipcRenderer.invoke("settings:trellis-upgrade-all", { paths }),
+  trellisCancelBatch: () => ipcRenderer.invoke("settings:trellis-cancel-batch"),
+  trellisAddPlatform: (projectPath, platforms) =>
+    ipcRenderer.invoke("settings:trellis-add-platform", { path: projectPath, platforms }),
+  trellisUpgradeGlobal: (options) =>
+    ipcRenderer.invoke("settings:trellis-upgrade-global", { channel: options && options.channel }),
+  onTrellisProgress: (cb) => {
+    if (typeof cb !== "function") return () => {};
+    trellisProgressListeners.add(cb);
+    return () => trellisProgressListeners.delete(cb);
   },
   onRemoteApprovalStatusChanged: (cb) => {
     if (typeof cb !== "function") return () => {};

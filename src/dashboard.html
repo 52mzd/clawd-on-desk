@@ -8,6 +8,7 @@
 * { box-sizing: border-box; }
 
 :root {
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
   --bg: #f5f5f7;
   --surface: #ffffff;
   --surface-alt: #ececef;
@@ -24,6 +25,38 @@
   --idle: #71717a;
   --scroll-thumb: rgba(0, 0, 0, 0.15);
   --scroll-thumb-hover: rgba(0, 0, 0, 0.25);
+
+  /* shape scale */
+  --radius-xs: 4px;
+  --radius-s: 6px;
+  --radius-m: 8px;
+  --radius-l: 12px;
+  --radius-xl: 18px;
+
+  /* depth scale — bigger surface, deeper shadow */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-2: 0 2px 8px rgba(0, 0, 0, 0.07), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-3: 0 12px 32px rgba(0, 0, 0, 0.14), 0 2px 6px rgba(0, 0, 0, 0.06);
+
+  /* material */
+  --material-bar: saturate(180%) blur(20px);
+  --bar-bg: rgba(255, 255, 255, 0.6);
+  --bar-edge: rgba(255, 255, 255, 0.4);
+
+  /* motion scale */
+  --ease-out-apple: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
+  --dur-1: 120ms;
+  --dur-2: 180ms;
+  --dur-3: 240ms;
+  --dur-4: 320ms;
+
+  /* spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -42,6 +75,13 @@
     --idle: #a1a1aa;
     --scroll-thumb: rgba(255, 255, 255, 0.1);
     --scroll-thumb-hover: rgba(255, 255, 255, 0.2);
+
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-2: 0 2px 8px rgba(0, 0, 0, 0.35), 0 1px 2px rgba(0, 0, 0, 0.25);
+    --shadow-3: 0 12px 32px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
+
+    --bar-bg: rgba(28, 28, 31, 0.62);
+    --bar-edge: rgba(255, 255, 255, 0.08);
   }
 }
 
@@ -50,7 +90,7 @@ html, body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
+  font-family: var(--font);
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
@@ -71,6 +111,9 @@ body { user-select: none; }
   padding: 18px 20px 14px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
+  box-shadow: inset 0 1px 0 var(--bar-edge), 0 6px 14px -8px rgba(0, 0, 0, 0.1);
+  position: relative;
+  z-index: 2;
 }
 
 .title-row {
@@ -85,13 +128,48 @@ h1 {
   font-size: 20px;
   line-height: 1.2;
   font-weight: 700;
-  letter-spacing: 0;
+  letter-spacing: -0.02em;
 }
 
 .count {
   color: var(--muted);
   font-size: 12px;
   font-weight: 600;
+}
+
+/* View switch (Sessions / Trellis) in the header: quiet segmented
+   controls, not primary CTAs — the page's primary actions stay in the
+   content area. */
+.view-switch {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: auto;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  background: var(--surface-alt);
+}
+
+.view-switch-tab {
+  min-width: 0;
+  height: 24px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.view-switch-tab:hover:not(.is-active) {
+  color: var(--text);
+}
+
+.view-switch-tab.is-active {
+  background: var(--surface);
+  color: var(--text);
 }
 
 /* The manual Kimi refresh lives inside the Kimi quota section header, next to
@@ -137,14 +215,14 @@ h1 {
   margin-left: auto;
   padding: 0 8px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-s);
   color: var(--id-kimi-outer);
   background: color-mix(in srgb, var(--id-kimi-outer) 12%, transparent);
   font: inherit;
   font-size: 10px;
   font-weight: 600;
   cursor: pointer;
-  transition: color 0.15s ease, background 0.15s ease, opacity 0.15s ease;
+  transition: color var(--dur-2) var(--ease-out-apple), background var(--dur-2) var(--ease-out-apple), opacity var(--dur-2) var(--ease-out-apple);
 }
 
 .quota-refresh-button:hover:not(:disabled) {
@@ -193,6 +271,2459 @@ h1 {
   color: var(--muted);
   font-size: 11px;
 }
+
+/* Trellis tasks panel: a read-only view of the per-session trellis bindings
+   riding the snapshot. Phase badge hues mirror the HUD chips
+   (session-hud.html .trellis-plan…) so one phase answers with the same
+   color on both surfaces. */
+
+/* Trellis-local tokens (UI redesign 09-24): type scale, row-control radius
+   and the press-feedback curve. Meta text bottoms out at 11px — nothing
+   in this block renders smaller. */
+:root {
+  --trellis-font-title: 600 13px/1.45 var(--font);
+  --trellis-font-sub: 400 12px/1.5 var(--font);
+  --trellis-font-meta: 500 11px/1.4 var(--font);
+  --trellis-radius: 6px;
+  --trellis-press: transform var(--dur-1) var(--ease-out-apple);
+}
+
+.trellis-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+/* Author `display` overrides the UA rule for [hidden], so hidden needs its
+   own explicit override — same pattern as .quick-banner[hidden] above. */
+.trellis-panel[hidden] {
+  display: none;
+}
+
+.trellis-panel-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* Session-embedded Trellis tasks are CARDS like session cards themselves
+   (09-25 apple-design): surface + border + shadow-1, hover lifts. The old
+   rule lost its selector in a historical edit and degraded to a bare row. */
+/* Session-embedded Trellis rows mirror the LEFT-RAIL grouped-list anatomy
+   (R7 consistency): the phase wrap (.trellis-phase-rows) is the CARD —
+   border + surface + shadow — and rows inside are borderless grouped
+   rows with hover tint, exactly like .trellis-split-row inside
+   .trellis-split-phase-card. One card family everywhere. */
+.trellis-task-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 10px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-out-apple);
+}
+
+.trellis-task-row:hover {
+  background: var(--hover, rgba(127, 127, 127, 0.12));
+}
+
+.trellis-task-row:hover, .trellis-archive-row:hover {
+  background: color-mix(in srgb, #7aa2f7 8%, transparent);
+}
+
+/* Phase section header (计划/执行/检查…) inside the session trellis panel:
+   a light collapsible divider, same layer as rows — not a boxed control. */
+/* The phase GROUP is the card (mirrors .trellis-split-phase-card exactly):
+   same border, radius, surface, shadow, 6px padding, 2px inner gap. */
+.trellis-phase-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+/* Card header INSIDE .trellis-phase-rows (R7): mirrors the left-rail
+   .trellis-split-group-head anatomy — 13px/600 muted label, bare caret,
+   auto-right count pill, hover tint. The card itself carries the border. */
+.trellis-phase-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 6px 4px;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  transition: background-color var(--dur-1) var(--ease-out-apple), color var(--dur-1) var(--ease-out-apple), transform var(--dur-1) var(--ease-out-apple);
+}
+
+.trellis-phase-section:hover {
+  background: var(--hover, rgba(127, 127, 127, 0.12));
+  color: var(--text);
+}
+
+.trellis-phase-section:active {
+  transform: scale(0.99);
+}
+
+.trellis-phase-section-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--muted);
+  transition: transform var(--dur-2) var(--ease-out-apple);
+}
+
+.trellis-phase-section.is-collapsed .trellis-phase-section-caret {
+  transform: rotate(-90deg);
+}
+
+/* Label span inside the phase-section header — deliberately no own
+   styles: typography inherits from .trellis-phase-section. Kept as a
+   class so label-only tweaks have a stable hook. */
+.trellis-phase-section-label {
+  /* inherit */
+}
+
+.trellis-phase-section-count {
+  margin-left: auto;
+  font: var(--trellis-font-meta);
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--hover, rgba(127, 127, 127, 0.15));
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.trellis-task-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.trellis-phase-badge {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 999px;
+}
+
+.trellis-phase-badge.phase-plan { background: rgba(59, 130, 246, 0.13); color: #2563eb; }
+.trellis-phase-badge.phase-execute { background: rgba(22, 163, 74, 0.13); color: #16a34a; }
+.trellis-phase-badge.phase-check { background: rgba(147, 51, 234, 0.13); color: #9333ea; }
+.trellis-phase-badge.phase-finish { background: rgba(245, 158, 11, 0.15); color: #b45309; }
+.trellis-phase-badge.phase-done { background: rgba(107, 114, 128, 0.13); color: #52525b; }
+
+@media (prefers-color-scheme: dark) {
+  .trellis-phase-badge.phase-plan { background: rgba(59, 130, 246, 0.20); color: #60a5fa; }
+  .trellis-phase-badge.phase-execute { background: rgba(22, 163, 74, 0.20); color: #4ade80; }
+  .trellis-phase-badge.phase-check { background: rgba(147, 51, 234, 0.20); color: #c084fc; }
+  .trellis-phase-badge.phase-finish { background: rgba(245, 158, 11, 0.20); color: #fbbf24; }
+  .trellis-phase-badge.phase-done { background: rgba(107, 114, 128, 0.20); color: #a1a1aa; }
+}
+
+.trellis-task-progress {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.trellis-task-count {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--subtle);
+}
+
+.trellis-task-sessions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.trellis-session-chip {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--surface-alt);
+  color: var(--text);
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.trellis-session-chip:hover {
+  border-color: var(--accent);
+}
+
+.trellis-session-chip-unfocusable {
+  color: var(--subtle);
+  cursor: default;
+}
+
+.trellis-session-chip-unfocusable:hover {
+  border-color: var(--border);
+}
+
+.trellis-session-chip-unfocusable:disabled {
+  cursor: not-allowed;
+}
+
+/* Row-tail detail button (ⓘ): opens the task-detail overlay card. */
+.trellis-task-detail-btn {
+  flex: 0 0 auto;
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--subtle);
+  font-size: 13px;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  transition: var(--trellis-press);
+}
+
+.trellis-task-detail-btn:hover {
+  background: rgba(59, 130, 246, 0.12);
+  color: var(--text);
+}
+
+.trellis-task-detail-btn:active {
+  transform: scale(0.97);
+}
+
+/* Parent/child grouping: a row with live children becomes a group header
+   (stronger border, muted fill); child rows indent under it. Depth beyond
+   the first level only indents further. */
+.trellis-task-row-group {
+  border-color: color-mix(in srgb, var(--accent, #2563eb) 35%, var(--row-border));
+  background: color-mix(in srgb, var(--accent, #2563eb) 5%, var(--surface));
+}
+
+.trellis-task-row-child {
+  margin-left: 18px;
+}
+
+.trellis-task-group-summary {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Collapsed "Archived" section at the panel's bottom: a header row with
+   caret, label and an explicit refresh button; expanded rows carry title +
+   completed date + duration and open the shared detail overlay. */
+.trellis-archive-section {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.trellis-archive-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 4px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+
+.trellis-archive-header:hover {
+  color: var(--text);
+  background: var(--surface-alt);
+}
+
+.trellis-archive-caret {
+  flex: 0 0 auto;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.trellis-archive-label {
+  line-height: 1;
+}
+
+.trellis-archive-refresh {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--subtle);
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+
+.trellis-archive-refresh:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.12);
+  color: var(--text);
+}
+
+.trellis-archive-refresh:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.trellis-archive-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+/* Independent Trellis view: a second scrolling main under the same header.
+   The sessions main keeps its id; both share .content styles. */
+.trellis-view[hidden] {
+  display: none;
+}
+
+/* v6.1: the trellis main itself stops scrolling — it becomes a flex column
+   so the split section can FILL the remaining window height (zoom-safe:
+   pure flex, no vh). Tree mode still scrolls via main's overflow-y: auto
+   (flex children keep min-height:auto, so nothing gets crushed). */
+.content.trellis-view {
+  display: flex;
+  flex-direction: column;
+}
+
+.trellis-view-section {
+  margin: 0 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.trellis-view-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Root management lives in Settings → Trellis (09-25); the old in-view
+   add/remove rows are gone — only the path label style remains for the
+   empty-hint text. */
+.trellis-root-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.trellis-view-empty {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.trellis-view-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--interrupted);
+  font-size: 11px;
+}
+
+.trellis-view-retry {
+  min-width: 0;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--surface-alt);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+/* Project filter chips: "All projects" + one per registered root, labeled
+   by the disambiguated basename with its live-task count. Empty roots
+   (no live, no archived tasks) dim but stay clickable — seeing the empty
+   view is exactly what clicking them is for. */
+.trellis-filter-section {
+  margin: 0 0 14px;
+}
+
+.trellis-filter-refresh {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--muted);
+  line-height: 1;
+  cursor: pointer;
+  transition: var(--trellis-press);
+}
+
+.trellis-filter-refresh:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent, #7aa2f7) 40%, var(--border));
+}
+
+/* Click feedback: one quick spin, then the icon settles (no looping). */
+.trellis-filter-refresh.is-spinning svg {
+  animation: trellis-refresh-spin 600ms var(--ease-out-apple);
+}
+
+@keyframes trellis-refresh-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trellis-filter-refresh.is-spinning svg {
+    animation: none;
+  }
+}
+
+.trellis-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.trellis-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-alt);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.trellis-filter-chip:hover,
+.trellis-filter-chip.is-active {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.trellis-filter-chip-empty {
+  opacity: 0.55;
+}
+
+.trellis-filter-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trellis-filter-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--subtle);
+}
+
+.trellis-filter-chip.is-active .trellis-filter-count {
+  color: var(--muted);
+}
+
+/* Cross-project origin tag on task rows (merged "all" view only).
+   09-25: accent tint pill — in the merged view the project tag is the
+   ONLY disambiguator between same-named tasks; it must pop, not whisper. */
+.trellis-task-project {
+  flex: 0 0 auto;
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 7px;
+  border-radius: var(--radius-s);
+  background: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 14%, transparent);
+  color: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 80%, var(--text));
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* Priority badge (v7 R7). The rank lives in the modifier class, so P0/P1
+   can shout while P2 stays as quiet as the origin tag. All ranks carry a
+   1px border slot (transparent by default) so the outlined P2 keeps the
+   same height as the filled P0/P1 (UI redesign 09-24 Batch C). */
+.trellis-priority {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 16px;
+  color: var(--muted);
+  background: var(--hover, rgba(127, 127, 127, 0.14));
+}
+
+.trellis-priority.pri-p0 {
+  color: #fff;
+  background: var(--danger, #e5484d);
+}
+
+.trellis-priority.pri-p1 {
+  color: #fff;
+  background: var(--warn, rgba(230, 160, 60, 0.95));
+}
+
+/* P2 reads as quiet outline, not a low-alpha fill: 1px muted border +
+   full-contrast muted text (≥4.5:1 on both themes). */
+.trellis-priority.pri-p2 {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--muted) 45%, transparent);
+}
+
+.trellis-archive-month {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 8px;
+  border: none;
+  background: transparent;
+  color: #b8bcc8;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+}
+.trellis-archive-month:hover { background: rgba(127, 127, 127, 0.12); }
+.trellis-archive-month-label { user-select: none; }
+
+.trellis-archive-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 8px;
+  border: 1px solid var(--row-border);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.trellis-archive-row:hover {
+  background: var(--surface-alt);
+}
+
+.trellis-archive-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.trellis-archive-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.trellis-archive-meta {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.trellis-archive-empty {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.trellis-archive-retry {
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--surface-alt);
+  color: var(--text);
+  font-size: 11px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+/* Task tree (independent view): rows nest inside .trellis-tree-children
+   containers whose left border doubles as the connector line — pure CSS
+   indent, no tree component. The caret column stays a fixed width so
+   branch and leaf rows align. Connectors use a gradient + glow accent so
+   depth reads at a glance; deeper levels shift hue slightly. */
+.trellis-tree-children {
+  margin-left: 14px;
+  padding-left: 12px;
+  position: relative;
+  border-left: 1px solid color-mix(in srgb, var(--muted, #6b7280) 35%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: border-color var(--dur-2) var(--ease-out-apple);
+}
+.trellis-tree-children::before {
+  /* Soft glow bead at the top of each connector, fading downward —
+     visual depth cue without adding DOM. */
+  content: "";
+  position: absolute;
+  left: -2.5px;
+  top: 0;
+  width: 4px;
+  height: 26px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, #7aa2f7 45%, transparent),
+    transparent
+  );
+  pointer-events: none;
+}
+
+.trellis-task-row[data-depth], .trellis-archive-row[data-depth] {
+  border-radius: var(--radius-m);
+  transition: background-color var(--dur-1) var(--ease-out-apple), transform var(--dur-1) var(--ease-out-apple), box-shadow var(--dur-1) var(--ease-out-apple);
+}
+.trellis-task-row[data-depth="1"], .trellis-archive-row[data-depth="1"] { box-shadow: inset 2px 0 0 -1px color-mix(in srgb, #7aa2f7 30%, transparent); }
+.trellis-task-row[data-depth="2"], .trellis-archive-row[data-depth="2"] { box-shadow: inset 2px 0 0 -1px color-mix(in srgb, #9d7cd8 30%, transparent); }
+.trellis-task-row[data-depth="3"], .trellis-archive-row[data-depth="3"] { box-shadow: inset 2px 0 0 -1px color-mix(in srgb, #e0af68 30%, transparent); }
+.trellis-task-row[data-depth="4"], .trellis-archive-row[data-depth="4"] { box-shadow: inset 2px 0 0 -1px color-mix(in srgb, #e78a4e 30%, transparent); }
+.trellis-task-row[data-depth="5"], .trellis-archive-row[data-depth="5"] { box-shadow: inset 2px 0 0 -1px color-mix(in srgb, #d4576e 30%, transparent); }
+
+.trellis-tree-children {
+  animation: trellis-tree-unfold var(--dur-2) var(--ease-out-apple);
+}
+@keyframes trellis-tree-unfold {
+  from { opacity: 0.35; transform: translateY(-2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.trellis-tree-caret {
+  flex: 0 0 auto;
+  width: 16px;
+  border: none;
+  background: transparent;
+  color: var(--subtle);
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 0;
+  cursor: pointer;
+  transition: color var(--dur-1) var(--ease-out-apple), transform var(--dur-1) var(--ease-out-apple);
+}
+
+.trellis-tree-caret:hover {
+  color: #7aa2f7;
+  transform: scale(1.25);
+}
+
+.trellis-tree-caret[data-open="true"] {
+  color: #7aa2f7;
+}
+
+.trellis-tree-caret-spacer {
+  flex: 0 0 auto;
+  width: 16px;
+}
+
+/* Expand-all / collapse-all text buttons in the section title rows. */
+.trellis-tree-tool {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--surface-alt);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.trellis-tree-tool:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+/* Task detail: a modal card inside the Dashboard window. Clicks on the
+   dimmed backdrop (not the card) and ESC close it. Same palette as the
+   panel above; the card scrolls independently of the page. */
+.trellis-detail-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 15, 20, 0.45);
+  backdrop-filter: blur(8px) saturate(150%);
+}
+
+/* Author display overrides the UA [hidden] rule — same pattern as the
+   trellis panel above. */
+.trellis-detail-overlay[hidden] {
+  display: none;
+}
+
+.trellis-detail-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* v5-a: near-fullscreen doc cards. Percentages chain off the fullscreen
+     overlay (never bare viewport units — dashboard text-zoom cannot
+     compensate vw/vh, see settings-renderer-browser-env test). Small
+     dashboard windows fall back to the legacy compact card below. */
+  width: calc(100% - 48px);
+  max-width: 880px;
+  height: calc(100% - 64px);
+  max-height: 760px;
+  overflow-y: auto;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  box-shadow: var(--shadow-3);
+  /* v5-a entrance: pop-in with a slight settle. One-shot per element —
+     signature-guarded rerenders skip replaceChildren, so no flicker;
+     replaceChildren replays it, which is the desired "reopened" feel. */
+  animation: trellis-card-pop-in 0.26s cubic-bezier(0.34, 1.3, 0.5, 1) both;
+}
+
+@keyframes trellis-card-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Overlay backdrop fade matches the card pop-in. */
+.trellis-detail-overlay:not([hidden]) {
+  animation: trellis-overlay-fade-in 0.18s ease-out both;
+}
+
+@keyframes trellis-overlay-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* v5-a symmetric close: the overlay plays a quick fade/scale-out before
+   hidden lands. Driven by the .is-closing class the renderer toggles;
+   reduced-motion skips it (CSS gate) and the renderer always hides
+   unconditionally, so a missed animationend can never strand the overlay. */
+.trellis-detail-overlay.is-closing:not([hidden]) {
+  animation: trellis-overlay-fade-out 0.14s ease-in both;
+  pointer-events: none;
+}
+
+.trellis-detail-overlay.is-closing:not([hidden]) .trellis-detail-card {
+  animation: trellis-card-pop-out 0.14s ease-in both;
+}
+
+@keyframes trellis-overlay-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes trellis-card-pop-out {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: translateY(8px) scale(0.94); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trellis-detail-card,
+  .trellis-detail-overlay:not([hidden]),
+  .trellis-detail-overlay.is-closing:not([hidden]),
+  .trellis-detail-overlay.is-closing:not([hidden]) .trellis-detail-card {
+    animation: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .trellis-detail-overlay {
+    background: rgba(15, 15, 20, 0.72);
+    backdrop-filter: none;
+  }
+}
+
+/* Legacy compact card when the dashboard window itself is narrow. */
+@media (max-width: 980px) {
+  .trellis-detail-card {
+    max-width: 420px;
+    max-height: 520px;
+  }
+}
+
+/* v5-a: doc bodies are readable/copyable — the app-wide user-select: none
+   only stays on chrome (headers, buttons, rows). */
+.trellis-detail-doc,
+.trellis-spec-doc,
+.trellis-spec-list,
+.trellis-detail-doc button,
+.trellis-spec-doc button,
+.trellis-spec-list button,
+.trellis-network-group-content button,
+.trellis-detail-header,
+.trellis-detail-close {
+  user-select: none;
+}
+
+.trellis-detail-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.trellis-spec-body {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+/* v7 R10: spec doc content / network group content in the RIGHT pane. */
+.trellis-spec-doc-content,
+.trellis-network-group-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.trellis-spec-doc-content .trellis-detail-title,
+.trellis-network-group-content .trellis-detail-title {
+  font-size: 13px;
+  margin: 0;
+}
+/* Left-column spec/relations group rows (v7 R10) reuse the split-row
+   anatomy; the spec rows' side badges stack tighter than task rows. */
+.trellis-spec-row-side {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.trellis-spec-row.is-empty-spec .trellis-split-row-title {
+  color: var(--muted);
+}
+
+.trellis-network-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 0 6px;
+}
+
+.trellis-network-ref {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  cursor: pointer;
+  color: inherit;
+}
+
+.trellis-network-ref:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.trellis-network-ref.is-missing {
+  cursor: not-allowed;
+}
+
+.trellis-network-ref-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--hover, rgba(127, 127, 127, 0.15));
+  opacity: 0.8;
+}
+
+/* ── v6 master-detail split ────────────────────────────────────────── */
+
+.trellis-split-section {
+  display: flex;
+  flex-direction: row; /* override .trellis-view-section column */
+  gap: 0;
+  flex: 1 1 auto;
+  min-height: 0; /* fill remaining window height; panes scroll internally */
+  min-width: 0;
+  /* v6.1: one shared card frame — both panes live inside the same rounded,
+     bordered surface so heights stay aligned and scale with the window. */
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+/* ── Left master list (fixed width, tinted) ─────────────────────── */
+
+/* LOCAL fold states (09-25 motion fix, take 2): rows always MOUNT so
+   carets rotate in place, but folding uses display:none — the earlier
+   max-height:0 + margin-top:-6px trick mis-compensated the card gap
+   (2px) and rows visually overlapped neighbors on expand. Caret rotation
+   is the surviving motion; row reveal is instant (KISS, no layout tricks).
+   Mounted folded rows stay in the DOM, so keyboard nav / selection code
+   filters them with isTrellisRowVisible() instead of relying on absence. */
+.trellis-split-row.is-subtree-folded,
+.trellis-split-row.is-month-folded {
+  display: none;
+}
+
+/* Phase card fold (09-25): hides the card's rows (not the head) so the
+   fold toggles on class flip without a rebuild. */
+.trellis-split-phase-card.is-folded > .trellis-split-row {
+  display: none;
+}
+
+.trellis-split-list {
+  /* Continuous narrow-window behavior (09-25): flex-shrink 1 — when the
+     window narrows, the LEFT rail yields first (344→240px) so the detail
+     pane keeps its readable width and fills the remaining window; only
+     below the 720px breakpoint does the overlay mode kick in. The old
+     `0 0` made the rail hog its width and starve the right pane. */
+  flex: 0 1 clamp(280px, 30%, 344px);
+  min-width: 240px;
+  min-height: 0;
+  align-self: stretch;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: color-mix(in srgb, var(--surface, rgba(127, 127, 127, 0.06)) 55%, var(--bg, #16161e));
+}
+
+/* Draggable left-rail resizer (09-25): 6px hit area hugging the list's
+   right edge, col-resize cursor, subtle hover accent. JS drives the width
+   via flex-basis (clamped 240–480px) and persists to localStorage. */
+.trellis-split-resizer {
+  flex: 0 0 6px;
+  align-self: stretch;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  z-index: 2;
+}
+
+.trellis-split-resizer::after {
+  content: "";
+  position: absolute;
+  inset: 0 2px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background-color var(--dur-1) var(--ease-out-apple);
+}
+
+.trellis-split-resizer:hover::after,
+.trellis-split-resizer:active::after {
+  background: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 35%, transparent);
+}
+
+.trellis-split-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 6px 6px;
+  /* R3: 12px was below comfortable reading for CJK labels (计划/执行/
+     检查/规范); 13px/600 + tight tracking matches row titles. */
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  border: none;
+  background: transparent;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  height: auto;
+  text-align: left;
+  /* Group headers stick to the top of the scrolling list so the user
+     always knows which group the visible rows belong to. Opaque mix over
+     --bg so scrolled rows never bleed through. */
+  position: sticky;
+  top: 0;
+  background: color-mix(in srgb, var(--surface, rgba(127, 127, 127, 0.06)) 55%, var(--bg, #16161e));
+  z-index: 1;
+}
+
+.trellis-split-group-head:hover:not(:disabled) {
+  background: transparent; /* keep global button hover tint off */
+  color: var(--text);
+}
+
+/* Group caret: a 12px SVG chevron centered in its slot; collapsed heads
+   rotate it -90° via CSS (the glyph never changes — UI redesign 09-24
+   Batch C). */
+.trellis-split-group-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  transition: transform var(--dur-2) var(--ease-out-apple);
+  color: var(--muted);
+}
+
+.trellis-split-group-head.is-collapsed .trellis-split-group-caret {
+  transform: rotate(-90deg);
+}
+
+.trellis-split-group-count {
+  margin-left: auto;
+  font: var(--trellis-font-meta);
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--hover, rgba(127, 127, 127, 0.15));
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The group toggle is the interactive element of every group head: the
+   archive heads host an inner <button>, the spec/relations heads ARE the
+   button (double class). The descendant rule resets the global button
+   chrome for the inner variant; the double-class variant is fully styled
+   by the .trellis-split-group-head rules above. */
+.trellis-split-group-toggle {
+  transition: var(--trellis-press);
+}
+
+.trellis-split-group-toggle:active {
+  transform: scale(0.97);
+}
+
+.trellis-split-group-head .trellis-split-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  border: none;
+  border-radius: var(--trellis-radius);
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.trellis-split-group-head .trellis-split-group-toggle:hover {
+  background: transparent; /* keep global button hover tint off */
+}
+
+/* Keyboard focus is always visible on trellis controls: the spatial
+   outline doubles as the split list's keyboard-navigation highlight. */
+.trellis-task-detail-btn:focus-visible,
+.trellis-split-caret:focus-visible,
+.trellis-split-refresh:focus-visible,
+.trellis-split-foot-btn:focus-visible,
+.trellis-split-group-toggle:focus-visible,
+.trellis-split-row:focus-visible
+
+
+/* Rows are CARDS mirroring the session list (09-25 apple-design): surface +
+   border + shadow-1, hover lifts to shadow-2. Keyboard-first selection keeps
+   its zero-lag contract (Batch D): background and border flip INSTANTLY, so
+   border-color never joins a transition. */
+/* Phase section = CARD (R7): the head and every task row live inside one
+   bordered surface — same family as session cards, one visual layer.
+   Rows inside are GROUPED-LIST rows (macOS Settings style): no own border,
+   hover tint + accent bar on selection. Hierarchy inherits down: section
+   card → root row → child row (indent + muted). */
+.trellis-split-phase-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+.trellis-split-phase-card .trellis-split-group-head {
+  padding: 6px 6px 4px;
+  border-radius: var(--radius-s);
+  /* Inside a phase CARD the sticky backdrop must be the card surface
+     itself — the old list-mix tint reads as a foreign band (R7). */
+  background: var(--surface);
+}
+
+.trellis-split-phase-card .trellis-split-group-head:hover:not(:disabled) {
+  background: var(--hover, rgba(127, 127, 127, 0.12));
+  border-radius: var(--radius-s);
+}
+
+.trellis-split-month-head {
+  display: flex;
+  align-items: center;
+  padding: 6px 6px 4px;
+  user-select: none;
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+
+.trellis-split-month-head .trellis-split-month-toggle {
+  /* SAME anatomy as phase toggles (R7): flex-fill the row so the ENTIRE
+     card-width strip is the click target — not just the date glyphs. */
+  flex: 1 1 auto;
+  padding: 6px 6px;
+  border-radius: var(--radius-s);
+}
+
+.trellis-split-month-head .trellis-split-month-toggle:hover {
+  background: var(--hover, rgba(127, 127, 127, 0.12));
+}
+
+.trellis-split-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  border: 1px solid transparent;
+  border-left: 3px solid transparent;
+  transition: background-color var(--dur-1) var(--ease-out-apple);
+}
+
+.trellis-split-row:hover {
+  background: var(--hover, rgba(127, 127, 127, 0.12));
+}
+
+.trellis-split-row.is-selected {
+  background: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 45%, transparent);
+  border-left-color: var(--accent, rgba(90, 160, 255, 0.85));
+}
+
+/* Archived rows dim only their decorative markers (dot / side pill /
+   priority chip) to 50% — titles and subtitles keep full text contrast
+   (≥4.5:1); never dim the whole row (UI redesign 09-24 Batch C). */
+.trellis-split-row.is-archived .trellis-split-row-dot,
+.trellis-split-row.is-archived .trellis-split-row-side,
+.trellis-split-row.is-archived .trellis-priority {
+  opacity: 0.5;
+}
+
+.trellis-split-row-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted, rgba(127, 127, 127, 0.6));
+}
+
+.trellis-split-row-dot.is-plan {
+  background: var(--muted, rgba(127, 127, 127, 0.6));
+}
+
+.trellis-split-row-dot.is-execute {
+  background: var(--running, rgba(90, 160, 255, 0.9));
+}
+
+.trellis-split-row-dot.is-check {
+  background: var(--warn, rgba(230, 160, 60, 0.9));
+}
+
+.trellis-split-row-dot.is-done {
+  background: var(--done, rgba(90, 200, 130, 0.9));
+}
+
+.trellis-split-row-dot.is-execute {
+  animation: trellis-split-dot-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes trellis-split-dot-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--running, rgba(90, 160, 255, 0.9)) 45%, transparent); }
+  50% { box-shadow: 0 0 0 4px transparent; }
+}
+
+.trellis-split-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Title line: the title spans the full head width (ellipsized; the
+   native title tooltip on the span reveals the full name on hover). */
+.trellis-split-row-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.trellis-split-row-title {
+  font: var(--trellis-font-title);
+  color: var(--text);
+  /* Titles wrap freely — the left rail scrolls, so a clipped title hides
+     identity (wayfinding); sub rows stay single-line ellipsis. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.trellis-split-row-sub {
+  font: var(--trellis-font-sub);
+  color: var(--muted);
+  /* Flex row (09-25 fix): priority chip / project pill / meta text are
+     separate elements — without gap they render glued together. */
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.trellis-split-row-sub-text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trellis-task-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.trellis-split-row-side {
+  flex: 0 0 auto;
+  font: var(--trellis-font-meta);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  background: var(--hover, rgba(127, 127, 127, 0.12));
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+.trellis-split-group-toggle.is-collapsed .trellis-split-group-caret {
+  transform: rotate(-90deg);
+}
+
+/* Hierarchy cues (09-25 split polish): children indent 16px per level,
+   with a 1px guide line (--border) centered in each level's indent slot
+   so nesting reads at a glance; children also drop to 13px/400 + muted
+   against the parents' 13px/600 + text, so parent rows read as group
+   heads without relying on the indent alone. */
+.trellis-split-row.is-child {
+  margin-left: calc(var(--split-depth, 1) * 16px);
+  position: relative;
+}
+
+.trellis-split-row.is-child::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  /* Midpoint of this row's own indent slot; deeper rows place their
+     guide one slot further out (16px per level). */
+  left: calc(8px - var(--split-depth, 1) * 16px);
+  width: 1px;
+  border-radius: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
+
+.trellis-split-row.is-child .trellis-split-row-dot {
+  width: 6px;
+  height: 6px;
+}
+
+.trellis-split-row.is-child .trellis-split-row-title {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* Caret slot: fixed leading column for every row; parents get a real
+   button, leaves keep an empty spacer so columns stay aligned. */
+.trellis-split-caret-slot {
+  flex: 0 0 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.trellis-split-caret {
+  width: 15px;
+  min-width: 0; /* override global button{min-width:82px} */
+  height: 15px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: var(--trellis-press), background var(--dur-2) var(--ease-out-apple), color var(--dur-2) var(--ease-out-apple), border-color var(--dur-2) var(--ease-out-apple);
+}
+
+.trellis-split-caret:hover {
+  background: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 45%, transparent);
+  color: var(--text);
+}
+
+.trellis-split-row.is-selected .trellis-split-caret {
+  border-color: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 35%, transparent);
+}
+
+.trellis-split-row.is-collapsed .trellis-split-caret {
+  transform: rotate(-90deg);
+}
+
+.trellis-split-caret:active {
+  transform: scale(0.97);
+}
+
+.trellis-split-row.is-collapsed .trellis-split-caret:active {
+  transform: rotate(-90deg) scale(0.97);
+}
+
+/* Archive month sub-groups + refresh (v7 R3) */
+.trellis-split-refresh {
+  flex: 0 0 auto;
+  width: 18px;
+  min-width: 0;
+  height: 18px;
+  padding: 0;
+  margin-left: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: var(--trellis-press);
+}
+
+.trellis-split-refresh:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 45%, transparent);
+}
+
+.trellis-split-refresh:active {
+  transform: scale(0.97);
+}
+
+.trellis-split-archive-hint {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.trellis-split-archive-hint.is-error {
+  color: var(--danger, #e5484d);
+}
+
+/* Archive month sub-group head (v7 R3): same contract as the phase-group
+   heads (UI redesign 09-24 Batch C) — the head is a plain container, the
+   inner button carries the fold handler, hover/active/focus states and
+   aria-expanded; `is-collapsed` stays on the head for CSS + tests. */
+/* Month dividers inherit the SAME anatomy as phase group heads (09-25 R7
+   alignment): 13px/600 label, identical padding, card-surface sticky bg.
+   They live inside the archive phase-card now, so the sticky background
+   must be the card surface itself — the old list-mix tint bleeds through. */
+.trellis-split-month-head {
+  display: flex;
+  align-items: center;
+  padding: 6px 6px 4px;
+  user-select: none;
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+
+.trellis-split-month-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  font-family: inherit;
+  /* Matches .trellis-split-group-head typography exactly (R7): same
+     13px/600 + muted as phase labels — dates are siblings of phases,
+     not second-class captions. */
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-out-apple), color var(--dur-1) var(--ease-out-apple);
+}
+
+.trellis-split-month-toggle:hover {
+  color: var(--text);
+}
+
+.trellis-split-month-toggle:active {
+  transform: scale(0.97);
+}
+
+.trellis-split-month-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.trellis-split-month-head .trellis-split-caret {
+  border: none;
+  width: auto;
+  height: auto;
+  color: inherit;
+}
+
+.trellis-split-month-head.is-collapsed .trellis-split-group-caret {
+  transform: rotate(-90deg);
+}
+
+.trellis-split-month-label {
+  font-variant-numeric: tabular-nums;
+}
+
+.trellis-split-foot {
+  margin-top: auto;
+  padding: 8px 6px 2px;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.trellis-split-foot-stat {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trellis-split-foot-tools {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 4px;
+}
+
+.trellis-split-foot-btn {
+  min-width: 0;
+  height: auto;
+  padding: 1px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: var(--trellis-press);
+}
+
+.trellis-split-foot-btn:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 45%, transparent);
+}
+
+.trellis-split-foot-btn:active {
+  transform: scale(0.97);
+}
+
+/* ── Right detail pane (full-column browse surface) ─────────────── */
+
+.trellis-split-detail {
+  /* 400px basis + shrink-tolerant rail: in the narrow mid-range the pane
+     holds a readable content width while the rail compresses; the pane
+     itself still flexes to fill whatever the window has left. */
+  flex: 1 1 400px;
+  min-width: 0;
+  min-height: 0;
+  padding: 14px 16px;
+  overflow-y: auto;
+  position: relative;
+}
+
+.trellis-split-detail-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 48px 12px;
+  color: var(--muted);
+}
+
+.trellis-split-empty-orb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 30%, var(--hover, rgba(127, 127, 127, 0.12)));
+  animation: trellis-split-dot-pulse 2.4s ease-in-out infinite;
+}
+
+.trellis-split-empty-text {
+  font-size: 12px;
+}
+
+.trellis-split-detail-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.trellis-split-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.trellis-split-detail-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.trellis-split-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.trellis-split-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--hover, rgba(127, 127, 127, 0.12));
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.trellis-split-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.trellis-split-progress-ticks {
+  --tick-w: 12px;
+  --tick-h: 8px;
+  gap: 3px;
+}
+
+.trellis-split-progress-ticks .trellis-progress-tick {
+  width: var(--tick-w);
+  height: var(--tick-h);
+  border-radius: var(--radius-xs);
+}
+
+.trellis-split-progress-num {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.trellis-split-detail-sessions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.trellis-split-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--border);
+  margin-top: 2px;
+  padding-top: 12px;
+}
+
+.trellis-split-action {
+  font-size: 11px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 55%, transparent);
+  background: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 12%, transparent);
+  color: var(--text);
+  cursor: pointer;
+  transition: background var(--dur-2) var(--ease-out-apple), border-color var(--dur-2) var(--ease-out-apple);
+}
+
+.trellis-split-action:hover {
+  background: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 22%, transparent);
+}
+
+.trellis-split-action-ghost {
+  border-color: var(--border);
+  background: transparent;
+}
+
+.trellis-split-action-ghost:hover {
+  background: var(--hover, rgba(127, 127, 127, 0.12));
+}
+
+/* Embedded full detail card (v6.1): the pane hosts the same component
+   the overlay uses, but drops overlay chrome — no fixed size, no shadow. */
+.trellis-split-detail .trellis-detail-card {
+  width: 100%;
+  max-width: none;
+  height: auto;
+  max-height: none;
+  box-shadow: none;
+  animation: trellis-split-detail-in 0.22s ease-out both;
+}
+
+/* Entry animations (first build only, see is-entering) */
+
+.trellis-split-section.is-entering .trellis-split-group-head {
+  animation: trellis-split-group-in 0.3s ease-out both;
+}
+
+.trellis-split-section.is-entering .trellis-split-row {
+  animation: trellis-split-row-in 0.3s ease-out both;
+}
+
+@keyframes trellis-split-group-in {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes trellis-split-row-in {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.trellis-split-detail-card {
+  animation: trellis-split-detail-in 0.22s ease-out both;
+}
+
+@keyframes trellis-split-detail-in {
+  from { opacity: 0; transform: translateX(14px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trellis-split-section.is-entering .trellis-split-group-head,
+  .trellis-split-section.is-entering .trellis-split-row,
+  .trellis-split-detail-card,
+  .trellis-split-row-dot.is-execute,
+  .trellis-split-empty-orb,
+  .trellis-split-group-caret {
+    animation: none;
+  }
+
+  .trellis-split-row,
+  .trellis-split-action,
+  .trellis-split-group-caret {
+    transition: none;
+  }
+
+  /* Press-feedback transforms are movement too (UI redesign 09-24). */
+  .trellis-task-detail-btn,
+  .trellis-split-caret,
+  .trellis-split-refresh,
+  .trellis-split-foot-btn,
+  .trellis-split-group-toggle,
+  .trellis-split-month-toggle {
+    transition: none;
+  }
+
+  .trellis-task-detail-btn:active,
+  .trellis-split-caret:active,
+  .trellis-split-refresh:active,
+  .trellis-split-foot-btn:active,
+  .trellis-split-group-toggle:active,
+  .trellis-split-month-toggle:active {
+    transform: none;
+  }
+}
+
+/* Narrow window: right pane becomes a drawer overlaying the list.
+   09-25 retune: popup ONLY when the two panes truly stop fitting —
+   left rail clamps at 280px + 6px resizer + ~400px detail ≈ 690px,
+   so 720px is the real floor. The old 1100px cutoff flipped to popup
+   while the right pane still had plenty of room. */
+@media (max-width: 720px) {
+  .trellis-split-section {
+    position: relative;
+  }
+
+  /* Narrow window (09-25): the right pane VANISHES entirely and the left
+     rail fills the width. Tapping a card opens the full-screen overlay
+     (renderer switches embedded→overlay via matchMedia) — no side drawer
+     floating over the list. */
+  .trellis-split-list {
+    flex-basis: 100%;
+  }
+
+  .trellis-split-detail {
+    display: none;
+  }
+}
+.trellis-board {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(180px, 1fr));
+  gap: 10px;
+  padding: 4px 0 12px;
+  overflow-x: auto;
+}
+
+.trellis-board-column {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 120px;
+  /* stagger entrance: each column slides in 60ms after the previous one */
+  animation: trellis-board-col-in 0.32s ease-out both;
+  animation-delay: calc(var(--board-col-index, 0) * 60ms);
+}
+
+@keyframes trellis-board-col-in {
+  from { opacity: 0; transform: translateX(18px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.trellis-board-column-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-bottom: 2px solid var(--border);
+}
+
+.trellis-board-column-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.75;
+}
+
+.trellis-board-column-count {
+  font-size: 11px;
+  font-weight: 700;
+  min-width: 20px;
+  text-align: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--hover, rgba(127, 127, 127, 0.18));
+  animation: trellis-board-count-pop 0.24s cubic-bezier(0.34, 1.6, 0.5, 1) both;
+}
+
+@keyframes trellis-board-count-pop {
+  from { transform: scale(0.6); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.trellis-board-column-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.trellis-board-card {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  cursor: pointer;
+  transition: transform var(--dur-2) var(--ease-out-apple), box-shadow var(--dur-2) var(--ease-out-apple), border-color var(--dur-2) var(--ease-out-apple);
+}
+
+.trellis-board-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(90, 160, 255, 0.55);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28), 0 0 12px rgba(90, 160, 255, 0.22);
+}
+
+.trellis-board-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trellis-board-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.trellis-board-card-date {
+  margin-left: auto;
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.trellis-board-card-parent {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trellis-board-card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+/* Perf guard: heavy columns drop the hover glow (transition cost scales
+   with card count). */
+.trellis-board-heavy .trellis-board-card:hover {
+  transform: none;
+  border-color: var(--border);
+  box-shadow: none;
+}
+
+/* Narrow dashboard windows: board collapses to horizontal scroll with no
+   column entrance animation. */
+@media (max-width: 1100px) {
+  .trellis-board {
+    grid-template-columns: repeat(5, 200px);
+  }
+  .trellis-board-column {
+    animation: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trellis-board-column,
+  .trellis-board-column-count {
+    animation: none;
+  }
+  .trellis-board-card,
+  .trellis-board-card:hover {
+    transition: none;
+    transform: none;
+  }
+}
+
+.trellis-view-mode-toggle {
+  font-size: 11px;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  margin-left: auto;
+}
+
+.trellis-view-mode-toggle:hover {
+  background: var(--hover, rgba(127, 127, 127, 0.12));
+}
+
+.trellis-progress-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.trellis-progress-ticks {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+}
+
+.trellis-progress-tick {
+  width: 4px;
+  height: 10px;
+  border-radius: 2px;
+  background: transparent;
+  /* Empty ticks are outline-only slots: a 50% foreground stroke keeps
+     ≥3:1 against the surface on both themes (UI redesign 09-24 Batch C). */
+  border: 1px solid color-mix(in srgb, var(--text) 50%, transparent);
+}
+
+.trellis-progress-tick.is-filled {
+  background: var(--accent, rgba(90, 160, 255, 0.85));
+  border-color: transparent;
+}
+
+.trellis-spec-roots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.trellis-spec-list {
+  width: 240px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 8px;
+}
+
+.trellis-spec-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
+  padding: 8px 6px 4px;
+}
+
+.trellis-spec-file-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+  font-size: 12px;
+  padding: 5px 8px;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+}
+
+/* v7 R6: fill status + reference count per spec doc. An empty doc (only
+   headings — the shape `trellis init` writes) dims and says so instead of
+   looking like a filled one. */
+.trellis-spec-file-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trellis-spec-file-empty,
+.trellis-spec-file-lines,
+.trellis-spec-file-refs {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.trellis-spec-file-empty {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--hover, rgba(127, 127, 127, 0.14));
+}
+
+.trellis-spec-file-refs {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--accent, #6aa9ff);
+}
+
+.trellis-spec-file-button.is-empty .trellis-spec-file-name {
+  color: var(--muted);
+}
+
+.trellis-spec-file-button:hover {
+  background: var(--hover, rgba(127, 127, 127, 0.12));
+}
+
+.trellis-spec-file-button[aria-current="true"] {
+  background: var(--accent-soft, rgba(127, 127, 127, 0.2));
+  font-weight: 600;
+}
+
+.trellis-spec-doc {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 4px 8px;
+}
+
+.trellis-detail-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.trellis-detail-title {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.4;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.trellis-detail-archived-badge {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: rgba(107, 114, 128, 0.13);
+  color: #52525b;
+}
+
+.trellis-detail-close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 4px 8px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+
+.trellis-detail-close:hover {
+  background: var(--surface-alt);
+  color: var(--text);
+}
+
+/* ⛓ task network entry in the detail card header (v7 R2) — same ghost
+   style family as the close button, sits before it. */
+.trellis-detail-links {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  transition: background var(--dur-2) var(--ease-out-apple), color var(--dur-2) var(--ease-out-apple), border-color var(--dur-2) var(--ease-out-apple);
+}
+
+.trellis-detail-links:hover {
+  background: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 45%, transparent);
+  color: var(--text);
+}
+
+.trellis-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.trellis-detail-meta-item {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.trellis-detail-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.trellis-detail-progress-ticks {
+  --tick-w: 10px;
+  --tick-h: 12px;
+  gap: 3px;
+}
+
+.trellis-detail-progress-ticks .trellis-progress-tick {
+  width: var(--tick-w);
+  height: var(--tick-h);
+  border-radius: var(--radius-xs);
+}
+
+.trellis-detail-progress-num {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+/* legacy continuous fill — kept for any remaining callers */
+.trellis-detail-progress-fill {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--done);
+  transition: width var(--dur-2) var(--ease-out-apple);
+}
+
+.trellis-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.trellis-detail-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.trellis-detail-checklist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.trellis-detail-check-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 3px 4px;
+  border-radius: var(--radius-s);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.trellis-detail-check-box {
+  flex: 0 0 auto;
+  color: var(--subtle);
+  line-height: 1.4;
+}
+
+.trellis-detail-check-item-done .trellis-detail-check-box {
+  color: var(--done);
+}
+
+.trellis-detail-check-item-done .trellis-detail-check-text {
+  color: var(--muted);
+}
+
+.trellis-detail-empty {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+/* Document tabs on the task-detail card: one "Overview" tab plus one per
+   task-dir *.md document (PRD/DESIGN/IMPLEMENT/research…). */
+.trellis-detail-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.trellis-detail-tab {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  padding: 5px 9px;
+  border-radius: 999px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.trellis-detail-tab:hover:not(.is-active) {
+  background: var(--surface-alt);
+  color: var(--text);
+}
+
+.trellis-detail-tab.is-active {
+  border-color: var(--border);
+  background: var(--surface-alt);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Rendered document body (restricted GFM subset — see
+   src/trellis-doc-renderer.js). The card itself scrolls; long documents
+   stay inside it. */
+.trellis-detail-doc {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.trellis-detail-doc-note {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 6px 8px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-m);
+}
+
+.md-doc {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.md-h1, .md-h2, .md-h3, .md-h4 {
+  font-weight: 700;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.md-h1 {
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  margin: 14px 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 2px solid color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 40%, transparent);
+}
+.md-h2 {
+  font-size: 14px;
+  margin: 14px 0 6px;
+  padding: 3px 8px;
+  border-radius: var(--radius-s);
+  background: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 10%, transparent);
+}
+.md-h3 { font-size: 13px; margin: 10px 0 4px; }
+.md-h4 { font-size: 12px; margin: 8px 0 4px; }
+
+.md-bold { font-weight: 700; color: var(--text); }
+
+/* Reading aids: inline code / checked tasks get accent tints. */
+.md-code-inline {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 12%, var(--surface-alt));
+  border: 1px solid color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 25%, transparent);
+}
+
+.md-task-box.is-checked > .md-task-text {
+  color: var(--muted);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--done, rgba(90, 200, 130, 0.9)) 60%, transparent);
+}
+
+.md-task-box.is-checked::before {
+  color: var(--done, rgba(90, 200, 130, 0.9));
+}
+
+.md-task-box:not(.is-checked)::before {
+  color: var(--muted);
+}
+
+/* Fold-card headings set display:flex, which BEATS the [hidden]
+   attribute in the cascade — collapsed parents would leave nested h3
+   cards visible ("有些点击不会折叠"). Force hidden to win. */
+[hidden] {
+  display: none !important;
+}
+
+.md-heading-collapsible {
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Collapsible headings stay in the SAME visual layer as plain headings
+   (R5: fold cards read as a separate plane — "不是同一层"). Chevron inline,
+   no card box; collapsed state dims the text instead of tinting a surface. */
+.md-heading-collapsible.md-h2,
+.md-heading-collapsible.md-h3 {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: -18px; /* compensate chevron + gap so title text aligns with body text */
+  padding-left: 4px;
+  border-radius: var(--radius-s);
+  transition: background-color var(--dur-1) var(--ease-out-apple), color var(--dur-2) var(--ease-out-apple);
+}
+
+.md-heading-collapsible.md-h3 {
+  padding: 2px 4px;
+}
+
+.md-heading-collapsible:hover {
+  background: color-mix(in srgb, var(--accent, #7aa2f7) 6%, transparent);
+}
+
+.md-heading-collapsible.md-collapsed {
+  color: var(--muted);
+}
+
+.md-heading-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 1.2em;
+  color: var(--muted);
+  font-size: 11px;
+  transition: transform var(--dur-2) var(--ease-out-apple), color var(--dur-2) var(--ease-out-apple);
+}
+
+.md-heading-collapsible:hover .md-heading-toggle {
+  color: var(--text);
+}
+
+.md-heading-collapsible.md-collapsed .md-heading-toggle {
+  transform: rotate(-90deg);
+}
+
+.md-p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.md-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 8px 10px;
+  border-radius: var(--radius-m);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-left: 2px solid color-mix(in srgb, var(--accent, #7aa2f7) 45%, transparent);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.md-bold {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.md-italic { font-style: italic; }
+
+.md-table {
+  display: table;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.md-table-row { display: table-row; }
+
+.md-table-cell {
+  display: table-cell;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.md-table-cell-head {
+  font-weight: 600;
+  background: var(--surface-alt);
+}
+
+.md-task {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.md-task-box {
+  flex: 0 0 auto;
+  font-size: 11px;
+}
+
+.md-task-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.md-task-l1 { margin-left: 18px; }
+.md-task-l2 { margin-left: 36px; }
+.md-task-l3 { margin-left: 54px; }
+.md-task-l4 { margin-left: 72px; }
+.md-task-l5 { margin-left: 90px; }
 
 .quota-summary {
   display: flex;
@@ -265,7 +2796,7 @@ h1 {
 
 .quota-bar-track {
   height: 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: var(--surface-alt);
   overflow: hidden;
 }
@@ -294,9 +2825,9 @@ h1 {
 
 .quota-bar-fill {
   height: 100%;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: var(--accent);
-  transition: width 0.2s ease;
+  transition: width var(--dur-2) var(--ease-out-apple);
 }
 
 .quota-bar-fill.pv-claudeQuota.rg-outer { background: var(--id-claude-outer); }
@@ -322,7 +2853,7 @@ h1 {
 }
 .content::-webkit-scrollbar { width: 6px; }
 .content::-webkit-scrollbar-track { background: transparent; }
-.content::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 3px; }
+.content::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: var(--radius-xs); }
 .content::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
 
 .group {
@@ -359,8 +2890,56 @@ h1 {
   min-height: 86px;
   padding: 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-m);
   background: var(--surface);
+  box-shadow: var(--shadow-1);
+  transition: box-shadow var(--dur-2) var(--ease-out-apple), border-color var(--dur-2) var(--ease-out-apple), transform var(--dur-1) var(--ease-out-apple);
+}
+
+.card:hover {
+  box-shadow: var(--shadow-2);
+}
+
+.card:not(.card-unfocusable):active {
+  transform: scale(0.985);
+}
+
+/* Entering cards play once; the next rebuild drops .is-entering so the
+   1s tick never re-runs the intro. The first frame fades the whole list in
+   instead of per-card stagger (cards live in per-group parents). */
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.card.is-entering {
+  animation: card-enter var(--dur-3) var(--ease-out-apple) both;
+}
+
+.content.is-first-frame {
+  animation: card-enter var(--dur-3) var(--ease-out-apple) both;
+}
+
+@keyframes card-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card.is-entering,
+  .content.is-first-frame {
+    animation: card-fade var(--dur-2) ease both;
+  }
 }
 
 .card-unfocusable {
@@ -380,7 +2959,7 @@ h1 {
 .quick-banner {
   margin-top: 10px;
   padding: 6px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-s);
   background: var(--surface-alt);
   color: var(--muted);
   font-size: 11px;
@@ -403,7 +2982,7 @@ h1 {
   justify-content: center;
   width: 18px;
   height: 18px;
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   background: var(--accent);
   color: #ffffff;
   font-family: ui-monospace, Menlo, Consolas, monospace;
@@ -442,7 +3021,7 @@ h1 {
 .agent-fallback {
   width: 28px;
   height: 28px;
-  border-radius: 7px;
+  border-radius: var(--radius-s);
   flex: 0 0 auto;
 }
 
@@ -485,7 +3064,7 @@ h1 {
   margin: -2px 0 0;
   padding: 1px 5px;
   border: 1px solid var(--accent);
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   outline: none;
   background: var(--surface-alt);
   color: var(--text);
@@ -528,7 +3107,7 @@ h1 {
   height: 26px;
   padding: 0 24px 0 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-s);
   background: var(--surface-alt);
   color: var(--text);
   font: inherit;
@@ -549,7 +3128,7 @@ h1 {
   gap: 12px;
   padding: 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-m);
   background: var(--surface);
 }
 
@@ -577,7 +3156,7 @@ h1 {
   display: inline-block;
   margin-right: 6px;
   padding: 1px 6px;
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   background: var(--surface-alt);
   color: var(--text);
   font-size: 10px;
@@ -618,7 +3197,7 @@ h1 {
   gap: 12px;
   padding: 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-m);
   background: var(--surface);
 }
 
@@ -660,6 +3239,28 @@ h1 {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  padding: 3px 8px;
+  border-radius: var(--radius-s);
+  background: color-mix(in srgb, var(--idle) 12%, transparent);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+
+.badge-running {
+  background: color-mix(in srgb, var(--running) 12%, transparent);
+  color: var(--running);
+}
+
+.badge-done {
+  background: color-mix(in srgb, var(--done) 12%, transparent);
+  color: var(--done);
+}
+
+.badge-interrupted {
+  background: color-mix(in srgb, var(--interrupted) 12%, transparent);
+  color: var(--interrupted);
 }
 
 .dot {
@@ -677,7 +3278,7 @@ h1 {
 .source-badge {
   font-size: 10px;
   padding: 1px 6px;
-  border-radius: 8px;
+  border-radius: var(--radius-m);
   background: var(--surface-alt);
   color: var(--text-secondary);
   white-space: nowrap;
@@ -687,7 +3288,7 @@ h1 {
   font-size: 10px;
   padding: 1px 6px;
   border: 1px dashed var(--muted);
-  border-radius: 6px;
+  border-radius: var(--radius-s);
   color: var(--muted);
 }
 .source-badge.source-wsl {
@@ -747,7 +3348,7 @@ button {
   min-width: 82px;
   height: 30px;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: var(--radius-s);
   background: var(--accent);
   color: #ffffff;
   font: inherit;
@@ -755,6 +3356,11 @@ button {
   font-weight: 700;
   cursor: pointer;
   padding: 0 10px;
+  transition: transform var(--dur-1) var(--ease-out-apple);
+}
+
+button:active {
+  transform: scale(0.97);
 }
 
 button:hover:not(:disabled) { background: var(--accent-hover); }
@@ -775,7 +3381,7 @@ button:disabled {
   height: 22px;
   padding: 0;
   border-color: transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-s);
   background: transparent;
   color: var(--subtle);
   font-size: 17px;
@@ -847,13 +3453,24 @@ button:disabled {
       <div class="title-row">
         <h1 id="title">Sessions</h1>
         <span id="count" class="count"></span>
+        <div id="viewSwitch" class="view-switch" role="tablist">
+          <button type="button" id="viewSessionsTab" class="view-switch-tab is-active" role="tab" aria-selected="true">Sessions</button>
+          <button type="button" id="viewTrellisTab" class="view-switch-tab" role="tab" aria-selected="false">Trellis</button>
+        </div>
       </div>
       <div id="quickBanner" class="quick-banner" role="status" aria-live="polite" hidden></div>
-      <div id="quotaSummary" class="quota-summary" hidden></div>
+      <div id="sessionsHeaderExtras">
+        <div id="quotaSummary" class="quota-summary" hidden></div>
+        <div id="trellisPanel" class="trellis-panel" hidden></div>
+      </div>
     </header>
     <main id="content" class="content" aria-live="polite"></main>
+    <main id="trellisView" class="content trellis-view" hidden></main>
   </div>
+  <div id="trellisDetailOverlay" class="trellis-detail-overlay" role="dialog" hidden></div>
   <script src="./session-focus-unavailable.js"></script>
+  <script src="./dashboard-trellis-panel.js"></script>
+  <script src="./trellis-doc-renderer.js"></script>
   <script src="./dashboard-renderer.js"></script>
 </body>
 </html>

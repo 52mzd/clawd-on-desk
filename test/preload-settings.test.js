@@ -93,6 +93,53 @@ test("settings preload exposes dedicated Kimi quota operations", async () => {
   ]);
 });
 
+test("settings preload exposes the Trellis panel surface and a scoped progress subscription", async () => {
+  const { exposed, invokes, ipcHandlers } = loadPreload();
+  const settingsAPI = exposed.get("settingsAPI");
+
+  await settingsAPI.trellisScan();
+  await settingsAPI.trellisScan({ channel: "beta" });
+  await settingsAPI.trellisPickRoot();
+  await settingsAPI.trellisSetRoots(["/projects/a"]);
+  await settingsAPI.trellisPreview({ paths: ["/projects/a"] });
+  await settingsAPI.trellisUpgradeProject("/projects/a");
+  await settingsAPI.trellisUpgradeAll(["/projects/a"]);
+  await settingsAPI.trellisCancelBatch();
+  await settingsAPI.trellisAddPlatform("/projects/a", ["gemini"]);
+  await settingsAPI.trellisUpgradeGlobal();
+  await settingsAPI.trellisUpgradeGlobal({ channel: "beta" });
+
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(invokes)), [
+    ["settings:trellis-scan", {}],
+    ["settings:trellis-scan", { channel: "beta" }],
+    ["settings:trellis-pick-root"],
+    ["settings:trellis-set-roots", { roots: ["/projects/a"] }],
+    ["settings:trellis-preview", { paths: ["/projects/a"] }],
+    ["settings:trellis-upgrade-project", { path: "/projects/a" }],
+    ["settings:trellis-upgrade-all", { paths: ["/projects/a"] }],
+    ["settings:trellis-cancel-batch"],
+    ["settings:trellis-add-platform", { path: "/projects/a", platforms: ["gemini"] }],
+    ["settings:trellis-upgrade-global", {}],
+    ["settings:trellis-upgrade-global", { channel: "beta" }],
+  ]);
+
+  const forward = ipcHandlers.get("settings:trellis-progress");
+  assert.equal(typeof forward, "function");
+  const received = [];
+  const payload = { batchId: "trellis-batch-1", path: "/projects/a", phase: "ok", from: "0.6.17", to: "0.6.18" };
+  const unsubscribe = settingsAPI.onTrellisProgress((value) => { received.push(value); });
+  assert.equal(typeof unsubscribe, "function");
+
+  forward({}, payload);
+  assert.equal(received.length, 1);
+  assert.equal(received[0], payload, "the progress payload must pass through unchanged");
+
+  unsubscribe();
+  forward({}, { batchId: "trellis-batch-1", path: "/projects/b", phase: "failed" });
+  assert.equal(received.length, 1, "unsubscribe must remove only the registered callback");
+  assert.equal(typeof settingsAPI.onTrellisProgress(null), "function", "a non-function subscriber is a no-op");
+});
+
 test("settings preload forwards Telegram status revisions and unsubscribe is exact", () => {
   const { exposed, ipcHandlers } = loadPreload();
   const settingsAPI = exposed.get("settingsAPI");

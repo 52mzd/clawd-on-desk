@@ -23,6 +23,56 @@ function isHudSession(session) {
   return !!session && !session.headless && session.state !== "sleeping" && !session.hiddenFromHud;
 }
 
+// Native title tooltips never appear in the HUD host (non-activating
+// transparent window suppresses macOS help tags), and floating hover cards
+// are cramped. Click the trellis chip to expand the HUD with an inline
+// detail row under the session line instead.
+const trellisExpandedSessions = new Set();
+
+function toggleTrellisDetail(sessionId) {
+  if (trellisExpandedSessions.has(sessionId)) {
+    trellisExpandedSessions.delete(sessionId);
+  } else {
+    trellisExpandedSessions.add(sessionId);
+  }
+  render();
+}
+
+function createTrellisDetailRow(session) {
+  const row = document.createElement("div");
+  row.className = "trellis-detail";
+  const info = trellisChipInfo(session);
+  if (!info) return row;
+  const lines = String(info.title || "").split("\n");
+  const title = document.createElement("div");
+  title.className = "trellis-detail-title";
+  title.textContent = lines[0] || "";
+  row.appendChild(title);
+  const guide = document.createElement("div");
+  guide.className = "trellis-detail-guide";
+  guide.textContent = lines.slice(1).join(" ");
+  row.appendChild(guide);
+  return row;
+}
+
+function reportTrellisDetailHeight() {
+  const measure = () => {
+    const rows = document.querySelectorAll(".trellis-detail");
+    let total = 0;
+    for (const row of rows) total += row.offsetHeight + 4; // 2px margin top + bottom
+    if (window.sessionHudAPI && typeof window.sessionHudAPI.setTrellisDetailHeight === "function") {
+      window.sessionHudAPI.setTrellisDetailHeight(Math.round(total));
+    }
+  };
+  // Layout must settle before measuring; fall back to sync when rAF is
+  // unavailable (test harness has no frame loop).
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(measure);
+  } else {
+    measure();
+  }
+}
+
 function t(key) {
   const dict = i18nPayload && i18nPayload.translations ? i18nPayload.translations : {};
   return dict[key] || key;
@@ -179,6 +229,48 @@ function usageChipInfo(session) {
   };
 }
 
+// Trellis phase badge (phase 3): rendered only when the session snapshot
+// carries a trellis binding. The badge is NOT a separate click target —
+// clicks bubble to the row's handler, so jumping reuses the row's existing
+// focus path without a new channel.
+const TRELLIS_PHASE_CHIP = {
+  plan: { key: "sessionHudTrellisPhasePlan", cls: "trellis-plan", hintKey: "trellisHintPlan" },
+  execute: { key: "sessionHudTrellisPhaseExecute", cls: "trellis-execute", hintKey: "trellisHintExecute" },
+  check: { key: "sessionHudTrellisPhaseCheck", cls: "trellis-check", hintKey: "trellisHintCheck" },
+  finish: { key: "sessionHudTrellisPhaseFinish", cls: "trellis-finish", hintKey: "trellisHintFinish" },
+  done: { key: "sessionHudTrellisPhaseDone", cls: "trellis-done" },
+};
+
+function trellisChipInfo(session) {
+  const info = session && session.trellis;
+  if (!info || typeof info !== "object") return null;
+  const phase = TRELLIS_PHASE_CHIP[info.phase];
+  if (!phase) return null;
+  let label = t(phase.key);
+  const done = Number(info.progress && info.progress.done);
+  const total = Number(info.progress && info.progress.total);
+  if (Number.isFinite(done) && Number.isFinite(total) && total > 0) {
+    label += ` ${Math.max(0, Math.trunc(done))}/${Math.trunc(total)}`;
+  }
+  const parallel = Number(info.parallelCount);
+  if (Number.isFinite(parallel) && parallel > 1) {
+    label += ` \u00d7${Math.trunc(parallel)}`;
+  }
+  let hint = "";
+  if (phase.hintKey) {
+    hint = t(phase.hintKey)
+      .replace("{done}", String(Math.max(0, Math.trunc(Number(info.progress && info.progress.done) || 0))))
+      .replace("{total}", String(Math.max(0, Math.trunc(Number(info.progress && info.progress.total) || 0))));
+  }
+  return {
+    label,
+    cls: phase.cls,
+    title: t("sessionHudTrellisTooltip")
+      .replace("{title}", info.title || info.taskPath || "")
+      .replace("{phase}", t(phase.key)) + (hint ? "\n" + hint : ""),
+  };
+}
+
 const BELL_SVG = `<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/></svg>`;
 const FOCUS_UNAVAILABLE_SVG = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4l16 16"/><path d="M9.5 5h5"/><path d="M7 9h10"/><path d="M5 14h9"/><path d="M12 19h5"/></svg>`;
 const FOLDER_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h6l2 2h10v9H3z"/><path d="M3 7V5h6l2 2"/></svg>`;
@@ -310,6 +402,24 @@ function createRowForSession(session, now) {
     right.appendChild(bell);
     hasRightContent = true;
 
+  }
+
+  const trellisInfo = feedbackText ? null : trellisChipInfo(session);
+  if (trellisInfo) {
+    const chip = document.createElement("span");
+    chip.className = `trellis-chip ${trellisInfo.cls}`;
+    chip.textContent = trellisInfo.label;
+    // Native title tooltips never show in the HUD host (non-activating
+    // transparent window suppresses system help tags on macOS). Click the
+    // chip to expand the HUD with an inline detail row under this line.
+    chip.title = trellisInfo.title;
+    chip.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggleTrellisDetail(session.id);
+    });
+    if (trellisExpandedSessions.has(session.id)) chip.classList.add("trellis-chip-active");
+    right.appendChild(chip);
+    hasRightContent = true;
   }
 
   if (!canFocus) {
@@ -470,10 +580,18 @@ function render() {
 
   const now = Date.now();
   const { expanded, folded } = splitHudLayout(sessions);
+  const expandedIds = new Set(expanded.map((session) => session.id));
+  for (const sessionId of trellisExpandedSessions) {
+    if (!expandedIds.has(sessionId)) trellisExpandedSessions.delete(sessionId);
+  }
 
   for (const session of expanded) {
     hudEl.appendChild(createRowForSession(session, now));
+    if (trellisExpandedSessions.has(session.id)) {
+      hudEl.appendChild(createTrellisDetailRow(session));
+    }
   }
+  reportTrellisDetailHeight();
   if (folded.length > 0) {
     hudEl.appendChild(createFoldedRow(folded.length));
   }

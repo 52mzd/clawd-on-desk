@@ -257,6 +257,23 @@ body { padding: 2px 3px 8px; }
 .usage-warm { background: rgba(245, 158, 11, 0.15); color: #b45309; }
 .usage-hot { background: rgba(239, 68, 68, 0.10); color: #dc2626; }
 
+/* Trellis phase badge (phase 3): same compact chip geometry as state-chip;
+   unknown phases never reach the DOM (trellisChipInfo filters them). */
+.trellis-chip {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.trellis-plan { background: rgba(59, 130, 246, 0.13); color: #2563eb; }
+.trellis-execute { background: rgba(22, 163, 74, 0.13); color: #16a34a; }
+.trellis-check { background: rgba(147, 51, 234, 0.13); color: #9333ea; }
+.trellis-finish { background: rgba(245, 158, 11, 0.15); color: #b45309; }
+.trellis-done { background: rgba(107, 114, 128, 0.13); color: #52525b; }
+
 @media (prefers-color-scheme: dark) {
   .chip-thinking { background: rgba(99, 102, 241, 0.20); color: #818cf8; }
   .chip-working { background: rgba(22, 163, 74, 0.20); color: #4ade80; }
@@ -268,6 +285,11 @@ body { padding: 2px 3px 8px; }
   .usage-neutral { background: rgba(107, 114, 128, 0.20); color: #a1a1aa; }
   .usage-warm { background: rgba(245, 158, 11, 0.20); color: #fbbf24; }
   .usage-hot { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+  .trellis-plan { background: rgba(59, 130, 246, 0.20); color: #60a5fa; }
+  .trellis-execute { background: rgba(22, 163, 74, 0.20); color: #4ade80; }
+  .trellis-check { background: rgba(147, 51, 234, 0.20); color: #c084fc; }
+  .trellis-finish { background: rgba(245, 158, 11, 0.20); color: #fbbf24; }
+  .trellis-done { background: rgba(107, 114, 128, 0.20); color: #a1a1aa; }
 }
 
 .completion-bell {
@@ -333,6 +355,44 @@ body { padding: 2px 3px 8px; }
   .unread-bell svg {
     animation: none;
   }
+}
+.trellis-chip {
+  cursor: pointer;
+}
+.trellis-chip-active {
+  background: #2f6feb;
+  border-color: #2f6feb;
+  color: #fff;
+}
+.trellis-detail {
+  display: flex;
+  flex-direction: column;
+  /* flex: 0 0 auto — must not shrink: the HUD host is a column flexbox
+     with overflow hidden, so a shrinkable detail row gets compressed when
+     the window is still short, and offsetHeight reporting would feed the
+     shrunken value back into window sizing (runaway shrink loop). */
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 6px 10px 6px 30px;
+  margin: 2px 4px;
+  border-radius: 6px;
+  background: rgba(30, 30, 36, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+.trellis-detail-title {
+  font-size: 11px;
+  color: #ececf1;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.35;
+}
+.trellis-detail-guide {
+  font-size: 10px;
+  color: #a1a1aa;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.35;
 }
 </style>
 </head>

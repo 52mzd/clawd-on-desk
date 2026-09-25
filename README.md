@@ -29,6 +29,13 @@
   <img src="assets/hero.gif" alt="Clawd on Desk — a pixel desktop pet that reacts to your AI coding agent in real time. Animated demo: the crab cycles through sleeping, thinking while the model reads the codebase, typing as edit/bash tools run, grooving for one subagent, juggling when multiple subagents run, raising a permission bubble, and celebrating when 14 files / 312 tests are complete. Works with Claude Code, Codex, Cursor, Copilot, Gemini, Antigravity, Qwen, CodeWhale, Pi, OMP, OpenClaw and more.">
 </p>
 
+> **This is a fork.** Based on the latest upstream
+> [rullerzhou-afk/clawd-on-desk](https://github.com/rullerzhou-afk/clawd-on-desk), it adds
+> **Trellis workflow integration**: a Dashboard task view, a Settings install/upgrade wizard,
+> and pet state feedback (parallel-task juggling, a planning wizard hat, phase bubbles, and
+> a completion celebration). Authoritative documentation lives in
+> `docs/project/trellis-settings-panel.md`. The license remains the upstream AGPL-3.0.
+
 Clawd lives on your desktop and reacts to what your AI coding agent is doing — in real time. Start a long task, walk away, come back when the crab tells you it's done.
 
 Thinking when you prompt, typing when tools run, grooving or juggling for subagents, reviewing permissions, celebrating when tasks complete, sleeping when you step away. Ships with three built-in themes: **Clawd** (pixel crab), **Calico** (三花猫), and **Cloudling** (云宝), with full support for custom themes and imported Codex Pet animation packs. An optional official theme, **Hash Sage** (哈希仙人), can be downloaded from Settings → Theme.

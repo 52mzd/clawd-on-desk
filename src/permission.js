@@ -5347,6 +5347,9 @@ return {
   setPermissionSurfacesFullscreenSuppressed,
   reconcilePermissionPresentation,
   addPendingPermission, removePendingPermission,
+  // Waiting-auth display override: live pending count for state.js's
+  // display-only waiting visual. Read-only view over pendingPermissions.
+  getPendingPermissionCount: () => pendingPermissions.length,
   isPermissionEntryLive, canAutoResolvePendingPermission,
   beginSessionTrustConfirmation, endSessionTrustConfirmation,
   syncPermissionBubbleContent,

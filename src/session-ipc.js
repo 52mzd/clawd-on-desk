@@ -19,6 +19,10 @@ function registerSessionIpc(options = {}) {
   const setSessionAlias = requiredDependency(options.setSessionAlias, "setSessionAlias");
   const showDashboard = requiredDependency(options.showDashboard, "showDashboard");
   const setSessionHudPinned = requiredDependency(options.setSessionHudPinned, "setSessionHudPinned");
+  const setSessionHudTrellisDetailHeight = requiredDependency(
+    options.setSessionHudTrellisDetailHeight,
+    "setSessionHudTrellisDetailHeight"
+  );
   const ackSessionCompletion = requiredDependency(options.ackSessionCompletion, "ackSessionCompletion");
   const openSessionFolder = requiredDependency(options.openSessionFolder, "openSessionFolder");
   const setSessionAutomationOverride = requiredDependency(
@@ -39,6 +43,44 @@ function registerSessionIpc(options = {}) {
   const resumeSessionFromHistory = requiredDependency(
     options.resumeSessionFromHistory,
     "resumeSessionFromHistory"
+  );
+  const getTrellisTaskDetail = requiredDependency(
+    options.getTrellisTaskDetail,
+    "getTrellisTaskDetail"
+  );
+  const getTrellisNetworkOverview = requiredDependency(
+    options.getTrellisNetworkOverview,
+    "getTrellisNetworkOverview"
+  );
+  const getTrellisTaskDoc = requiredDependency(
+    options.getTrellisTaskDoc,
+    "getTrellisTaskDoc"
+  );
+  const getTrellisSpecTree = requiredDependency(
+    options.getTrellisSpecTree,
+    "getTrellisSpecTree"
+  );
+  const getTrellisSpecDoc = requiredDependency(
+    options.getTrellisSpecDoc,
+    "getTrellisSpecDoc"
+  );
+  const getTrellisArchiveList = requiredDependency(
+    options.getTrellisArchiveList,
+    "getTrellisArchiveList"
+  );
+  const listTrellisRoots = requiredDependency(options.listTrellisRoots, "listTrellisRoots");
+  const addTrellisRoot = requiredDependency(options.addTrellisRoot, "addTrellisRoot");
+  const removeTrellisRoot = requiredDependency(
+    options.removeTrellisRoot,
+    "removeTrellisRoot"
+  );
+  const removeTrellisPick = requiredDependency(
+    options.removeTrellisPick,
+    "removeTrellisPick"
+  );
+  const getTrellisActiveList = requiredDependency(
+    options.getTrellisActiveList,
+    "getTrellisActiveList"
   );
   const quickMode = options.quickMode || null;
   const disposers = [];
@@ -131,6 +173,184 @@ function registerSessionIpc(options = {}) {
     });
   });
 
+  // One-shot on-demand read of a Trellis task's files at a renderer-supplied
+  // path — same trusted-frame gate as session history, plus strict payload
+  // validation (the detail view is opened per click, never polled).
+  handle("dashboard:trellis-task-detail", (event, payload) => {
+    const rejected = rejectUntrustedDashboardEvent(event);
+    if (rejected) return rejected;
+    const keys = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? Object.keys(payload).sort()
+      : [];
+    if (
+      keys.length !== 2
+      || keys[0] !== "cwd"
+      || keys[1] !== "taskPath"
+      || typeof payload.cwd !== "string"
+      || !payload.cwd
+      || typeof payload.taskPath !== "string"
+      || !payload.taskPath
+    ) {
+      return { status: "invalid" };
+    }
+    return getTrellisTaskDetail(payload);
+  });
+
+;
+
+  // v7 R8 project-wide network overview: one-shot read of the whole
+  // relation graph for a root (nodes + vertical parent edges + shared
+  // spec/PRD horizontal groups). Same trusted-frame gate; `root` mirrors
+  // the spec-tree payload.
+  handle("dashboard:trellis-network-overview", (event, payload) => {
+    const rejected = rejectUntrustedDashboardEvent(event);
+    if (rejected) return rejected;
+    const keys = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? Object.keys(payload).sort()
+      : [];
+    if (
+      keys.length !== 1
+      || keys[0] !== "root"
+      || typeof payload.root !== "string"
+      || !payload.root
+    ) {
+      return { status: "invalid" };
+    }
+    return getTrellisNetworkOverview(payload);
+  });
+
+  // One-shot on-demand read of ONE markdown document of a Trellis task —
+  // same trusted-frame gate and the same cwd/taskPath validation story as
+  // the detail read above; `doc` must be a plain *.md basename that the
+  // owner re-validates against the directory listing (never a path).
+  handle("dashboard:trellis-task-doc", (event, payload) => {
+    const rejected = rejectUntrustedDashboardEvent(event);
+    if (rejected) return rejected;
+    const keys = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? Object.keys(payload).sort()
+      : [];
+    if (
+      keys.length !== 3
+      || keys[0] !== "cwd"
+      || keys[1] !== "doc"
+      || keys[2] !== "taskPath"
+      || typeof payload.cwd !== "string"
+      || !payload.cwd
+      || typeof payload.taskPath !== "string"
+      || !payload.taskPath
+      || typeof payload.doc !== "string"
+      || !payload.doc
+    ) {
+      return { status: "invalid" };
+    }
+    return getTrellisTaskDoc(payload);
+  });
+
+  // v4-a spec map: one-shot listing / reading of the trusted root's
+  // .trellis/spec/**/*.md. Strict single-key {root} for the tree; strict
+  // {root, relPath} for the doc — the owner re-validates relPath segment
+  // by segment against live directory listings (never trusts it as a path).
+  handle("dashboard:trellis-spec-tree", (event, payload) => {
+    const rejected = rejectUntrustedDashboardEvent(event);
+    if (rejected) return rejected;
+    if (
+      payload === null
+      || typeof payload !== "object"
+      || Array.isArray(payload)
+      || Object.keys(payload).length !== 1
+      || typeof payload.root !== "string"
+      || !payload.root
+    ) {
+      return { status: "invalid" };
+    }
+    return getTrellisSpecTree(payload);
+  });
+
+  handle("dashboard:trellis-spec-doc", (event, payload) => {
+    const rejected = rejectUntrustedDashboardEvent(event);
+    if (rejected) return rejected;
+    const keys = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? Object.keys(payload).sort()
+      : [];
+    if (
+      keys.length !== 2
+      || keys[0] !== "relPath"
+      || keys[1] !== "root"
+      || typeof payload.root !== "string"
+      || !payload.root
+      || typeof payload.relPath !== "string"
+      || !payload.relPath
+    ) {
+      return { status: "invalid" };
+    }
+    return getTrellisSpecDoc(payload);
+  });
+
+  // One-shot on-demand scan of the archive folders behind the known
+  // trellis roots (registered roots + session-resolved roots) — same
+  // trusted-frame gate as the detail read. No payload: the root set comes
+  // from the owner, never from the renderer, so browsing works with no
+  // live session at all.
+  handle("dashboard:trellis-archive-list", (event) => {
+    const rejected = rejectUntrustedDashboardEvent(event);
+    return rejected || getTrellisArchiveList();
+  });
+
+  // Registered project roots for the Dashboard's independent Trellis view.
+  // list is a pure memory read; add opens the main-side directory picker
+  // (the renderer never supplies a path); remove only accepts a string that
+  // is already a registered member — all three restricted to the trusted
+  // Dashboard frame.
+  handle("dashboard:trellis-roots-list", (event) => {
+    const rejected = rejectUntrustedDashboardEvent(event);
+    return rejected || listTrellisRoots();
+  });
+  handle("dashboard:trellis-roots-add", (event) => {
+    const rejected = rejectUntrustedDashboardEvent(event);
+    return rejected || addTrellisRoot(event);
+  });
+  handle("dashboard:trellis-roots-remove", (event, payload) => {
+    const rejected = rejectUntrustedDashboardEvent(event);
+    if (rejected) return rejected;
+    const keys = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? Object.keys(payload).sort()
+      : [];
+    if (
+      keys.length !== 1
+      || keys[0] !== "root"
+      || typeof payload.root !== "string"
+      || !payload.root
+    ) {
+      return { status: "invalid" };
+    }
+    return removeTrellisRoot(payload.root);
+  });
+
+  handle("dashboard:trellis-pick-remove", (event, payload) => {
+    const rejected = rejectUntrustedDashboardEvent(event);
+    if (rejected) return rejected;
+    const keys = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? Object.keys(payload).sort()
+      : [];
+    if (
+      keys.length !== 1
+      || keys[0] !== "picked"
+      || typeof payload.picked !== "string"
+      || !payload.picked
+    ) {
+      return { status: "invalid" };
+    }
+    return removeTrellisPick(payload.picked);
+  });
+
+  // One-shot on-demand read of the non-archived tasks under the known
+  // trellis roots — same trusted-frame gate; the root set lives in the
+  // owner, so this channel takes no payload either.
+  handle("dashboard:trellis-active-list", (event) => {
+    const rejected = rejectUntrustedDashboardEvent(event);
+    return rejected || getTrellisActiveList();
+  });
+
   handle("dashboard:set-session-alias", (_event, payload) => setSessionAlias(payload));
   handle("dashboard:set-session-automation", (event, payload) => {
     const keys = payload && typeof payload === "object" && !Array.isArray(payload)
@@ -213,6 +433,8 @@ function registerSessionIpc(options = {}) {
   );
   on("session-hud:open-dashboard", () => showDashboard({ source: "hud" }));
   on("session-hud:set-pinned", (_event, value) => setSessionHudPinned(!!value));
+  on("session-hud:set-trellis-detail-height", (_event, px) =>
+    setSessionHudTrellisDetailHeight(Number(px) || 0));
 
   on("settings:open-dashboard", () => showDashboard({ source: "settings" }));
   on("show-dashboard", () => showDashboard());

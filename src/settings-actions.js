@@ -680,6 +680,25 @@ const updateRegistry = {
     }
     return { status: "ok" };
   },
+  // Same gate as customToolDiscoveryPaths: the IPC layer normalizes before
+  // committing, so anything the validator would rewrite is a caller bug.
+  trellisScanRoots(value) {
+    if (!Array.isArray(value)) {
+      return { status: "error", message: "trellisScanRoots must be an array" };
+    }
+    const normalized = normalizePathList(value, { maxEntries: MAX_CUSTOM_DISCOVERY_PATHS + 1 });
+    if (
+      normalized.length !== value.length
+      || normalized.length > MAX_CUSTOM_DISCOVERY_PATHS
+      || normalized.some((entry, index) => entry !== value[index])
+    ) {
+      return {
+        status: "error",
+        message: `trellisScanRoots must contain at most ${MAX_CUSTOM_DISCOVERY_PATHS} normalized unique paths`,
+      };
+    }
+    return { status: "ok" };
+  },
   customApplications(value) {
     if (!Array.isArray(value) || value.length > MAX_CUSTOM_APPLICATIONS) {
       return {

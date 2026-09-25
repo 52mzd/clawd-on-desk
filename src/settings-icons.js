@@ -84,6 +84,15 @@ const ICONS = {
     '<circle cx="17.6" cy="10.2" r="1.7"/>' +
     '</svg>',
 
+  // checklist (Trellis project panel)
+  trellis:
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="100%" height="100%">' +
+    '<path d="M4 6h4l2 3h9"/>' +
+    '<path d="M4 13h6l2 3h8"/>' +
+    '<circle cx="19" cy="6" r="2"/>' +
+    '<circle cx="17" cy="19" r="2"/>' +
+    '</svg>',
+
   // info circle
   about:
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="100%" height="100%">' +

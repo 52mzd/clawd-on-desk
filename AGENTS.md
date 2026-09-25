@@ -79,8 +79,9 @@ Copilot CLI 同步走 `<COPILOT_HOME 或 ~/.copilot>/hooks/hooks.json`，marker-
 
 ## Read These Docs
 
-- `docs/project/agent-runtime-architecture.md`：运行时架构、模块边界、启动与数据流、多 agent、permission bubble、终端聚焦和自动同步
+- `docs/project/agent-runtime-architecture.md`：运行时架构、模块边界、启动与数据流、多 agent、permission bubble、Trellis 绑定与宠物反馈、终端聚焦和自动同步
 - `docs/project/theme-state-ui.md`：状态机、主题系统、settings、mini mode、素材规则、平台限制、待落地 UI 决策
+- `docs/project/trellis-settings-panel.md`：Trellis Settings 面板的模块分层、IPC 契约、以及不可放宽的写入约束（argv 冻结、预览零写盘、信任门禁）
 - `docs/project/release-process.md`：发版 checklist、release note 核对、tag 触发 GitHub 打包和资产确认
 - `docs/guides/copilot-setup.md`：Copilot CLI 自动同步说明、`COPILOT_HOME` 兼容性、手动配置备选模板
 - `docs/guides/dsh-setup.md`：DeepSeek Harness web profile 实验性 plugin-only 状态与普通审批集成
@@ -240,6 +241,7 @@ Copilot CLI 同步走 `<COPILOT_HOME 或 ~/.copilot>/hooks/hooks.json`，marker-
 
 ## High-Risk Gotchas
 
+- Settings 的 Trellis 面板只允许两条写命令，argv 必须冻结：升级用 `trellis update --force`；新增平台用 `trellis init --<platform> -y`，**绝不可带 `-s` / `-f`**（实测会跳过 CLI 的 `handleReinit` 增量分支、从零重建 `.template-hashes.json`，使旧平台从记录中消失，之后 `trellis update` 静默不再同步它们）。另外 `trellis update --dry-run` **不是只读的**（项目版本 ≠ CLI 版本时会改写 `.trellis/.version`），因此预览必须是纯计算，任何路径都不得 spawn 它。该面板的每个 IPC 通道都要过与 `settings-ipc.js` 同一套 Settings 窗口信任判定（缺失或抛错一律拒绝），否则任意渲染层都能触发 CLI 写盘。详见 `docs/project/trellis-settings-panel.md`
 - `src/pet-window-runtime.js` 的 `hitWin` 在 Windows 有原生 activation controller 时必须以 Electron `focusable:false` 创建，并只用 `src/win-hit-window-activation.js` 切换 `WS_EX_NOACTIVATE`；controller / Koffi 不可用时回退到旧的 `focusable:true` 构造以保住桌面点击与拖拽，但该降级不提供全屏防抢焦点保证。不得在运行时改回 `BrowserWindow.setFocusable(false)`，其 `Focus(false)` 副作用会打断前台全屏应用。Linux 保持 non-focusable；macOS 保持既有构造后 `setFocusable(false)` 路径
 - `miniTransitioning` 期间，所有窗口定位路径都必须先检查保护标志，否则 `setPosition()` 可能并发崩
 - DND 会屏蔽 hook 事件并压住 bubble，但**不应替用户做权限决定**：opencode 走 silent drop 回到 TUI 提示，Claude Code / CodeBuddy 走断连回到内置聊天/终端确认，Codex official hook 走 no-decision `{}` 回到原生审批提示；Pi 是 state-only，不进入权限审批链路

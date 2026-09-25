@@ -357,6 +357,54 @@ html, body {
   font-size: 11px;
   line-height: 1.5;
 }
+.recap-trellis {
+  display: grid;
+  grid-template-columns: minmax(96px, 1fr) minmax(320px, 2.6fr);
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 12px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--panel-bg) 92%, var(--accent) 8%);
+}
+.recap-trellis-identity {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.recap-trellis-identity strong {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recap-trellis-mark {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  align-self: center;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.recap-trellis-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+.recap-trellis-metrics dt {
+  color: var(--text-tertiary);
+  font-size: 9px;
+  line-height: 1.2;
+}
+.recap-trellis-metrics dd {
+  margin: 3px 0 0;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 650;
+}
 .recap-agent-list {
   display: flex;
   flex-direction: column;
@@ -744,6 +792,7 @@ html, body {
   .recap-card { padding: 16px; }
   .recap-agent-row { grid-template-columns: 1fr; gap: 8px; }
   .recap-agent-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .recap-trellis { grid-template-columns: 1fr; gap: 8px; }
   .recap-visual-heading { align-items: flex-start; flex-direction: column; gap: 2px; }
   .recap-today-band { gap: 2px; }
 }
@@ -5358,4 +5407,243 @@ html, body {
 .theme-official-retry-btn:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+/* ── Trellis panel ── */
+.trellis-platform-options {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+.trellis-platform-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.trellis-platform-select {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 6px;
+  max-width: 220px;
+}
+.trellis-version {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.trellis-command {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+.trellis-command code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.06);
+  padding: 2px 6px;
+  border-radius: 5px;
+  color: var(--text-primary);
+  user-select: text;
+}
+@media (prefers-color-scheme: dark) {
+  .trellis-command code { background: rgba(255, 255, 255, 0.09); }
+}
+.trellis-command-cwd {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  user-select: text;
+}
+
+/* ===== Trellis wizard modal (09-25) ===== */
+/* Chip family mirrors the dashboard card contract: radius-s, color-mix
+   tint, 11px/600. Registered = accent tint; unregistered = dashed ghost. */
+.trellis-platform-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: var(--radius-s, 6px);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: default;
+}
+
+.trellis-platform-chip.is-registered {
+  background: color-mix(in srgb, var(--accent, #d97757) 14%, transparent);
+  color: color-mix(in srgb, var(--accent, #d97757) 80%, var(--text, inherit));
+}
+
+button.trellis-platform-chip.is-unregistered {
+  border: 1px dashed var(--border, rgba(127, 127, 127, 0.35));
+  color: var(--text-tertiary, inherit);
+  cursor: pointer;
+  transition: background-color 120ms cubic-bezier(0.32, 0.72, 0, 1),
+    border-color 120ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+button.trellis-platform-chip.is-unregistered:hover {
+  border-color: color-mix(in srgb, var(--accent, #d97757) 55%, var(--border, transparent));
+  background: color-mix(in srgb, var(--accent, #d97757) 8%, transparent);
+}
+
+button.trellis-platform-chip.is-unregistered:active {
+  transform: scale(0.97);
+}
+
+.trellis-platform-chip.is-stale::after {
+  content: " \26A0"; /* warning sign */
+  opacity: 0.75;
+}
+
+/* Wizard dialog — rides the settings-confirm-modal base styles. */
+.trellis-wizard {
+  max-width: 520px;
+  width: min(520px, calc(100vw / var(--clawd-text-zoom, 1) - 48px));
+}
+
+.trellis-wizard-project {
+  margin: -6px 0 10px;
+  font-size: 12px;
+  color: var(--text-tertiary, inherit);
+}
+
+.trellis-wizard-project code {
+  font-weight: 600;
+  color: var(--text, inherit);
+}
+
+.trellis-wizard-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: calc(46vh / var(--clawd-text-zoom, 1));
+  overflow-y: auto;
+}
+
+.trellis-wizard-hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-secondary, inherit);
+}
+
+.trellis-wizard-platforms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.trellis-wizard-platform {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.35));
+  border-radius: var(--radius-s, 6px);
+  cursor: pointer;
+  font-size: 12.5px;
+}
+
+.trellis-wizard-platform:has(input:checked) {
+  border-color: color-mix(in srgb, var(--accent, #d97757) 55%, var(--border, transparent));
+  background: color-mix(in srgb, var(--accent, #d97757) 10%, transparent);
+}
+
+.trellis-wizard-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary, inherit);
+}
+
+.trellis-wizard-added {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+}
+
+.trellis-wizard-version {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.trellis-wizard-version code {
+  font-weight: 600;
+}
+
+.trellis-wizard-arrow {
+  color: var(--text-tertiary, inherit);
+}
+
+.trellis-wizard-command-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.trellis-wizard-command {
+  display: block;
+  padding: 8px 10px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.35));
+  border-radius: var(--radius-s, 6px);
+  background: var(--surface-alt, rgba(127, 127, 127, 0.08));
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.trellis-wizard-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.trellis-wizard-ok {
+  margin: 0;
+  font-weight: 600;
+  color: var(--ok, #3fb950);
+}
+
+.trellis-wizard-error {
+  margin: 0;
+  font-weight: 600;
+  color: var(--danger, #f85149);
+}
+
+.trellis-wizard-output {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-s, 6px);
+  background: var(--surface-alt, rgba(127, 127, 127, 0.08));
+  font-size: 11px;
+  max-height: calc(18vh / var(--clawd-text-zoom, 1));
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.trellis-wizard-stale {
+  opacity: 0.7;
 }

@@ -1119,6 +1119,9 @@ function registerSettingsIpc(options = {}) {
   });
 
   return {
+    // Exposed so a sibling IPC surface (e.g. trellis-ipc) reuses the exact same
+    // Settings-window trust test instead of inventing a second, weaker one.
+    isTrustedEvent: isTrustedSettingsEvent,
     dispose() {
       abortCurrentFeishuApproverLookup("destroyed");
       while (disposers.length) {

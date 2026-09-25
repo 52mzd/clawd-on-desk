@@ -96,6 +96,9 @@ function createHarness(overrides = {}) {
     setSessionHudPinned: overrides.setSessionHudPinned || ((value) => {
       calls.push(["setSessionHudPinned", value]);
     }),
+    setSessionHudTrellisDetailHeight: overrides.setSessionHudTrellisDetailHeight || ((px) => {
+      calls.push(["setSessionHudTrellisDetailHeight", px]);
+    }),
     ackSessionCompletion: overrides.ackSessionCompletion || ((sessionId) => {
       calls.push(["ackSessionCompletion", sessionId]);
       return true;
@@ -119,6 +122,50 @@ function createHarness(overrides = {}) {
     resumeSessionFromHistory: overrides.resumeSessionFromHistory || ((payload) => {
       calls.push(["resumeSessionFromHistory", payload]);
       return { status: "ok" };
+    }),
+    getTrellisNetworkOverview: overrides.getTrellisNetworkOverview || ((payload) => {
+      calls.push(["getTrellisNetworkOverview", payload]);
+      return { status: "ok", nodes: [], edges: [], specGroups: [], prdGroups: [], truncated: false };
+    }),
+    getTrellisTaskDetail: overrides.getTrellisTaskDetail || ((payload) => {
+      calls.push(["getTrellisTaskDetail", payload]);
+      return { status: "ok", task: { title: "T", phase: "execute" } };
+    }),
+    getTrellisTaskDoc: overrides.getTrellisTaskDoc || ((payload) => {
+      calls.push(["getTrellisTaskDoc", payload]);
+      return { status: "ok", name: payload.doc, size: 3, truncated: false, content: "abc" };
+    }),
+    getTrellisSpecTree: overrides.getTrellisSpecTree || ((payload) => {
+      calls.push(["getTrellisSpecTree", payload]);
+      return { status: "ok", files: [{ relPath: "index.md", group: "spec" }], truncated: false };
+    }),
+    getTrellisSpecDoc: overrides.getTrellisSpecDoc || ((payload) => {
+      calls.push(["getTrellisSpecDoc", payload]);
+      return { status: "ok", relPath: payload.relPath, size: 3, truncated: false, content: "abc" };
+    }),
+    getTrellisArchiveList: overrides.getTrellisArchiveList || (() => {
+      calls.push(["getTrellisArchiveList"]);
+      return { status: "ok", tasks: [] };
+    }),
+    getTrellisActiveList: overrides.getTrellisActiveList || (() => {
+      calls.push(["getTrellisActiveList"]);
+      return { status: "ok", tasks: [] };
+    }),
+    listTrellisRoots: overrides.listTrellisRoots || (() => {
+      calls.push(["listTrellisRoots"]);
+      return { status: "ok", roots: ["/proj/app"] };
+    }),
+    addTrellisRoot: overrides.addTrellisRoot || (() => {
+      calls.push(["addTrellisRoot"]);
+      return { status: "ok", roots: ["/proj/app"] };
+    }),
+    removeTrellisRoot: overrides.removeTrellisRoot || ((root) => {
+      calls.push(["removeTrellisRoot", root]);
+      return { status: "ok", roots: [] };
+    }),
+    removeTrellisPick: overrides.removeTrellisPick || ((picked) => {
+      calls.push(["removeTrellisPick", picked]);
+      return { status: "ok", roots: [] };
     }),
     getDashboardWebContents: overrides.getDashboardWebContents
       || (() => dashboardWebContents),
@@ -168,6 +215,17 @@ test("session IPC registers owned channels and disposes them", () => {
     "dashboard:resume-session",
     "dashboard:set-session-alias",
     "dashboard:set-session-automation",
+    "dashboard:trellis-active-list",
+    "dashboard:trellis-archive-list",
+    "dashboard:trellis-network-overview",
+    "dashboard:trellis-pick-remove",
+    "dashboard:trellis-roots-add",
+    "dashboard:trellis-roots-list",
+    "dashboard:trellis-roots-remove",
+    "dashboard:trellis-spec-doc",
+    "dashboard:trellis-spec-tree",
+    "dashboard:trellis-task-detail",
+    "dashboard:trellis-task-doc",
     "session-hud:get-i18n",
     "session-hud:open-session-folder",
     "session:ack-completion",
@@ -177,6 +235,7 @@ test("session IPC registers owned channels and disposes them", () => {
     "session-hud:focus-session",
     "session-hud:open-dashboard",
     "session-hud:set-pinned",
+    "session-hud:set-trellis-detail-height",
     "settings:open-dashboard",
     "show-dashboard",
   ]);
@@ -396,6 +455,351 @@ test("resume-session takes exactly an agentId/opaque-historyKey pair", async () 
   assert.deepStrictEqual(calls, []);
 });
 
+test("trellis task-detail IPC is a trusted-frame, strictly-shaped one-shot read", async () => {
+  const { ipcMain, calls, trustedDashboardEvent } = createHarness();
+
+  const payload = { taskPath: ".trellis/tasks/09-20-x", cwd: "/proj/app" };
+  assert.deepStrictEqual(
+    await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-task-detail", payload),
+    { status: "ok", task: { title: "T", phase: "execute" } }
+  );
+  assert.deepStrictEqual(calls, [["getTrellisTaskDetail", payload]]);
+
+  // The handler reads real files at a renderer-supplied path, so a near-miss
+  // sender must not reach the owner.
+  calls.length = 0;
+  for (const event of [
+    { sender: trustedDashboardEvent.sender },
+    { sender: {}, senderFrame: trustedDashboardEvent.senderFrame },
+    { sender: trustedDashboardEvent.sender, senderFrame: { ...trustedDashboardEvent.senderFrame } },
+  ]) {
+    assert.deepStrictEqual(
+      await ipcMain.invokeFrom(event, "dashboard:trellis-task-detail", payload),
+      { status: "error", reason: "untrusted-dashboard-sender" }
+    );
+  }
+  assert.deepStrictEqual(calls, []);
+
+  for (const bad of [
+    null,
+    undefined,
+    "x",
+    42,
+    [],
+    {},
+    { taskPath: ".trellis/tasks/09-20-x" },
+    { cwd: "/proj/app" },
+    { taskPath: "", cwd: "/proj/app" },
+    { taskPath: ".trellis/tasks/x", cwd: "" },
+    { taskPath: 7, cwd: "/proj/app" },
+    { taskPath: ".trellis/tasks/x", cwd: "/proj/app", root: "/etc" },
+    // A structured-cloned `{"__proto__": ...}` arrives as an OWN property,
+    // so Object.keys sees it and the exact-two-keys gate rejects the frame.
+    { ["__proto__"]: "x", taskPath: ".trellis/tasks/x", cwd: "/proj/app" },
+  ]) {
+    assert.deepStrictEqual(
+      await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-task-detail", bad),
+      { status: "invalid" },
+      JSON.stringify(bad)
+    );
+  }
+  assert.deepStrictEqual(calls, [], "invalid payloads must never reach the fs-reading owner");
+});
+
+test("trellis task-doc IPC is a trusted-frame, strictly-shaped one-shot read", async () => {
+  const { ipcMain, calls, trustedDashboardEvent } = createHarness();
+
+  const payload = { taskPath: ".trellis/tasks/09-20-x", cwd: "/proj/app", doc: "prd.md" };
+  assert.deepStrictEqual(
+    await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-task-doc", payload),
+    { status: "ok", name: "prd.md", size: 3, truncated: false, content: "abc" }
+  );
+  assert.deepStrictEqual(calls, [["getTrellisTaskDoc", payload]]);
+
+  // Same near-miss sender gate as the detail read: the handler answers a
+  // renderer-supplied file request, so only the real Dashboard main frame
+  // may reach the owner.
+  calls.length = 0;
+  for (const event of [
+    { sender: trustedDashboardEvent.sender },
+    { sender: {}, senderFrame: trustedDashboardEvent.senderFrame },
+    { sender: trustedDashboardEvent.sender, senderFrame: { ...trustedDashboardEvent.senderFrame } },
+  ]) {
+    assert.deepStrictEqual(
+      await ipcMain.invokeFrom(event, "dashboard:trellis-task-doc", payload),
+      { status: "error", reason: "untrusted-dashboard-sender" }
+    );
+  }
+  assert.deepStrictEqual(calls, []);
+
+  for (const bad of [
+    null,
+    undefined,
+    "x",
+    42,
+    [],
+    {},
+    { taskPath: ".trellis/tasks/x", cwd: "/proj/app" },
+    { taskPath: ".trellis/tasks/x", cwd: "/proj/app", doc: "" },
+    { taskPath: ".trellis/tasks/x", cwd: "/proj/app", doc: 7 },
+    { taskPath: "", cwd: "/proj/app", doc: "prd.md" },
+    { taskPath: ".trellis/tasks/x", cwd: "", doc: "prd.md" },
+    { taskPath: ".trellis/tasks/x", cwd: "/proj/app", doc: "prd.md", extra: true },
+    { ["__proto__"]: "x", taskPath: ".trellis/tasks/x", cwd: "/proj/app", doc: "prd.md" },
+  ]) {
+    assert.deepStrictEqual(
+      await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-task-doc", bad),
+      { status: "invalid" },
+      JSON.stringify(bad)
+    );
+  }
+  assert.deepStrictEqual(calls, [], "invalid payloads must never reach the fs-reading owner");
+});
+
+test("trellis spec-tree IPC is a trusted-frame, strict single-key one-shot read", async () => {
+  const { ipcMain, calls, trustedDashboardEvent } = createHarness();
+
+  const payload = { root: "/proj/app" };
+  assert.deepStrictEqual(
+    await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-spec-tree", payload),
+    { status: "ok", files: [{ relPath: "index.md", group: "spec" }], truncated: false }
+  );
+  assert.deepStrictEqual(calls, [["getTrellisSpecTree", payload]]);
+
+  calls.length = 0;
+  for (const event of [
+    { sender: trustedDashboardEvent.sender },
+    { sender: {}, senderFrame: trustedDashboardEvent.senderFrame },
+    { sender: trustedDashboardEvent.sender, senderFrame: { ...trustedDashboardEvent.senderFrame } },
+  ]) {
+    assert.deepStrictEqual(
+      await ipcMain.invokeFrom(event, "dashboard:trellis-spec-tree", payload),
+      { status: "error", reason: "untrusted-dashboard-sender" }
+    );
+  }
+  assert.deepStrictEqual(calls, []);
+
+  for (const bad of [
+    null,
+    undefined,
+    "x",
+    42,
+    [],
+    {},
+    { root: "" },
+    { root: 7 },
+    { root: "/proj/app", extra: true },
+    { ["__proto__"]: "x", root: "/proj/app" },
+  ]) {
+    assert.deepStrictEqual(
+      await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-spec-tree", bad),
+      { status: "invalid" },
+      JSON.stringify(bad)
+    );
+  }
+  assert.deepStrictEqual(calls, [], "invalid payloads must never reach the fs-reading owner");
+});
+
+test("trellis spec-doc IPC is a trusted-frame, strict two-key one-shot read", async () => {
+  const { ipcMain, calls, trustedDashboardEvent } = createHarness();
+
+  const payload = { root: "/proj/app", relPath: "guides/index.md" };
+  assert.deepStrictEqual(
+    await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-spec-doc", payload),
+    { status: "ok", relPath: "guides/index.md", size: 3, truncated: false, content: "abc" }
+  );
+  assert.deepStrictEqual(calls, [["getTrellisSpecDoc", payload]]);
+
+  calls.length = 0;
+  for (const event of [
+    { sender: trustedDashboardEvent.sender },
+    { sender: {}, senderFrame: trustedDashboardEvent.senderFrame },
+    { sender: trustedDashboardEvent.sender, senderFrame: { ...trustedDashboardEvent.senderFrame } },
+  ]) {
+    assert.deepStrictEqual(
+      await ipcMain.invokeFrom(event, "dashboard:trellis-spec-doc", payload),
+      { status: "error", reason: "untrusted-dashboard-sender" }
+    );
+  }
+  assert.deepStrictEqual(calls, []);
+
+  for (const bad of [
+    null,
+    undefined,
+    "x",
+    42,
+    [],
+    {},
+    { root: "/proj/app" },
+    { relPath: "guides/index.md" },
+    { root: "", relPath: "guides/index.md" },
+    { root: "/proj/app", relPath: "" },
+    { root: "/proj/app", relPath: 7 },
+    { root: "/proj/app", relPath: "guides/index.md", extra: true },
+    { ["__proto__"]: "x", root: "/proj/app", relPath: "guides/index.md" },
+  ]) {
+    assert.deepStrictEqual(
+      await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-spec-doc", bad),
+      { status: "invalid" },
+      JSON.stringify(bad)
+    );
+  }
+  assert.deepStrictEqual(calls, [], "invalid payloads must never reach the fs-reading owner");
+});
+
+test("trellis network-overview IPC is a trusted-frame, strict one-key one-shot read", async () => {
+  const { ipcMain, calls, trustedDashboardEvent } = createHarness();
+
+  const payload = { root: "/proj/app" };
+  assert.deepStrictEqual(
+    await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-network-overview", payload),
+    { status: "ok", nodes: [], edges: [], specGroups: [], prdGroups: [], truncated: false }
+  );
+  assert.deepStrictEqual(calls, [["getTrellisNetworkOverview", payload]]);
+
+  calls.length = 0;
+  for (const event of [
+    { sender: trustedDashboardEvent.sender },
+    { sender: {}, senderFrame: trustedDashboardEvent.senderFrame },
+    { sender: trustedDashboardEvent.sender, senderFrame: { ...trustedDashboardEvent.senderFrame } },
+  ]) {
+    assert.deepStrictEqual(
+      await ipcMain.invokeFrom(event, "dashboard:trellis-network-overview", payload),
+      { status: "error", reason: "untrusted-dashboard-sender" }
+    );
+  }
+  assert.deepStrictEqual(calls, []);
+
+  for (const bad of [
+    null,
+    undefined,
+    "x",
+    42,
+    [],
+    {},
+    { root: "" },
+    { root: 7 },
+    { root: "/proj/app", extra: true },
+    { ["__proto__"]: "x", root: "/proj/app" },
+  ]) {
+    assert.deepStrictEqual(
+      await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-network-overview", bad),
+      { status: "invalid" },
+      JSON.stringify(bad)
+    );
+  }
+  assert.deepStrictEqual(calls, [], "invalid payloads must never reach the fs-reading owner");
+});
+
+test("trellis archive-list IPC is a trusted-frame, payload-free one-shot read", async () => {
+  const { ipcMain, calls, trustedDashboardEvent } = createHarness();
+
+  assert.deepStrictEqual(
+    await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-archive-list"),
+    { status: "ok", tasks: [] }
+  );
+  assert.deepStrictEqual(calls, [["getTrellisArchiveList"]]);
+
+  // Same near-miss sender gate as the detail read.
+  calls.length = 0;
+  for (const event of [
+    { sender: trustedDashboardEvent.sender },
+    { sender: {}, senderFrame: trustedDashboardEvent.senderFrame },
+    { sender: trustedDashboardEvent.sender, senderFrame: { ...trustedDashboardEvent.senderFrame } },
+  ]) {
+    assert.deepStrictEqual(
+      await ipcMain.invokeFrom(event, "dashboard:trellis-archive-list"),
+      { status: "error", reason: "untrusted-dashboard-sender" }
+    );
+  }
+  assert.deepStrictEqual(calls, []);
+});
+
+test("trellis active-list IPC is a trusted-frame, payload-free one-shot read", async () => {
+  const { ipcMain, calls, trustedDashboardEvent } = createHarness();
+
+  assert.deepStrictEqual(
+    await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-active-list"),
+    { status: "ok", tasks: [] }
+  );
+  assert.deepStrictEqual(calls, [["getTrellisActiveList"]]);
+
+  calls.length = 0;
+  for (const event of [
+    { sender: trustedDashboardEvent.sender },
+    { sender: {}, senderFrame: trustedDashboardEvent.senderFrame },
+    { sender: trustedDashboardEvent.sender, senderFrame: { ...trustedDashboardEvent.senderFrame } },
+  ]) {
+    assert.deepStrictEqual(
+      await ipcMain.invokeFrom(event, "dashboard:trellis-active-list"),
+      { status: "error", reason: "untrusted-dashboard-sender" }
+    );
+  }
+  assert.deepStrictEqual(calls, []);
+});
+
+test("trellis roots IPC is trusted-frame; add takes no path, remove is strictly shaped", async () => {
+  const { ipcMain, calls, trustedDashboardEvent } = createHarness();
+
+  assert.deepStrictEqual(
+    await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-roots-list"),
+    { status: "ok", roots: ["/proj/app"] }
+  );
+  // The picker channel takes no payload at all: the renderer only triggers,
+  // the path never crosses the bridge.
+  assert.deepStrictEqual(
+    await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-roots-add"),
+    { status: "ok", roots: ["/proj/app"] }
+  );
+  assert.deepStrictEqual(
+    await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-roots-remove", {
+      root: "/proj/app",
+    }),
+    { status: "ok", roots: [] }
+  );
+  assert.deepStrictEqual(calls, [
+    ["listTrellisRoots"],
+    ["addTrellisRoot"],
+    ["removeTrellisRoot", "/proj/app"],
+  ]);
+
+  // Every roots channel refuses a near-miss sender before the owner.
+  calls.length = 0;
+  for (const channel of [
+    "dashboard:trellis-roots-list",
+    "dashboard:trellis-roots-add",
+    "dashboard:trellis-roots-remove",
+    "dashboard:trellis-pick-remove",
+  ]) {
+    assert.deepStrictEqual(
+      await ipcMain.invoke(channel, { root: "/proj/app" }),
+      { status: "error", reason: "untrusted-dashboard-sender" }
+    );
+  }
+  assert.deepStrictEqual(calls, []);
+
+  // remove accepts exactly { root: non-empty string } — nothing else.
+  for (const bad of [
+    null,
+    undefined,
+    "x",
+    42,
+    [],
+    {},
+    { root: "" },
+    { root: 42 },
+    { root: "/proj/app", extra: 1 },
+    { ["__proto__"]: "x", root: "/proj/app" },
+  ]) {
+    assert.deepStrictEqual(
+      await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:trellis-roots-remove", bad),
+      { status: "invalid" },
+      JSON.stringify(bad)
+    );
+  }
+  assert.deepStrictEqual(calls, [], "invalid payloads must never reach the mutating owner");
+});
+
 test("session IPC owns dashboard open bridges", () => {
   const { ipcMain, calls } = createHarness();
 
@@ -491,6 +895,7 @@ test("registerSessionIpc requires ackSessionCompletion dep", () => {
   assert.throws(
     () => registerSessionIpc({
       ipcMain: new FakeIpcMain(),
+      setSessionHudTrellisDetailHeight: () => {},
       getSessionSnapshot: () => ({}),
       getI18n: () => ({}),
       focusSession: () => {},

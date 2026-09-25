@@ -1,6 +1,20 @@
 "use strict";
 
 const { canOfferLocalFolder, focusUnavailableReasonKey } = globalThis.ClawdSessionFocusUnavailable;
+const {
+  aggregateTrellisTasks,
+  groupTrellisTasks,
+  groupTrellisArchiveByMonth,
+  trellisArchiveMonthOf,
+  trellisTaskOwningRoot,
+  filterTrellisTasksByRoot,
+  buildTrellisRootLabels,
+  TRELLIS_PHASE_BADGE,
+} = globalThis.ClawdDashboardTrellisPanel;
+const {
+  renderMarkdownDoc,
+  MD_MAX_RENDER_LINES,
+} = globalThis.ClawdTrellisDocRenderer;
 
 const AGENT_LABELS = {
   "claude-code": "Claude Code",
@@ -32,6 +46,13 @@ const titleEl = document.getElementById("title");
 const countEl = document.getElementById("count");
 const contentEl = document.getElementById("content");
 const quotaSummaryEl = document.getElementById("quotaSummary");
+const trellisPanelEl = document.getElementById("trellisPanel");
+const trellisDetailOverlayEl = document.getElementById("trellisDetailOverlay");
+// Independent Trellis view: a second scrolling main plus the header tab.
+const trellisViewEl = document.getElementById("trellisView");
+const viewSessionsTabEl = document.getElementById("viewSessionsTab");
+const viewTrellisTabEl = document.getElementById("viewTrellisTab");
+const sessionsHeaderExtrasEl = document.getElementById("sessionsHeaderExtras");
 // Fixed node in the header. Keeping the mode banner outside the card tree
 // means entering the mode never reflows or rebuilds the user's content.
 const quickBannerEl = document.getElementById("quickBanner");
@@ -326,6 +347,9 @@ async function beginQuickRound(revision) {
   // Only main issues rounds and only ever forward; a stale or repeated intent
   // can never reopen a finished round.
   if (revision <= quick.revision) return;
+  // The numbered skeleton renders inside the sessions content area, so a
+  // round started while the Trellis view was open switches back first.
+  switchDashboardView("sessions");
   quick.revision = revision;
   cancelPendingActivation();
   quick.roundSeq += 1;
@@ -1094,6 +1118,2959 @@ function renderQuotaSummary(snapshot) {
   quotaSummaryEl.hidden = false;
 }
 
+// ── Trellis tasks panel ────────────────────────────────────────────────────
+// Read-only project of the per-session `trellis` bindings already riding
+// the snapshot (no new channel, no watcher): deduplicated per task by
+// aggregateTrellisTasks, rendered under the header like the quota summary,
+// and hidden entirely when no live session carries a binding. Expanded
+// multi-session rows survive the rebuild the same way HUD detail rows do
+// (module Set keyed by taskPath, re-read on every rebuild). The archive
+// browser now lives in the independent Trellis view below, not here.
+const expandedTrellisTasks = new Set();
+let lastTrellisPanelSignature = null;
+// Collapsed phase sections (plan/execute/check…) in the session trellis
+// panel — survives the 1s rebuild because the signature ignores it.
+const collapsedTrellisPhases = new Set();
+
+// Independent Trellis view state (module-level, same lifetime policy as
+// expandedTrellisTasks): roots/active/archive are each fetched on demand
+// (view switch + explicit refresh buttons, never polled), with seq guards
+// so a stale IPC reply can never overwrite newer UI. openMonths keeps the
+// month-collapse state of the archive browser (null = all collapsed).
+let activeView = "sessions";
+let lastTrellisViewSignature = null;
+const trellisView = {
+  roots: [],
+  picks: [],
+  rootsLoaded: false,
+  rootsError: false,
+  // One-shot hint after picking a folder that contains no trellis
+  // projects (directly or as children); cleared on next roots refresh.
+  noProjectsHint: false,
+  // Session-level UI state, never persisted: null = merged "all"
+  // view, otherwise the registered root the lists are filtered to.
+  selectedRoot: null,
+  // v7 R8: the three project-level drawers (⚙ manage roots, ⛓ network
+  // overview, 📐 spec map) share one exclusive slot. Session-level, not
+  // persisted; opening one closes the others.
+  panelOpen: null, // null | "network" | "spec" (root manage moved to Settings)
+  active: { loading: false, seq: 0, loaded: false, tasks: [], error: false },
+  archive: { loading: false, seq: 0, loaded: false, tasks: [], error: false, openMonths: null },
+};
+
+function computeTrellisPanelSignature(tasks) {
+  return JSON.stringify({
+    lang: (i18nPayload && i18nPayload.lang) || "en",
+    tasks,
+    expanded: [...expandedTrellisTasks].sort(),
+  });
+}
+
+function trellisTaskRowTitle(task) {
+  return t("sessionHudTrellisTooltip")
+    .replace("{title}", task.title || task.taskPath)
+    .replace("{phase}", t(TRELLIS_PHASE_BADGE[task.phase].labelKey));
+}
+
+function createTrellisSessionChip(binding) {
+  const chip = document.createElement("button");
+  chip.type = "button";
+  chip.className = binding.canFocus
+    ? "trellis-session-chip"
+    : "trellis-session-chip trellis-session-chip-unfocusable";
+  chip.textContent = binding.displayTitle;
+  chip.title = binding.displayTitle;
+  if (!binding.canFocus) {
+    chip.disabled = true;
+    chip.setAttribute("aria-disabled", "true");
+  }
+  chip.addEventListener("click", (event) => {
+    event.stopPropagation();
+    window.dashboardAPI.focusSession(binding.id);
+  });
+  return chip;
+}
+
+// v4-c R3: mini tick bar next to the numeric progress. Totals above the
+// tick cap degrade proportionally (12 ticks, filled = ratio) so a 40-step
+// checklist cannot blow up the row width. Returns null when there is
+// nothing meaningful to draw (no progress / zero total).
+const TRELLIS_PROGRESS_TICK_MAX = 12;
+
+function buildTrellisProgressTicks(progress) {
+  if (!progress || typeof progress.done !== "number" || typeof progress.total !== "number") {
+    return null;
+  }
+  if (progress.total <= 1) return null;
+  const ticks = Math.min(progress.total, TRELLIS_PROGRESS_TICK_MAX);
+  const filled = ticks === progress.total
+    ? Math.min(progress.done, ticks)
+    : Math.min(Math.round((progress.done / progress.total) * ticks), ticks);
+  const wrap = document.createElement("span");
+  wrap.className = "trellis-progress-ticks";
+  wrap.setAttribute("role", "img");
+  wrap.setAttribute("aria-label", `${progress.done}/${progress.total}`);
+  for (let i = 0; i < ticks; i++) {
+    const tick = document.createElement("span");
+    tick.className = i < filled ? "trellis-progress-tick is-filled" : "trellis-progress-tick";
+    wrap.appendChild(tick);
+  }
+  return wrap;
+}
+
+function appendTrellisProgressWithTicks(main, progress) {
+  if (!progress) return;
+  const text = createText("span", "trellis-task-progress", `${progress.done}/${progress.total}`);
+  const ticks = buildTrellisProgressTicks(progress);
+  if (ticks) {
+    const group = document.createElement("span");
+    group.className = "trellis-progress-cell";
+    group.appendChild(ticks);
+    group.appendChild(text);
+    main.appendChild(group);
+  } else {
+    main.appendChild(text);
+  }
+}
+
+function createTrellisPhaseSection(phase, label, count) {
+  const section = document.createElement("button");
+  section.type = "button";
+  section.className = "trellis-phase-section";
+  if (collapsedTrellisPhases.has(phase)) section.classList.add("is-collapsed");
+  const caret = document.createElement("span");
+  // Same bare caret icon as left-rail phase heads (R7): one caret family.
+  caret.className = "trellis-phase-section-caret";
+  caret.appendChild(iconSvg("caret", 12));
+  section.appendChild(caret);
+  section.appendChild(createText("span", "trellis-phase-section-label", label));
+  section.appendChild(createText("span", "trellis-phase-section-count", String(count)));
+  const key = `trellisPhaseSection:${phase}`;
+  section.setAttribute("aria-expanded", collapsedTrellisPhases.has(phase) ? "false" : "true");
+  section.setAttribute("aria-label", label);
+  section.dataset.phaseKey = key;
+  section.addEventListener("click", () => {
+    if (collapsedTrellisPhases.has(phase)) collapsedTrellisPhases.delete(phase);
+    else collapsedTrellisPhases.add(phase);
+    lastTrellisPanelSignature = null;
+    renderTrellisPanel();
+  });
+  return section;
+}
+
+function createTrellisTaskRow(groupRow) {
+  const task = groupRow.task;
+  const row = document.createElement("div");
+  row.className = "trellis-task-row";
+  if (groupRow.depth > 0) row.classList.add("trellis-task-row-child");
+  if (groupRow.hasChildren) row.classList.add("trellis-task-row-group");
+  row.title = trellisTaskRowTitle(task);
+
+  const main = document.createElement("div");
+  main.className = "trellis-task-main";
+  main.appendChild(createText("span", "trellis-task-title", task.title || task.taskPath));
+
+  const badge = TRELLIS_PHASE_BADGE[task.phase];
+  const phaseEl = createText("span", `trellis-phase-badge ${badge.cls}`, t(badge.labelKey));
+  main.appendChild(phaseEl);
+
+  // A parent row with live children shows the subtree summary instead of
+  // its own step count (the group is what the row now answers for);
+  // childless rows keep the plain task progress.
+  if (groupRow.childSummary) {
+    main.appendChild(createText(
+      "span",
+      "trellis-task-group-summary",
+      t("dashboardTrellisGroupProgress")
+        .replace("{done}", String(groupRow.childSummary.done))
+        .replace("{total}", String(groupRow.childSummary.total))
+    ));
+  } else if (task.progress) {
+    appendTrellisProgressWithTicks(main, task.progress);
+  }
+  if (task.sessions.length > 1) {
+    main.appendChild(createText(
+      "span",
+      "trellis-task-count",
+      t("dashboardTrellisBoundSessions").replace("{n}", String(task.sessions.length))
+    ));
+  }
+  // Row-tail detail button: opens the on-demand task-detail card. The row
+  // itself keeps its v1 click semantics (single binding → focus, several →
+  // expand chips), so the button stops propagation before anything else.
+  const detailBtn = document.createElement("button");
+  detailBtn.type = "button";
+  detailBtn.className = "trellis-task-detail-btn";
+  detailBtn.textContent = "ⓘ";
+  detailBtn.title = t("dashboardTrellisDetailOpen");
+  detailBtn.setAttribute("aria-label", t("dashboardTrellisDetailOpen"));
+  detailBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    void openTrellisDetail(task);
+  });
+  main.appendChild(detailBtn);
+  row.appendChild(main);
+
+  // One focusable binding: the whole row is the jump target, reusing the
+  // card's existing focus path. Several bindings: the row expands into
+  // session chips and each chip owns its own focus call.
+  row.addEventListener("click", () => {
+    if (task.sessions.length > 1) {
+      if (expandedTrellisTasks.has(task.taskPath)) expandedTrellisTasks.delete(task.taskPath);
+      else expandedTrellisTasks.add(task.taskPath);
+      lastTrellisPanelSignature = null;
+      renderTrellisPanel();
+      return;
+    }
+    const only = task.sessions[0];
+    if (only && only.canFocus) window.dashboardAPI.focusSession(only.id);
+  });
+
+  if (expandedTrellisTasks.has(task.taskPath)) {
+    const chips = document.createElement("div");
+    chips.className = "trellis-task-sessions";
+    for (const binding of task.sessions) chips.appendChild(createTrellisSessionChip(binding));
+    row.appendChild(chips);
+    row.classList.add("trellis-task-row-expanded");
+  }
+
+  return row;
+}
+
+function renderTrellisPanel() {
+  if (!trellisPanelEl) return;
+  const sessions = Array.isArray(snapshot && snapshot.sessions) ? snapshot.sessions : [];
+  const tasks = aggregateTrellisTasks(sessions);
+  const signature = computeTrellisPanelSignature(tasks);
+  if (signature === lastTrellisPanelSignature) return;
+  lastTrellisPanelSignature = signature;
+
+  if (!tasks.length) {
+    expandedTrellisTasks.clear();
+    trellisPanelEl.hidden = true;
+    trellisPanelEl.replaceChildren();
+    return;
+  }
+
+  const livePaths = new Set(tasks.map((task) => task.taskPath));
+  for (const taskPath of expandedTrellisTasks) {
+    if (!livePaths.has(taskPath)) expandedTrellisTasks.delete(taskPath);
+  }
+
+  const fragment = document.createDocumentFragment();
+  fragment.appendChild(createText("div", "trellis-panel-title", t("dashboardTrellisSectionTitle")));
+  // Phase-grouped card tree (09-25 apple-design): plan → execute → check …
+  // sections are light collapsible dividers, task cards stay in the same
+  // visual layer as session cards. Children ALWAYS travel with their root
+  // ancestor's phase — splitting a subtree across sections breaks the
+  // parent→child order contract (see dashboard-trellis-panel tests).
+  const rows = groupTrellisTasks(tasks);
+  const phaseOrder = Object.keys(TRELLIS_PHASE_BADGE);
+  // Single walk: a depth-0 row sets the current phase; every child inherits
+  // its root ancestor's phase. Bucket order === tree order, so the
+  // parent→child order contract survives phase grouping.
+  const byPhase = new Map();
+  let currentPhase = null;
+  for (const groupRow of rows) {
+    if (groupRow.depth === 0) {
+      currentPhase = Object.prototype.hasOwnProperty.call(TRELLIS_PHASE_BADGE, groupRow.task.phase)
+        ? groupRow.task.phase
+        : "other";
+    }
+    if (!currentPhase) continue; // defensive: orphan before any root
+    if (!byPhase.has(currentPhase)) byPhase.set(currentPhase, []);
+    byPhase.get(currentPhase).push(groupRow);
+  }
+  const orderedPhases = [
+    ...phaseOrder.filter((phase) => byPhase.has(phase) && byPhase.get(phase).length),
+    ...(byPhase.has("other") && byPhase.get("other").length ? ["other"] : []),
+  ];
+  for (const phase of orderedPhases) {
+    const phaseRows = byPhase.get(phase);
+    const label = phase === "other" ? "…" : t(TRELLIS_PHASE_BADGE[phase].labelKey);
+    // Phase = first-class CARD (R7): the head lives INSIDE the card as its
+    // header — same anatomy as left-rail .trellis-split-phase-card. Folding
+    // skips the rows (never hides the whole card — the head must stay
+    // clickable to unfold; also avoids the [hidden]-on-container trap).
+    const wrap = document.createElement("div");
+    wrap.className = "trellis-phase-rows";
+    wrap.appendChild(createTrellisPhaseSection(phase, label, phaseRows.filter((r) => r.depth === 0).length));
+    if (!collapsedTrellisPhases.has(phase)) {
+      for (const groupRow of phaseRows) wrap.appendChild(createTrellisTaskRow(groupRow));
+    }
+    fragment.appendChild(wrap);
+  }
+  trellisPanelEl.replaceChildren(fragment);
+  trellisPanelEl.hidden = false;
+}
+
+// ── Trellis independent view ───────────────────────────────────────────────
+// Project-centric browsing that works with no live session at all: the
+// registered-roots panel (add via the main-side directory picker, remove
+// per row), the active-task list and the archive browser, each fed by a
+// one-shot IPC read (view switch + explicit refresh, never a poll).
+
+async function refreshTrellisViewRoots() {
+  let result = null;
+  try {
+    if (typeof window.dashboardAPI.listTrellisRoots !== "function") {
+      throw new Error("bridge-unavailable");
+    }
+    result = await window.dashboardAPI.listTrellisRoots();
+  } catch {
+    result = null;
+  }
+  if (result && typeof result === "object" && result.status === "ok" && Array.isArray(result.roots)) {
+    trellisView.roots = result.roots.filter((root) => typeof root === "string" && root);
+    trellisView.picks = Array.isArray(result.picks)
+      ? result.picks.filter((p) => p && typeof p === "object" && typeof p.picked === "string" && Array.isArray(p.roots))
+      : [];
+    trellisView.rootsLoaded = true;
+    trellisView.rootsError = false;
+    trellisView.noProjectsHint = false;
+    // A removed root takes its filter selection with it — fall back to
+    // the merged "all" view instead of filtering everything out.
+    if (trellisView.selectedRoot !== null && !trellisView.roots.includes(trellisView.selectedRoot)) {
+      trellisView.selectedRoot = null;
+    }
+  } else {
+    trellisView.rootsError = true;
+  }
+  lastTrellisViewSignature = null;
+  renderTrellisView();
+}
+
+async function refreshTrellisActive() {
+  const state = trellisView.active;
+  state.loading = true;
+  state.error = false;
+  state.seq += 1;
+  const seq = state.seq;
+  lastTrellisViewSignature = null;
+  renderTrellisView();
+  let result = null;
+  try {
+    if (typeof window.dashboardAPI.getTrellisActiveList !== "function") {
+      throw new Error("bridge-unavailable");
+    }
+    result = await window.dashboardAPI.getTrellisActiveList();
+  } catch {
+    result = null;
+  }
+  if (seq !== state.seq) return;
+  state.loading = false;
+  if (result && typeof result === "object" && result.status === "ok" && Array.isArray(result.tasks)) {
+    state.tasks = result.tasks;
+    state.loaded = true;
+    state.error = false;
+  } else {
+    state.error = true;
+  }
+  lastTrellisViewSignature = null;
+  renderTrellisView();
+}
+
+async function refreshTrellisViewArchive() {
+  const state = trellisView.archive;
+  state.loading = true;
+  state.error = false;
+  state.seq += 1;
+  const seq = state.seq;
+  lastTrellisViewSignature = null;
+  renderTrellisView();
+  let result = null;
+  try {
+    if (typeof window.dashboardAPI.getTrellisArchiveList !== "function") {
+      throw new Error("bridge-unavailable");
+    }
+    result = await window.dashboardAPI.getTrellisArchiveList();
+  } catch {
+    result = null;
+  }
+  if (seq !== state.seq) return;
+  state.loading = false;
+  if (result && typeof result === "object" && result.status === "ok" && Array.isArray(result.tasks)) {
+    state.tasks = result.tasks;
+    state.loaded = true;
+    state.error = false;
+    // First successful load: open the newest month by default so rows are
+    // immediately visible; older months stay collapsed behind their headers.
+    if (state.openMonths === null && state.tasks.length) {
+      const groups = groupTrellisArchiveByMonth(state.tasks);
+      if (groups.length) state.openMonths = new Set([groups[0].month]);
+    }
+  } else {
+    state.error = true;
+  }
+  lastTrellisViewSignature = null;
+  renderTrellisView();
+}
+
+function refreshTrellisView() {
+  void refreshTrellisViewRoots();
+  void refreshTrellisActive();
+  void refreshTrellisViewArchive();
+  lastTrellisViewSignature = null;
+  renderTrellisView();
+}
+
+// Split rows share the tree rows' detail-open payload shape: archived
+// tasks go through the cwd-carrying shape, active ones pass the row task.
+// The ⓘ row-tail button keeps the OVERLAY form (full-width card) while
+// row clicks use the embedded pane — both hosts stay reachable in v7.
+function openTrellisDetailFromTask(task) {
+  if (!task) return;
+  if (task.completedAt) {
+    void openTrellisDetail({
+      taskPath: task.taskPath,
+      title: task.title || "",
+      cwd: task.cwd || "",
+      sessions: [],
+      progress: null,
+    });
+    return;
+  }
+  void openTrellisDetail(task);
+}
+
+function buildTrellisRootsSection() {
+  const section = document.createElement("div");
+  section.className = "trellis-view-section trellis-roots-section";
+  // Root management moved OUT of the dashboard (09-25): add/remove lives in
+  // Settings → Trellis. This section only renders error / empty hints; with
+  // healthy roots it stays empty — the chip bar is the primary UI.
+  if (trellisView.rootsError) {
+    section.appendChild(createText("div", "trellis-view-error", t("dashboardTrellisRootsError")));
+  } else if (trellisView.noProjectsHint) {
+    section.appendChild(createText("div", "trellis-view-empty", t("dashboardTrellisRootsNoProjects")));
+  } else if (!trellisView.roots.length) {
+    section.appendChild(createText("div", "trellis-view-empty", t("dashboardTrellisRootsEmptyHint")));
+  }
+  return section;
+}
+
+// Shared per-row origin tag: the disambiguated root label, but only in
+// the merged "all" view and only for rows that actually belong to a
+// registered root (session-resolved unregistered projects stay untagged
+// rather than showing a misleading cwd basename).
+function trellisRowProjectLabel(task, labels) {
+  if (trellisView.selectedRoot !== null) return null;
+  const owner = trellisTaskOwningRoot(task && task.cwd, trellisView.roots);
+  return owner ? labels.get(owner) || owner : null;
+}
+
+// Project filter chip row (between the roots manager and the task lists):
+// "All projects" + one chip per registered root, labeled by the root's
+// (disambiguated) basename with its live-task count. Pure render-layer
+// state — clicking only re-filters what is already in memory.
+// v5-b: switch the Trellis view display mode (tree ⇄ board). Cached in
+// localStorage for reloads of the same window; never leaves the renderer.
+// View-level rebuild entry: invalidates the *view* signature (not the panel
+// one) so renderTrellisView() re-renders body + toggles even when panel data
+// is unchanged. All view-state mutations (mode, split selection, archive
+// fold) must go through this, never through renderTrellisView() directly.
+function renderTrellisViewBody() {
+  lastTrellisViewSignature = null;
+  renderTrellisView();
+}
+
+// An in-place (LOCAL) fold updates the DOM without going through
+// renderTrellisView — but `collapsedPaths` / `archive.openMonths` still
+// live in the structural signature. Leaving it stale makes the next 1s
+// tick read the stored state as "new structure" and rebuild the whole
+// list, which silently undoes the point of the local path (in-flight CSS
+// transitions are cut, row nodes / focus are thrown away). Refreshing the
+// signature after a successful local mutation keeps it describing the
+// LIVE DOM, so a rebuild really only happens when the DATA changed (A1).
+function syncTrellisViewSignature() {
+  lastTrellisViewSignature = computeTrellisViewSignature();
+}
+
+// v6 master-detail split state. Session-level, never persisted. Entry
+// stagger is one-shot (flag consumed by the builder); archive group starts
+// collapsed every session.
+const trellisSplit = {
+  selectedTaskPath: null,
+  // "All projects" mode merges roots: the same taskPath can appear in
+  // multiple roots, so selection identity is (path, cwd) — matching on
+  // path alone highlights every same-named sibling at once.
+  selectedTaskCwd: null,
+  archiveOpen: false,
+  entryPending: false,
+  // Expanded-by-default hierarchy: paths in this set are COLLAPSED.
+  collapsedPaths: new Set(),
+  // Left-rail PHASE groups (plan/execute/check…) fold here — default OPEN.
+  collapsedPhases: new Set(),
+  // taskPath -> panel task object (flat, both groups); lets the detail
+  // card reopen from selection alone without re-deriving from the tree.
+  tasksByPath: new Map(),
+  // v7 R10: spec docs and task relations are LEFT-COLUMN GROUPS now
+  // (below plan/execute/check/done), each starting collapsed with a
+  // lazy first-expand fetch. Right-pane content routes on detailKind.
+  specGroupOpen: false,
+  networkGroupOpen: false,
+  detailKind: "task", // "task" | "spec" | "network"
+  networkGroupKey: null, // "v|<parent>" | "s|<relPath>" | "p|<prdPath>"
+};
+
+// Embedded detail-card host inside the split right pane. Reassigned by
+// buildTrellisSplitDetailPane on every list rebuild; null when no pane.
+let trellisSplitDetailHostEl = null;
+
+// Selection-only fast path (09-25 split polish): swap the is-selected
+// class between rows and rebuild JUST the right detail pane, leaving the
+// left list DOM untouched — no flicker, no scroll jump, no focus loss
+// when a right-pane reference re-selects a row. Available only when the
+// structural view signature is still current (filter chips, folds,
+// archive toggle, list/drawer data changes make it stale on purpose) and
+// the live DOM exposes the query APIs (the test sandbox does not, so it
+// keeps exercising the full-rebuild path). Returns false when the fast
+// path cannot run — callers fall back to the full renderTrellisViewBody().
+// Row lookup for post-rebuild selection reveal: mirrors the class-swap
+// selection predicate used by renderTrellisSplitSelectionOnly (task /
+// spec / network rows, kind-aware) so a structural rebuild scrolls to
+// exactly the row the fast path would have highlighted.
+// "All projects" merges roots: tasksByPath keys are (taskPath, cwd) so
+// same-named tasks from different roots never overwrite each other.
+function trellisTaskKey(taskPath, cwd) {
+  return `${taskPath}\u0000${cwd || ""}`;
+}
+
+// LOCAL-fold visibility (09-25 motion fix, take 3): rows ALWAYS mount now,
+// so `querySelectorAll` keeps handing back folded rows — `display:none`
+// does not remove a node from the tree. Two class roles, deliberately
+// separate (merging them would break either hiding or rotation):
+//   - HIDING: `.is-subtree-folded` / `.is-month-folded` on the row,
+//     `.is-folded` on the owning phase card (child selector).
+//   - ROTATION: `.is-collapsed` on the row (CSS anchor is
+//     `.trellis-split-row.is-collapsed .trellis-split-caret`).
+// A folded phase card hides by CHILD selector, hence the ancestor walk;
+// parentNode is missing on detached/vm-stub nodes, so it is probed.
+function isTrellisRowVisible(row) {
+  if (!row || !row.classList) return false;
+  if (row.classList.contains("is-subtree-folded") || row.classList.contains("is-month-folded")) return false;
+  let node = row.parentNode || null;
+  while (node) {
+    if (node.classList && node.classList.contains("trellis-split-phase-card")
+      && node.classList.contains("is-folded")) return false;
+    node = node.parentNode || null;
+  }
+  return true;
+}
+
+function visibleTrellisRows(rows) {
+  return Array.from(rows || []).filter(isTrellisRowVisible);
+}
+
+// Sibling walk for a LOCAL subtree fold (09-25 motion fix, take 3): the
+// real Electron DOM hands out an HTMLCollection — `Array.isArray()` is
+// ALWAYS false and there is no `indexOf`, which is exactly why the first
+// attempt silently fell back to a full tree rebuild (no caret rotation).
+// `Array.from()` normalizes both an HTMLCollection and a plain array.
+// Returns the rows it touched (classList is the only side effect) so the
+// scan stays directly testable with an array-like stub.
+function applySubtreeFold(childrenLike, row, folded) {
+  const touched = [];
+  if (!row) return touched;
+  const siblings = Array.from(childrenLike || []);
+  const start = siblings.indexOf(row) + 1;
+  if (start <= 0) return touched;
+  const myDepth = Number(row.dataset.depth || "0");
+  for (let k = start; k < siblings.length; k++) {
+    const node = siblings[k];
+    if (!node || !node.classList || !node.classList.contains("trellis-split-row")) break;
+    if (Number(node.dataset.depth || "0") <= myDepth) break;
+    node.classList.toggle("is-subtree-folded", folded);
+    touched.push(node);
+  }
+  return touched;
+}
+
+// Task-row query shared by the keyboard cursor, Enter activation and the
+// post-rebuild focus re-query. Returns [] (never throws) in the vm sandbox.
+function readTrellisTaskRows() {
+  if (!trellisViewEl || typeof trellisViewEl.querySelectorAll !== "function") return [];
+  return trellisViewEl.querySelectorAll(".trellis-split-row[data-task-path]");
+}
+
+function findTrellisSelectedRow() {
+  if (!trellisViewEl || typeof trellisViewEl.querySelectorAll !== "function") return null;
+  for (const row of trellisViewEl.querySelectorAll(".trellis-split-row")) {
+    // Folded rows are still mounted: never reveal/scroll/focus one.
+    if (!isTrellisRowVisible(row)) continue;
+    if (row.dataset.taskPath !== undefined) {
+      if (
+        trellisSplit.detailKind === "task"
+        && row.dataset.taskPath === trellisSplit.selectedTaskPath
+        && (row.dataset.taskCwd || "") === (trellisSplit.selectedTaskCwd || "")
+      ) return row;
+    } else if (row.dataset.specPath !== undefined) {
+      if (trellisSplit.detailKind === "spec" && row.dataset.specPath === trellisSpec.selected) return row;
+    } else if (row.dataset.networkKey !== undefined) {
+      if (trellisSplit.detailKind === "network" && row.dataset.networkKey === trellisSplit.networkGroupKey) return row;
+    }
+  }
+  return null;
+}
+
+function renderTrellisSplitSelectionOnly() {
+  if (!trellisViewEl || activeView !== "trellis") return false;
+  if (typeof trellisViewEl.querySelectorAll !== "function"
+    || typeof trellisViewEl.querySelector !== "function") return false;
+  if (computeTrellisViewSignature() !== lastTrellisViewSignature) return false;
+  const section = trellisViewEl.querySelector(".trellis-split-section");
+  const pane = trellisViewEl.querySelector(".trellis-split-detail");
+  if (!section || !pane || typeof pane.replaceWith !== "function") return false;
+
+  // 1) Class swap only: task / spec / network rows toggle is-selected,
+  // the row nodes themselves are never replaced.
+  let targetRow = null;
+  for (const row of trellisViewEl.querySelectorAll(".trellis-split-row")) {
+    let selected = false;
+    if (row.dataset.taskPath !== undefined) {
+      selected = trellisSplit.detailKind === "task"
+        && row.dataset.taskPath === trellisSplit.selectedTaskPath
+        && (row.dataset.taskCwd || "") === (trellisSplit.selectedTaskCwd || "");
+    } else if (row.dataset.specPath !== undefined) {
+      selected = trellisSplit.detailKind === "spec"
+        && row.dataset.specPath === trellisSpec.selected;
+    } else if (row.dataset.networkKey !== undefined) {
+      selected = trellisSplit.detailKind === "network"
+        && row.dataset.networkKey === trellisSplit.networkGroupKey;
+    }
+    row.classList.toggle("is-selected", selected);
+    // Only a VISIBLE row becomes the scroll/focus target — a selected row
+    // inside a folded subtree must not steal the focus ring.
+    if (selected && isTrellisRowVisible(row)) targetRow = row;
+  }
+
+  // 2) Rebuild just the right pane. Same builder as the full path, so
+  // buildTrellisDetailCard stays the single source for task cards; the
+  // module-level host reference is reassigned with the new pane.
+  const task = trellisSplit.detailKind === "task" && trellisSplit.selectedTaskPath
+    ? trellisSplit.tasksByPath.get(trellisTaskKey(trellisSplit.selectedTaskPath, trellisSplit.selectedTaskCwd)) || null
+    : null;
+  pane.replaceWith(buildTrellisSplitDetailPane(task));
+
+  // 3) Reveal + focus the target row: scroll ONLY when it sits outside
+  // the list viewport (stable when already visible); focus is scroll-free
+  // so viewport alignment stays owned by the scrollIntoView above. Both
+  // guarded — sandbox elements carry neither method.
+  if (targetRow) {
+    const list = section.querySelector(".trellis-split-list");
+    const rowRect = typeof targetRow.getBoundingClientRect === "function"
+      ? targetRow.getBoundingClientRect() : null;
+    const listRect = list && typeof list.getBoundingClientRect === "function"
+      ? list.getBoundingClientRect() : null;
+    if (rowRect && listRect && (rowRect.top < listRect.top || rowRect.bottom > listRect.bottom)
+      && typeof targetRow.scrollIntoView === "function") {
+      targetRow.scrollIntoView({ block: "nearest" });
+    }
+    // Focus only when the keyboard cursor already lives in the split
+    // section (keyboard navigation). Clicking a reference in the right
+    // pane keeps focus where the user clicked — no focus-ring jump.
+    const owner = typeof document !== "undefined" ? document.activeElement : null;
+    if (owner && typeof section.contains === "function" && section.contains(owner)
+      && typeof targetRow.focus === "function") {
+      targetRow.focus({ preventScroll: true });
+    }
+  }
+  return true;
+}
+
+function selectTrellisSplitTask(taskPath, taskCwd) {
+  const next = typeof taskPath === "string" ? taskPath : null;
+  const nextCwd = next === null ? null : typeof taskCwd === "string" ? taskCwd : null;
+  // Idempotent re-click: only early-return when the detail card is already
+  // showing for this selection (or both are empty). A same-path click with
+  // a closed card (fetch failed / closed) must retry the open.
+  if (
+    next === trellisSplit.selectedTaskPath &&
+    nextCwd === trellisSplit.selectedTaskCwd &&
+    (next === null ? !(trellisDetail.open || trellisDetail.embedded) : trellisDetail.open)
+  ) {
+    return;
+  }
+  trellisSplit.selectedTaskPath = next;
+  trellisSplit.selectedTaskCwd = nextCwd;
+  trellisSplit.detailKind = "task";
+  trellisSplit.networkGroupKey = null;
+  // The detail card lifecycle follows the selection: any stale embedded
+  // card is reset first, then the selection-only fast path (class swap +
+  // pane rebuild, left list DOM untouched) or — when the structure went
+  // stale — the full body rebuild re-opens the FULL detail card inside
+  // the pane for the new selection (no overlay).
+  resetTrellisDetailState();
+  if (renderTrellisSplitSelectionOnly()) return;
+  lastTrellisPanelSignature = null;
+  renderTrellisViewBody();
+}
+
+function toggleTrellisSplitArchive() {
+  trellisSplit.archiveOpen = !trellisSplit.archiveOpen;
+  lastTrellisPanelSignature = null;
+  renderTrellisViewBody();
+}
+
+// Left-rail phase groups (plan/execute/check…) fold LOCALLY (09-25 motion
+// fix): the card stays mounted, only the fold class flips — the caret
+// rotates via CSS transition and rows collapse. No tree rebuild, so the
+// scroll position and any in-flight CSS transitions survive.
+function toggleTrellisSplitPhase(phase) {
+  if (trellisSplit.collapsedPhases.has(phase)) trellisSplit.collapsedPhases.delete(phase);
+  else trellisSplit.collapsedPhases.add(phase);
+  const folded = trellisSplit.collapsedPhases.has(phase);
+  // Class-scan instead of a `[data-phase]` attribute selector: the phase
+  // ids are a closed set, and the vm sandbox has no CSS.escape.
+  const cards = trellisViewEl && typeof trellisViewEl.querySelectorAll === "function"
+    ? trellisViewEl.querySelectorAll(".trellis-split-phase-card")
+    : [];
+  let card = null;
+  for (const el of cards) {
+    if (el.dataset && el.dataset.phase === phase) card = el;
+  }
+  if (card) {
+    // Row HIDING is the CARD class; caret ROTATION is written on the head
+    // AND its toggle button — both are live CSS anchors (dashboard.html
+    // .trellis-split-group-head.is-collapsed and
+    // .trellis-split-group-toggle.is-collapsed), and the rebuild path
+    // writes both too.
+    card.classList.toggle("is-folded", folded);
+    const writeCaretState = (el) => {
+      if (el) el.classList.toggle("is-collapsed", folded);
+    };
+    if (typeof card.querySelector === "function") {
+      writeCaretState(card.querySelector(".trellis-split-group-head"));
+    }
+    const toggle = typeof card.querySelector === "function"
+      ? card.querySelector(".trellis-split-group-toggle")
+      : null;
+    writeCaretState(toggle);
+    if (toggle) toggle.setAttribute("aria-expanded", String(!folded));
+    syncTrellisViewSignature();
+    return;
+  }
+  // Card not mounted yet (first render races) — fall back to a rebuild.
+  lastTrellisPanelSignature = null;
+  renderTrellisViewBody();
+}
+
+// Keyboard navigation across the VISIBLE rows in group order — derived
+// from the DOM so it can never drift from what is actually rendered.
+// Rows are always MOUNTED since the local-fold fix, so "visible" has to be
+// computed: folded subtrees, folded months and rows inside a folded phase
+// card are skipped (otherwise ↓ selects a display:none row and the list
+// looks frozen while the right pane silently swaps).
+function moveTrellisSplitSelection(delta) {
+  const rows = visibleTrellisRows(readTrellisTaskRows());
+  if (rows.length === 0) return;
+  const paths = rows.map((r) => r.dataset.taskPath);
+  const cwds = rows.map((r) => r.dataset.taskCwd || "");
+  const index = paths.findIndex(
+    (p, i) => p === trellisSplit.selectedTaskPath && cwds[i] === (trellisSplit.selectedTaskCwd || "")
+  );
+  const nextIndex = index === -1
+    ? (delta > 0 ? 0 : paths.length - 1)
+    : Math.min(Math.max(index + delta, 0), paths.length - 1);
+  if (paths[nextIndex] !== trellisSplit.selectedTaskPath) {
+    selectTrellisSplitTask(paths[nextIndex], cwds[nextIndex]);
+    // Focus the newly selected row so the :focus-visible outline tracks
+    // the keyboard cursor. On the selection-only fast path the row node
+    // is NOT rebuilt and the fast path already focused it (guarded: the
+    // test sandbox elements have no focus()); this query re-focuses the
+    // node in place after a structural fallback rebuild, and is an
+    // idempotent no-op otherwise.
+    const focused = visibleTrellisRows(readTrellisTaskRows())[nextIndex] || null;
+    if (focused && typeof focused.focus === "function") focused.focus();
+  }
+}
+
+// Inline SVG icon vocabulary (UI redesign 09-24 Batch C): a small curated
+// set of stroke icons replaces the ad-hoc unicode glyphs (▾ ⛓ ↻ ✕) so
+// every marker renders identically across platforms and inherits color
+// from `currentColor`. Built with pure DOM calls (no innerHTML) so the
+// test sandbox's fake document keeps working; when createElementNS is
+// unavailable (sandbox), the fallback element still carries the shape
+// attributes for assertions.
+const TRELLIS_ICON_PATHS = {
+  caret: ["m6 9 6 6 6-6"],
+  gear: [
+    "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z",
+    "M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z",
+  ],
+  link: [
+    "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71",
+    "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71",
+  ],
+  refresh: ["M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8", "M21 3v5h-5"],
+  close: ["M18 6 6 18", "m6 6 12 12"],
+};
+
+function iconSvg(name, size = 12) {
+  const ns = "http://www.w3.org/2000/svg";
+  const make = (tag) => (typeof document.createElementNS === "function"
+    ? document.createElementNS(ns, tag)
+    : document.createElement(tag));
+  const svg = make("svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", String(size));
+  svg.setAttribute("height", String(size));
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  for (const d of TRELLIS_ICON_PATHS[name] || []) {
+    const path = make("path");
+    path.setAttribute("d", d);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", "currentColor");
+    path.setAttribute("stroke-width", "2");
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    svg.appendChild(path);
+  }
+  return svg;
+}
+
+function buildTrellisSplitRow(task, meta, labels, archived = false) {
+  const row = document.createElement("div");
+  row.className = "trellis-split-row";
+  // Subtree membership for LOCAL folds (09-25): flat rows carry their
+  // depth so a fold can walk following siblings without rebuilding.
+  row.dataset.depth = String(meta ? meta.depth : 0);
+  // Focusable for keyboard navigation only (not in the Tab order): ↑/↓
+  // move the selection AND the DOM focus so :focus-visible outlines the
+  // keyboard-active row (UI redesign 09-24 Batch B).
+  row.setAttribute("tabindex", "-1");
+  row.dataset.taskPath = task.taskPath || "";
+  row.dataset.taskCwd = task.cwd || "";
+  // Mirror the selection-only fast path (renderTrellisSplitSelectionOnly):
+  // a task row is only highlighted when the detail kind is actually "task";
+  // otherwise a network-group selection would double-highlight after a
+  // structural rebuild. Cwd must match too — same path in another root is a
+  // DIFFERENT task ("all projects" merges roots with duplicate names).
+  if (
+    task.taskPath === trellisSplit.selectedTaskPath &&
+    (task.cwd || "") === (trellisSplit.selectedTaskCwd || "") &&
+    trellisSplit.detailKind === "task"
+  ) {
+    row.classList.add("is-selected");
+  }
+  // Archive rows keep their original phase field, so month-group rows
+  // pass archived=true explicitly; done-phase actives keep the fallback.
+  if (archived || task.phase === "done") row.classList.add("is-archived");
+  // Hierarchy cues (v6.1): indent children under their parent; expose
+  // hasChildren so a parent row reads as a group head at a glance.
+  const depth = meta && Number.isFinite(meta.depth) ? meta.depth : 0;
+  if (depth > 0) {
+    row.classList.add("is-child");
+    row.style.setProperty("--split-depth", String(Math.min(depth, 3)));
+  }
+  if (meta && meta.hasChildren) {
+    row.classList.add("is-parent");
+    if (trellisSplit.collapsedPaths.has(task.taskPath)) {
+      row.classList.add("is-collapsed");
+    }
+  }
+
+  // Leading caret slot: 16px for every row (empty for leaves) so dots and
+  // titles stay column-aligned between parents and children. The caret is
+  // a real button in normal flow — no negative margins pulling it over the
+  // row edge.
+  const slot = document.createElement("span");
+  slot.className = "trellis-split-caret-slot";
+  if (meta && meta.hasChildren) {
+    const caret = document.createElement("button");
+    caret.type = "button";
+    caret.className = "trellis-split-caret";
+    // Fold-state mirror for expand/collapse-all LOCAL paths (09-25):
+    // hasChildren rides on the row so bulk folds can find group heads.
+    row.dataset.hasChildren = "true";
+    caret.setAttribute("aria-label", t("dashboardTrellisSplitToggle"));
+    caret.setAttribute("aria-expanded", String(!trellisSplit.collapsedPaths.has(task.taskPath)));
+    caret.appendChild(iconSvg("caret", 12));
+    caret.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const nowFolded = !trellisSplit.collapsedPaths.has(task.taskPath);
+      if (nowFolded) trellisSplit.collapsedPaths.add(task.taskPath);
+      else trellisSplit.collapsedPaths.delete(task.taskPath);
+      // Caret ROTATION anchors on the ROW (dashboard.html:
+      // `.trellis-split-row.is-collapsed .trellis-split-caret`); the caret
+      // button itself only carries the aria state.
+      row.classList.toggle("is-collapsed", nowFolded);
+      caret.setAttribute("aria-expanded", String(!nowFolded));
+      // LOCAL fold (09-25 motion fix, take 3): walk the parent's children.
+      // `parent.children` is an HTMLCollection on the real Electron DOM and
+      // applySubtreeFold normalizes it via Array.from. A detached row (vm
+      // sandbox) has no parentNode — rebuild there: correct behavior, just
+      // without the in-place motion.
+      const parent = row.parentNode;
+      if (parent && parent.children) {
+        applySubtreeFold(parent.children, row, nowFolded);
+        syncTrellisViewSignature();
+        return;
+      }
+      lastTrellisPanelSignature = null;
+      renderTrellisViewBody();
+    });
+    slot.appendChild(caret);
+  }
+  row.appendChild(slot);
+
+  // Three-segment row (noty-ui structure): state dot / main / side.
+  const dot = document.createElement("span");
+  dot.className = `trellis-split-row-dot is-${task.phase || "plan"}`;
+  row.appendChild(dot);
+
+  const main = document.createElement("div");
+  main.className = "trellis-split-row-main";
+  // Title line: the title owns the full head width (native title tooltip
+  // reveals the full name on hover since the ellipsis can hide it).
+  const headRow = document.createElement("div");
+  headRow.className = "trellis-split-row-head";
+  const titleText = task.title || task.taskPath || "?";
+  const titleEl = createText("span", "trellis-split-row-title", titleText);
+  titleEl.title = titleText;
+  headRow.appendChild(titleEl);
+  main.appendChild(headRow);
+  const subBits = [];
+  if (task.sessions && task.sessions.length > 0) {
+    subBits.push(t("dashboardTrellisBoundSessions").replace("{n}", String(task.sessions.length)));
+  }
+  const childCount = meta && meta.hasChildren && Number.isFinite(meta.childCount) ? meta.childCount : null;
+  if (meta && meta.hasChildren) {
+    subBits.push(t("dashboardTrellisSplitChildren").replace("{n}", String(childCount != null ? childCount : "")));
+  }
+  // Origin tag: merged "all" view only, and only for rows that belong to
+  // a registered root — same semantics and class as the v6 tree rows
+  // (trellis-task-project), so disambiguated labels survive the split
+  // migration while filtered / session-resolved rows stay untagged.
+  // Archived duration + completion date ride the SAME sub line (09-25 R6):
+  // one card = one text line — nothing gets a dedicated second row.
+  if (task.completedAt || typeof task.completedAtMs === "number") {
+    const durationMs = typeof task.durationMs === "number" ? task.durationMs : null;
+    subBits.push(formatTrellisArchiveDuration(durationMs));
+    const completed = trellisArchiveCompletedLabel(task);
+    if (completed) subBits.push(completed);
+  }
+  // Rides the SUB line (09-25 split polish) so the title keeps its width.
+  const originLabel = trellisRowProjectLabel(task, labels);
+  // Priority chip (v7 R7) rides the sub line, ahead of the metadata bits:
+  // P0/P1 highlight, P2 stays muted. The chip text is the badge itself
+  // (locale-independent), the modifier class carries the rank.
+  const priority = normalizeTrellisPriority(task.priority);
+  if (priority || originLabel || subBits.length > 0) {
+    const sub = document.createElement("div");
+    sub.className = "trellis-split-row-sub";
+    if (priority) {
+      const chip = createText("span", `trellis-priority pri-${priority}`, priority.toUpperCase());
+      chip.setAttribute("aria-label", t("dashboardTrellisPriority").replace("{p}", priority.toUpperCase()));
+      sub.appendChild(chip);
+    }
+    if (originLabel) {
+      sub.appendChild(createText("span", "trellis-task-project", originLabel));
+    }
+    if (subBits.length > 0) {
+      sub.appendChild(createText("span", "trellis-split-row-sub-text", subBits.join(" · ")));
+    }
+    main.appendChild(sub);
+  }
+  row.appendChild(main);
+
+  if (task.progress) {
+    row.appendChild(createText(
+      "span",
+      "trellis-split-row-side",
+      `${task.progress.done}/${task.progress.total}`
+    ));
+  }
+
+  row.addEventListener("click", () => {
+    selectTrellisSplitTask(task.taskPath, task.cwd);
+  });
+  row.addEventListener("dblclick", () => {
+    // v6.1: full detail renders IN the right pane — no overlay popup.
+    selectTrellisSplitTask(task.taskPath, task.cwd);
+  });
+  return row;
+}
+
+// Narrow-window mode (09-25): below the 720px CSS breakpoint the right
+// pane is display:none — selections must open the full-screen OVERLAY
+// instead of embedding into a hidden host. No matchMedia in the vm test
+// sandbox → default to embedded (wide) behavior, tests unaffected.
+function trellisUseEmbeddedDetail() {
+  try {
+    if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+      return !window.matchMedia("(max-width: 720px)").matches;
+    }
+  } catch { /* sandbox */ }
+  return true;
+}
+
+function buildTrellisSplitDetailPane(task) {
+  const pane = document.createElement("div");
+  pane.className = "trellis-split-detail";
+  // Module-level host reference: renderTrellisDetail() targets this pane
+  // instead of querying the DOM, so the embedded path works in test
+  // sandboxes without document.querySelector.
+  trellisSplitDetailHostEl = pane;
+  // v7 R10: the right pane hosts three content kinds — task detail (the
+  // default), a spec document, or a network group. Selection routing is
+  // `trellisSplit.detailKind`.
+  if (trellisSplit.detailKind === "spec" && trellisSpec.selected) {
+    pane.appendChild(buildTrellisSpecDocContent(trellisSpec.selected));
+    return pane;
+  }
+  if (trellisSplit.detailKind === "network" && trellisSplit.networkGroupKey) {
+    pane.appendChild(buildTrellisNetworkGroupContent(trellisSplit.networkGroupKey));
+    return pane;
+  }
+  if (!task) {
+    // Empty state: oversized state-dot + guide text (noty-ui flavor).
+    const empty = document.createElement("div");
+    empty.className = "trellis-split-detail-empty";
+    const orb = document.createElement("span");
+    orb.className = "trellis-split-empty-orb";
+    empty.appendChild(orb);
+    empty.appendChild(createText("p", "trellis-split-empty-text", t("dashboardTrellisSplitEmpty")));
+    pane.appendChild(empty);
+    return pane;
+  }
+  // The pane is a plain HOST: the full detail card (same component the
+  // overlay uses) is injected here via renderTrellisDetail(). Two cases:
+  //  1. selection matches an open embedded card (rebuild during fetch):
+  //     synchronously inline the card so the rebuild doesn't blank it.
+  //  2. otherwise (fresh selection just set it): openTrellisDetail will
+  //     render into this host on its first renderTrellisDetail() pass.
+  const embeddedMode = trellisUseEmbeddedDetail();
+  if (
+    embeddedMode &&
+    trellisDetail.open &&
+    trellisDetail.embedded &&
+    trellisDetail.request &&
+    trellisDetail.request.taskPath === task.taskPath
+  ) {
+    pane.appendChild(buildTrellisDetailCard());
+  } else {
+    // Narrow window forces overlay mode: the embedded host is hidden by
+    // CSS and an inline card would be invisible.
+    void openTrellisDetail(task, { embedded: embeddedMode });
+  }
+  return pane;
+}
+
+
+// ↻ archive refresh button (v7 R3): migrates the retired archive section's
+// reload entry into the split list's DONE group head. stopPropagation keeps
+// the group-toggle handler out of the click.
+function buildTrellisSplitRefreshBtn() {
+  // Global refresh (09-25): refreshes roots + active + archive at once.
+  // Lives in the filter chip bar next to 管理 — a view-wide affordance
+  // does not belong to the archive head alone.
+  const refresh = document.createElement("button");
+  refresh.type = "button";
+  refresh.className = "trellis-filter-refresh";
+  refresh.appendChild(iconSvg("refresh", 14));
+  refresh.title = t("dashboardTrellisRefreshAll");
+  refresh.setAttribute("aria-label", t("dashboardTrellisRefreshAll"));
+  refresh.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    // Spin feedback only when a real timer exists (vm test sandbox has
+    // none — the refresh itself still runs).
+    if (typeof window !== "undefined" && typeof window.setTimeout === "function") {
+      refresh.classList.add("is-spinning");
+      window.setTimeout(() => refresh.classList.remove("is-spinning"), 600);
+    }
+    void refreshTrellisView();
+  });
+  return refresh;
+}
+
+function buildTrellisSplitSection(activeTasks, archiveTasks) {
+  const section = document.createElement("div");
+  section.className = "trellis-view-section trellis-split-section";
+  if (trellisSplit.entryPending) {
+    section.classList.add("is-entering");
+    trellisSplit.entryPending = false;
+  }
+
+  let selectedTask = null;
+  // v6.1: hierarchy info for the master list — depth / hasChildren come
+  // from the same pure grouping fn the tree view uses. Only ACTIVE tasks
+  // nest (archived children render flat, matching archive design).
+  // v6.1: real hierarchy — subtasks nest under their parent with a
+  // click-to-expand caret. Roots are bucketed by phase; each root keeps
+  // its whole subtree (a contiguous DFS slice) so expanding reveals all
+  // descendants in order. Archive rows keep hierarchy too.
+  const rootsByPhase = (rows, forcedPhase) => {
+    const map = new Map();
+    let i = 0;
+    while (i < rows.length) {
+      const rootDepth = rows[i].depth;
+      let end = i + 1;
+      while (end < rows.length && rows[end].depth > rootDepth) end += 1;
+      // Archive rows ALWAYS bucket to "done" regardless of their phase
+      // field (archiving is a status, not a phase transition).
+      const phase = forcedPhase || rows[i].task.phase || "plan";
+      if (!map.has(phase)) map.set(phase, []);
+      map.get(phase).push(rows.slice(i, end));
+      i = end;
+    }
+    return map;
+  };
+  // Cross-list parenting (v6 tree semantics): an ARCHIVED task whose
+  // parent is still ACTIVE renders greyed under the live parent instead
+  // of the archive months. Base names are the join key, same as the
+  // panel's grouping fn.
+  const nameOf = (p) => String(p || "").split("/").filter(Boolean).pop() || p;
+  const activeNames = new Set(activeTasks.map((task) => nameOf(task.taskPath)));
+  const adoptedKids = [];
+  const keptArchive = [];
+  for (const task of archiveTasks) {
+    const parent = task.parent && task.parent.trim();
+    if (parent && activeNames.has(parent)) adoptedKids.push({ ...task, crossList: true });
+    else keptArchive.push(task);
+  }
+  const activeRoots = rootsByPhase(groupTrellisTasks([...activeTasks, ...adoptedKids]));
+  const archiveRoots = rootsByPhase(groupTrellisTasks(keptArchive), "done");
+
+  // Origin labels for the merged "all" view: same disambiguating
+  // per-root labels the v6 tree rows used (trellisRowProjectLabel below
+  // consumes them; scoped view returns null and rows stay untagged).
+  const splitLabels = buildTrellisRootLabels(trellisView.roots);
+
+  const listPane = document.createElement("div");
+  listPane.className = "trellis-split-list";
+  // All parent taskPaths in the current dataset (v7 R4): drives the
+  // expand-all / collapse-all buttons in the foot bar. Roots are appended
+  // by the group loop below.
+  const parentPaths = [];
+  const groups = [
+    { phase: "plan", labelKey: "dashboardTrellisPhasePlan" },
+    { phase: "execute", labelKey: "dashboardTrellisPhaseExecute" },
+    { phase: "check", labelKey: "dashboardTrellisPhaseCheck" },
+    { phase: "finish", labelKey: "dashboardTrellisPhaseFinish" },
+    { phase: "done", labelKey: "dashboardTrellisPhaseArchived" },
+  ];
+  let groupIndex = 0;
+  let activeCount = 0;
+  let archiveCount = 0;
+  trellisSplit.tasksByPath.clear();
+
+  // Render rows[startIdx..] while depth > rootDepth; returns next index.
+  // Descendants render only when every ancestor above them is expanded.
+  // Per-group card container (09-25 apple-design R7): each phase section
+  // (plan/execute/check/archive) is one CARD — the head and all task rows
+  // live inside it, so the section reads as a single object instead of a
+  // floating divider above disconnected rows. renderSubtree appends into
+  // the CURRENT group container.
+  let groupEl = listPane;
+  const renderSubtree = (subtree, startIdx, rootDepth, ancestorsExpanded, archived = false, monthOpen = true, monthRowsSink = null) => {
+    let i = startIdx;
+    while (i < subtree.length && subtree[i].depth > rootDepth) {
+      const rowMeta = subtree[i];
+      {
+        // Rows ALWAYS mount (09-25 motion fix): subtree folds hide via a
+        // class on the row so fold/unfold animates without a rebuild.
+        trellisSplit.tasksByPath.set(trellisTaskKey(rowMeta.task.taskPath, rowMeta.task.cwd), rowMeta.task);
+        if (
+          rowMeta.task.taskPath === trellisSplit.selectedTaskPath
+          && (rowMeta.task.cwd || "") === (trellisSplit.selectedTaskCwd || "")
+        ) selectedTask = rowMeta.task;
+        const childRow = buildTrellisSplitRow(rowMeta.task, rowMeta, splitLabels, archived);
+        if (!ancestorsExpanded) childRow.classList.add("is-subtree-folded");
+        if (!monthOpen) childRow.classList.add("is-month-folded");
+        if (monthRowsSink) monthRowsSink.push(childRow);
+        groupEl.appendChild(childRow);
+      }
+      if (rowMeta.hasChildren) parentPaths.push(rowMeta.task.taskPath);
+      i = renderSubtree(
+        subtree,
+        i + 1,
+        subtree[i].depth,
+        ancestorsExpanded && !trellisSplit.collapsedPaths.has(rowMeta.task.taskPath),
+        archived,
+        monthOpen,
+        monthRowsSink
+      );
+    }
+    return i;
+  };
+
+  for (const group of groups) {
+    // Section = one card (R7): head + rows share a bordered surface, the
+    // same visual family as session/task cards — one layer, inherited UI.
+    groupEl = document.createElement("section");
+    groupEl.className = "trellis-split-phase-card";
+    groupEl.dataset.phase = group.phase;
+    const subtrees = (group.phase === "done" ? archiveRoots : activeRoots).get(group.phase) || [];
+    if (group.phase === "done") {
+      for (const subtree of subtrees) archiveCount += subtree.length;
+    } else {
+      activeCount += subtrees.length;
+    }
+    // finish (completed-but-unarchived) is practically always empty in
+    // this repo's flow — a permanently empty placeholder reads as noise.
+    if (group.phase === "finish" && subtrees.length === 0) continue;
+    // Same for an EMPTY archive (R7): no archived roots and nothing to
+    // say (no fetch error/loading) → skip the card entirely instead of
+    // appending an empty bordered placeholder.
+    if (group.phase === "done" && subtrees.length === 0
+      && !trellisView.archive.error && !trellisView.archive.loading) {
+      continue;
+    }
+    if (group.phase === "done" && !trellisSplit.archiveOpen && subtrees.length > 0) {
+      const collapsedHead = document.createElement("div");
+      // `is-collapsed` stays on the HEAD (v7 contract: tests + CSS target
+      // the group head, not the inner toggle button). The click/keyboard
+      // handler lives on the toggle BUTTON (UI redesign 09-24 Batch B):
+      // a real button carries focus, :focus-visible and :active for free;
+      // stopPropagation keeps the click from reaching the head.
+      collapsedHead.className = "trellis-split-group-head is-collapsed";
+      collapsedHead.style.setProperty("--split-group-index", String(groupIndex));
+      const collapsedToggle = document.createElement("button");
+      collapsedToggle.type = "button";
+      collapsedToggle.className = "trellis-split-group-toggle is-collapsed";
+      collapsedToggle.setAttribute("aria-expanded", "false");
+      const collapsedCaret = document.createElement("span");
+      collapsedCaret.className = "trellis-split-group-caret";
+      collapsedCaret.appendChild(iconSvg("caret", 12));
+      collapsedToggle.appendChild(collapsedCaret);
+      collapsedToggle.appendChild(createText("span", "trellis-split-group-title", t(group.labelKey)));
+      collapsedToggle.appendChild(createText("span", "trellis-split-group-count", String(subtrees.length)));
+      collapsedToggle.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        toggleTrellisSplitArchive();
+      });
+      collapsedHead.appendChild(collapsedToggle);
+      groupEl.appendChild(collapsedHead);
+      listPane.appendChild(groupEl);
+      groupIndex += 1;
+      continue;
+    }
+    // Render the head when there are roots OR the list state still has
+    // something to say (done-list fetch failure needs the error hint +
+    // retry even with zero rows).
+    const doneListSpeaks = group.phase === "done"
+      && (trellisView.archive.error || trellisView.archive.loading);
+    if (subtrees.length > 0 || group.phase !== "done" || doneListSpeaks) {
+      const head = document.createElement("div");
+      head.className = "trellis-split-group-head";
+      head.style.setProperty("--split-group-index", String(groupIndex));
+      let headToggle = head;
+      if (group.phase === "done" && trellisSplit.archiveOpen) {
+        // Same rule as the collapsed head: the handler sits on the toggle
+        // button; title/count ride inside it so the whole label is the
+        // click target (stopPropagation keeps the head out of it).
+        headToggle = document.createElement("button");
+        headToggle.type = "button";
+        headToggle.className = "trellis-split-group-toggle";
+        headToggle.setAttribute("aria-expanded", "true");
+        const openCaret = document.createElement("span");
+        openCaret.className = "trellis-split-group-caret";
+        openCaret.appendChild(iconSvg("caret", 12));
+        headToggle.appendChild(openCaret);
+        headToggle.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          toggleTrellisSplitArchive();
+        });
+        head.appendChild(headToggle);
+      } else if (group.phase !== "done") {
+        // Non-done phase groups fold too (09-25 apple-design R6): default
+        // open, caret rotates, whole label is the click target — same
+        // affordance as the archive head, one layer, no boxed controls.
+        const phaseCollapsed = trellisSplit.collapsedPhases.has(group.phase);
+        if (phaseCollapsed) head.classList.add("is-collapsed");
+        headToggle = document.createElement("button");
+        headToggle.type = "button";
+        headToggle.className = "trellis-split-group-toggle";
+        if (phaseCollapsed) headToggle.classList.add("is-collapsed");
+        headToggle.setAttribute("aria-expanded", phaseCollapsed ? "false" : "true");
+        const phaseCaret = document.createElement("span");
+        phaseCaret.className = "trellis-split-group-caret";
+        phaseCaret.appendChild(iconSvg("caret", 12));
+        headToggle.appendChild(phaseCaret);
+        headToggle.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          toggleTrellisSplitPhase(group.phase);
+        });
+        head.appendChild(headToggle);
+      }
+      headToggle.appendChild(createText("span", "trellis-split-group-title", t(group.labelKey)));
+      if (subtrees.length > 0) {
+        // Group count shows ROOT tasks — children live behind carets.
+        headToggle.appendChild(createText("span", "trellis-split-group-count", String(subtrees.length)));
+      }
+      if (group.phase === "done") {
+        // Error / loading hints next to the (now global) refresh button
+        // that lives in the chip bar (v7 R3, migrated from the retired
+        // archive section).
+        const archiveState = trellisView.archive;
+        if (archiveState.error) {
+          head.appendChild(createText("span", "trellis-split-archive-hint is-error", t("dashboardTrellisArchivedError")));
+          const archiveRetry = document.createElement("button");
+          archiveRetry.type = "button";
+          archiveRetry.className = "trellis-split-retry";
+          archiveRetry.textContent = t("dashboardTrellisArchivedRetry");
+          archiveRetry.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            void refreshTrellisViewArchive();
+          });
+          head.appendChild(archiveRetry);
+        } else if (archiveState.loading) {
+          head.appendChild(createText("span", "trellis-split-archive-hint", t("dashboardTrellisArchivedLoading")));
+        }
+      } else if (trellisView.active.error) {
+        // Active-list fetch failure: inline hint + retry button (v7 R3
+        // parity with the archive tools; both refetch via the module
+        // loaders, not a raw render).
+        head.appendChild(createText("span", "trellis-split-archive-hint is-error", t("dashboardTrellisActiveError")));
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "trellis-split-retry";
+        retry.textContent = t("dashboardTrellisActiveRetry");
+        retry.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          void refreshTrellisActive();
+        });
+        head.appendChild(retry);
+      }
+      groupEl.appendChild(head);
+    }
+    if (group.phase === "done" && trellisSplit.archiveOpen) {
+      // Month sub-groups inside the archive (v7 R3): roots bucket by
+      // completed-at month (trellisArchiveMonthOf), each month folds
+      // independently via archive state openMonths (null = all open).
+      const byMonth = new Map();
+      for (const subtree of subtrees) {
+        const month = trellisArchiveMonthOf(subtree[0].task.taskPath);
+        if (!byMonth.has(month)) byMonth.set(month, []);
+        byMonth.get(month).push(subtree);
+      }
+      const months = [...byMonth.keys()].sort().reverse();
+      for (const month of months) {
+        const monthOpen = trellisView.archive.openMonths === null
+          || trellisView.archive.openMonths.has(month);
+        const monthHead = document.createElement("div");
+        // Same contract as the phase-group heads (Batch B): the fold
+        // handler and aria-expanded live on the inner toggle button;
+        // `is-collapsed` stays on the head for CSS + tests. The caret is
+        // an SVG that rotates via CSS — no glyph flipping in JS.
+        monthHead.className = "trellis-split-month-head" + (monthOpen ? "" : " is-collapsed");
+        const monthToggle = document.createElement("button");
+        monthToggle.type = "button";
+        monthToggle.className = "trellis-split-month-toggle";
+        monthToggle.setAttribute("aria-expanded", String(monthOpen));
+        const monthCaret = document.createElement("span");
+        // Same bare caret class as phase heads (R7 alignment): the old
+        // bordered 15px toggle box read as a different control family.
+        monthCaret.className = "trellis-split-group-caret";
+        monthCaret.appendChild(iconSvg("caret", 12));
+        monthToggle.appendChild(monthCaret);
+        monthToggle.appendChild(createText(
+          "span",
+          "trellis-split-month-label",
+          month || t("dashboardTrellisArchivedUnknownMonth")
+        ));
+        // Count pill reuses the phase-head count class — dates inherit the
+        // exact same anatomy (auto-right pill) as 计划/执行/检查 heads.
+        monthToggle.appendChild(createText(
+          "span",
+          "trellis-split-group-count",
+          String(byMonth.get(month).length)
+        ));
+        monthToggle.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          const state = trellisView.archive;
+          if (state.openMonths === null) state.openMonths = new Set(months);
+          if (state.openMonths.has(month)) {
+            state.openMonths.delete(month);
+          } else {
+            state.openMonths.add(month);
+          }
+          // LOCAL fold (09-25 motion fix): flip classes on the collected
+          // rows — caret rotates via CSS transition, rows collapse. No
+          // rebuild, no sibling-walk (sandbox-safe).
+          const open = state.openMonths.has(month);
+          monthHead.classList.toggle("is-collapsed", !open);
+          monthToggle.setAttribute("aria-expanded", String(open));
+          for (const r of monthRows) r.classList.toggle("is-month-folded", !open);
+          syncTrellisViewSignature();
+        });
+        monthHead.appendChild(monthToggle);
+        // 09-25 motion fix, sandbox-safe: collect THIS month's rows in a
+        // closure at build time — no nextElementSibling walk (the vm test
+        // DOM lacks it). The array dies with this DOM generation; the next
+        // rebuild re-collects.
+        const monthRows = [];
+        groupEl.appendChild(monthHead);
+        for (const subtree of byMonth.get(month)) {
+          const rootMeta = subtree[0];
+          trellisSplit.tasksByPath.set(trellisTaskKey(rootMeta.task.taskPath, rootMeta.task.cwd), rootMeta.task);
+          if (rootMeta.task.taskPath === trellisSplit.selectedTaskPath && (rootMeta.task.cwd || "") === (trellisSplit.selectedTaskCwd || "")) selectedTask = rootMeta.task;
+          const row = buildTrellisSplitRow(rootMeta.task, rootMeta, splitLabels, true);
+          if (!monthOpen) row.classList.add("is-month-folded");
+          monthRows.push(row);
+          groupEl.appendChild(row);
+          if (rootMeta.hasChildren) parentPaths.push(rootMeta.task.taskPath);
+          // Archive sub-rows follow the SAME collapsedPaths contract as the
+          // active branch: passing a constant `true` leaked the direct
+          // children of a folded archive root back into view after any
+          // rebuild (poll / chip switch / refresh) while deeper rows stayed
+          // hidden (09-25 review).
+          renderSubtree(
+            subtree,
+            1,
+            rootMeta.depth,
+            !trellisSplit.collapsedPaths.has(rootMeta.task.taskPath),
+            true,
+            monthOpen,
+            monthRows
+          );
+        }
+      }
+      listPane.appendChild(groupEl);
+      groupIndex += 1;
+      continue;
+    }
+    if (group.phase !== "done" && trellisSplit.collapsedPhases.has(group.phase)) {
+      // Folded phase card (09-25 motion fix): rows still RENDER (display
+      // controlled by .is-folded on the card) so the fold can animate on
+      // class toggle without a tree rebuild; keyboard nav map stays hot.
+      groupEl.classList.add("is-folded");
+    }
+    for (const subtree of subtrees) {
+      const rootMeta = subtree[0];
+      trellisSplit.tasksByPath.set(trellisTaskKey(rootMeta.task.taskPath, rootMeta.task.cwd), rootMeta.task);
+      if (rootMeta.task.taskPath === trellisSplit.selectedTaskPath && (rootMeta.task.cwd || "") === (trellisSplit.selectedTaskCwd || "")) selectedTask = rootMeta.task;
+      groupEl.appendChild(buildTrellisSplitRow(rootMeta.task, rootMeta, splitLabels));
+      if (rootMeta.hasChildren) parentPaths.push(rootMeta.task.taskPath);
+      renderSubtree(subtree, 1, rootMeta.depth, !trellisSplit.collapsedPaths.has(rootMeta.task.taskPath));
+    }
+    listPane.appendChild(groupEl);
+    groupIndex += 1;
+  }
+
+  // (09-25) The empty-state hint texts are RETIRED — the phase cards'
+  // own heads + counts already communicate emptiness; a free-floating
+  // "no active tasks" line read as clutter and collided with the archive
+  // card's sticky head on expand.
+  // (09-25 review) The reveal-on-expand hook (`pendingPhaseReveal`) went
+  // with it: folds are LOCAL now (no rebuild → no scroll loss), and
+  // renderTrellisView already saves/restores `.trellis-split-list`
+  // scrollTop across the rebuilds that remain.
+  const foot = document.createElement("div");
+  foot.className = "trellis-split-foot";
+  foot.appendChild(createText(
+    "span",
+    "trellis-split-foot-stat",
+    t("dashboardTrellisSplitStat")
+      .replace("{active}", String(activeCount))
+      .replace("{archive}", String(archiveCount))
+  ));
+  const footTools = document.createElement("span");
+  footTools.className = "trellis-split-foot-tools";
+  const expandAll = document.createElement("button");
+  expandAll.type = "button";
+  expandAll.className = "trellis-split-foot-btn";
+  expandAll.textContent = t("dashboardTrellisTreeExpandAll");
+  expandAll.title = t("dashboardTrellisTreeExpandAll");
+  expandAll.addEventListener("click", () => {
+    trellisSplit.collapsedPaths.clear();
+    // LOCAL unfold (09-25 motion fix): flip classes on mounted rows — no
+    // rebuild, so carets rotate and rows come back in place. Row HIDING
+    // (`.is-subtree-folded`) and caret ROTATION (`.is-collapsed` on the
+    // row) are SEPARATE classes; both must clear or the caret keeps
+    // pointing at the folded state after expand-all.
+    if (trellisViewEl && typeof trellisViewEl.querySelectorAll === "function") {
+      for (const row of trellisViewEl.querySelectorAll(".trellis-split-row")) {
+        row.classList.remove("is-subtree-folded");
+        if (row.dataset.hasChildren !== "true") continue;
+        row.classList.remove("is-collapsed");
+        const caret = typeof row.querySelector === "function"
+          ? row.querySelector(".trellis-split-caret")
+          : null;
+        if (caret) caret.setAttribute("aria-expanded", "true");
+      }
+      syncTrellisViewSignature();
+      return;
+    }
+    lastTrellisPanelSignature = null;
+    renderTrellisViewBody();
+  });
+  footTools.appendChild(expandAll);
+  const collapseAll = document.createElement("button");
+  collapseAll.type = "button";
+  collapseAll.className = "trellis-split-foot-btn";
+  collapseAll.textContent = t("dashboardTrellisTreeCollapseAll");
+  collapseAll.title = t("dashboardTrellisTreeCollapseAll");
+  collapseAll.addEventListener("click", () => {
+    for (const p of parentPaths) trellisSplit.collapsedPaths.add(p);
+    // LOCAL fold (09-25 motion fix): row HIDING = `.is-subtree-folded` on
+    // every nested row; caret ROTATION = `.is-collapsed` on the parent rows
+    // themselves (CSS anchors the rotation on the row, not the caret).
+    if (trellisViewEl && typeof trellisViewEl.querySelectorAll === "function") {
+      for (const row of trellisViewEl.querySelectorAll(".trellis-split-row")) {
+        if (Number(row.dataset.depth || "0") > 0) row.classList.add("is-subtree-folded");
+        if (row.dataset.hasChildren !== "true") continue;
+        row.classList.add("is-collapsed");
+        const caret = typeof row.querySelector === "function"
+          ? row.querySelector(".trellis-split-caret")
+          : null;
+        if (caret) caret.setAttribute("aria-expanded", "false");
+      }
+      syncTrellisViewSignature();
+      return;
+    }
+    lastTrellisPanelSignature = null;
+    renderTrellisViewBody();
+  });
+  footTools.appendChild(collapseAll);
+  foot.appendChild(footTools);
+  listPane.appendChild(foot);
+
+  // v7 R10: spec docs and task relations as left-column groups below the
+  // phase groups — same head anatomy, collapsed by default, first expand
+  // triggers the one-shot fetch. Wrapped in phase CARDS (R7) so every
+  // left-rail section shares one card family.
+  const specCard = document.createElement("section");
+  specCard.className = "trellis-split-phase-card";
+  specCard.appendChild(buildTrellisSpecListGroup());
+  listPane.appendChild(specCard);
+  const networkCard = document.createElement("section");
+  networkCard.className = "trellis-split-phase-card";
+  networkCard.appendChild(buildTrellisNetworkListGroup());
+  listPane.appendChild(networkCard);
+
+  section.appendChild(listPane);
+
+  // Draggable left-rail width (09-25 polish): pointer-capture resize,
+  // clamped 240–480px, persisted to localStorage. The 1s rebuild recreates
+  // listPane, so applyPersistedTrellisSplitWidth re-applies the width at
+  // the top of this builder (see below).
+  const resizer = document.createElement("div");
+  resizer.className = "trellis-split-resizer";
+  resizer.setAttribute("role", "separator");
+  resizer.setAttribute("aria-orientation", "vertical");
+  resizer.addEventListener("pointerdown", (ev) => {
+    ev.preventDefault();
+    try { resizer.setPointerCapture(ev.pointerId); } catch { /* jsdom */ }
+    const startWidth = listPane.getBoundingClientRect().width;
+    const startX = ev.clientX;
+    const onMove = (e) => {
+      const w = Math.min(480, Math.max(240, startWidth + e.clientX - startX));
+      listPane.style.flexBasis = `${w}px`;
+    };
+    const onUp = () => {
+      resizer.removeEventListener("pointermove", onMove);
+      resizer.removeEventListener("pointerup", onUp);
+      resizer.removeEventListener("pointercancel", onUp);
+      try {
+        const w = listPane.getBoundingClientRect().width;
+        if (typeof localStorage !== "undefined" && w >= 240 && w <= 480) {
+          localStorage.setItem("clawd.trellisSplitListWidth", String(Math.round(w)));
+        }
+      } catch { /* storage unavailable */ }
+    };
+    resizer.addEventListener("pointermove", onMove);
+    resizer.addEventListener("pointerup", onUp);
+    resizer.addEventListener("pointercancel", onUp);
+  });
+  section.appendChild(resizer);
+  applyPersistedTrellisSplitWidth(listPane);
+
+  // Selection may point at a task that filters just removed — show the
+  // empty pane rather than a stale card.
+  section.appendChild(buildTrellisSplitDetailPane(selectedTask));
+  return section;
+}
+
+// Restores the persisted left-rail width (no-op without localStorage,
+// e.g. the vm sandbox in tests — flex clamp in CSS remains the default).
+function applyPersistedTrellisSplitWidth(listPane) {
+  try {
+    if (typeof localStorage === "undefined") return;
+    const v = Number(localStorage.getItem("clawd.trellisSplitListWidth"));
+    if (Number.isFinite(v) && v >= 240 && v <= 480) listPane.style.flexBasis = `${v}px`;
+  } catch { /* storage unavailable */ }
+}
+
+// ── v7 R10: spec list group (left column, below DONE) ──
+// The project scope the spec/relations groups follow: the selected chip,
+// or the first registered root in the merged "all" view.
+function currentTrellisScopeRoot() {
+  return trellisView.selectedRoot || trellisView.roots[0] || null;
+}
+
+// Reset the spec group for a (possibly new) scope root and refetch. Used
+// both by the first expand and by scope switches while it stays open.
+function refetchTrellisSpecForScope() {
+  const root = currentTrellisScopeRoot();
+  if (!root) return;
+  trellisSpec.open = true;
+  trellisSpec.loading = true;
+  trellisSpec.seq += 1;
+  trellisSpec.root = root;
+  trellisSpec.files = [];
+  trellisSpec.truncated = false;
+  trellisSpec.selected = null;
+  trellisSpecDocs.clear();
+  lastTrellisSpecSignature = null;
+  void fetchTrellisSpecTree(root);
+}
+
+function refetchTrellisNetworkForScope() {
+  const root = currentTrellisScopeRoot();
+  if (!root) return;
+  trellisNetwork.open = true;
+  trellisNetwork.loading = true;
+  trellisNetwork.seq += 1;
+  trellisNetwork.root = root;
+  trellisNetwork.result = null;
+  lastTrellisNetworkSignature = null;
+  void fetchTrellisNetworkOverview();
+}
+
+// v7 R10fix: the two extra groups follow the project filter. A rebuild
+// with a changed scope (chip click, root unregister fallback) resets the
+// cached content and refetches while the group stays expanded — otherwise
+// every project would keep showing the first-loaded root's data.
+function syncTrellisPanelScopes() {
+  const root = currentTrellisScopeRoot();
+  if (!root) return;
+  if (trellisSplit.specGroupOpen && trellisSpec.open && trellisSpec.root !== root
+    && !trellisSpec.loading) {
+    refetchTrellisSpecForScope();
+  }
+  if (trellisSplit.networkGroupOpen && trellisNetwork.open && trellisNetwork.root !== root
+    && !trellisNetwork.loading) {
+    refetchTrellisNetworkForScope();
+  }
+}
+
+function toggleTrellisSpecGroup() {
+  trellisSplit.specGroupOpen = !trellisSplit.specGroupOpen;
+  lastTrellisPanelSignature = null;
+  if (trellisSplit.specGroupOpen && !trellisSpec.loading
+    && (trellisSpec.root === null || trellisSpec.files.length === 0)) {
+    // First expand (or a previously empty scope): lazy-load the tree.
+    refetchTrellisSpecForScope();
+  }
+  renderTrellisViewBody();
+}
+
+function toggleTrellisNetworkGroup() {
+  trellisSplit.networkGroupOpen = !trellisSplit.networkGroupOpen;
+  lastTrellisPanelSignature = null;
+  if (trellisSplit.networkGroupOpen && !trellisNetwork.loading
+    && (trellisNetwork.root === null || !trellisNetwork.result)) {
+    refetchTrellisNetworkForScope();
+  }
+  renderTrellisViewBody();
+}
+
+function buildTrellisSpecListGroup() {
+  // The head is a real <button> (UI redesign 09-24 Batch B): same class
+  // contract (head + toggle double class), native focus/keyboard support.
+  const head = document.createElement("button");
+  head.type = "button";
+  head.className = "trellis-split-group-head trellis-split-group-toggle"
+    + (trellisSplit.specGroupOpen ? "" : " is-collapsed");
+  head.setAttribute("aria-expanded", trellisSplit.specGroupOpen ? "true" : "false");
+  const specCaret = document.createElement("span");
+  specCaret.className = "trellis-split-group-caret";
+  specCaret.appendChild(iconSvg("caret", 12));
+  head.appendChild(specCaret);
+  head.appendChild(createText("span", "trellis-split-group-title", t("dashboardTrellisSpecGroup")));
+  const files = trellisSpec.open ? trellisSpec.files : [];
+  if (!trellisSpec.loading && files.length > 0) {
+    head.appendChild(createText("span", "trellis-split-group-count", String(files.length)));
+  }
+  head.addEventListener("click", toggleTrellisSpecGroup);
+  const wrap = document.createElement("div");
+  wrap.className = "trellis-split-group trellis-spec-group";
+  wrap.appendChild(head);
+  if (!trellisSplit.specGroupOpen) {
+    return wrap;
+  }
+  if (trellisSpec.loading) {
+    wrap.appendChild(createText("div", "trellis-split-archive-hint", t("dashboardTrellisArchivedLoading")));
+    return wrap;
+  }
+  if (trellisSpec.error || (!trellisSpec.truncated && files.length === 0 && trellisSpec.open)) {
+    wrap.appendChild(createText("div", "trellis-split-archive-hint", t("dashboardTrellisSpecEmpty")));
+    return wrap;
+  }
+  for (const file of files) {
+    const row = document.createElement("div");
+    row.className = "trellis-split-row trellis-spec-row";
+    if (file.relPath === trellisSpec.selected && trellisSplit.detailKind === "spec") {
+      row.classList.add("is-selected");
+    }
+    if (file.filled === false) row.classList.add("is-empty-spec");
+    row.dataset.specPath = file.relPath;
+    const main = document.createElement("div");
+    main.className = "trellis-split-row-main";
+    const specTitle = createText("span", "trellis-split-row-title", file.relPath);
+    specTitle.title = file.relPath;
+    main.appendChild(specTitle);
+    const side = document.createElement("div");
+    side.className = "trellis-split-row-side trellis-spec-row-side";
+    if (file.filled === false) {
+      side.appendChild(createText("span", "trellis-spec-file-empty", t("dashboardTrellisSpecEmptyDoc")));
+    } else if (typeof file.lines === "number" && file.lines > 0) {
+      side.appendChild(createText(
+        "span",
+        "trellis-spec-file-lines",
+        t("dashboardTrellisSpecLines").replace("{n}", String(file.lines))
+      ));
+    }
+    if (file.refCount > 0) {
+      const refs = document.createElement("span");
+      refs.className = "trellis-spec-file-refs";
+      refs.appendChild(iconSvg("link", 12));
+      refs.appendChild(document.createTextNode(String(file.refCount)));
+      refs.setAttribute("title", t("dashboardTrellisSpecRefs").replace("{n}", String(file.refCount)));
+      side.appendChild(refs);
+    }
+    row.appendChild(main);
+    row.appendChild(side);
+    row.addEventListener("click", () => {
+      trellisSplit.detailKind = "spec";
+      selectTrellisSpecDoc(file.relPath);
+    });
+    wrap.appendChild(row);
+  }
+  if (trellisSpec.truncated) {
+    wrap.appendChild(createText("div", "trellis-split-archive-hint", t("dashboardTrellisArchivedTruncated")));
+  }
+  return wrap;
+}
+
+// ── v7 R10: network relations group (left column, below spec) ──
+function trellisNetworkGroups() {
+  const result = trellisNetwork.result;
+  if (!result || result.status !== "ok") return [];
+  const groups = [];
+  const edges = Array.isArray(result.edges) ? result.edges : [];
+  const byParent = new Map();
+  for (const edge of edges) {
+    if (!byParent.has(edge.parentTaskPath)) byParent.set(edge.parentTaskPath, []);
+    byParent.get(edge.parentTaskPath).push(edge.childTaskPath);
+  }
+  const nodeByTaskPath = new Map(
+    (Array.isArray(result.nodes) ? result.nodes : []).map((n) => [n.taskPath, n])
+  );
+  const refOf = (taskPath) => {
+    const node = nodeByTaskPath.get(taskPath);
+    return node
+      ? { taskPath, title: node.title, archived: node.archived }
+      : { taskPath, title: taskPath, archived: String(taskPath).includes("/archive/"), missing: true };
+  };
+  for (const [parentTaskPath, children] of [...byParent.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0])))) {
+    groups.push({
+      key: `v|${parentTaskPath}`,
+      label: t("dashboardTrellisLinksChildren").replace("{n}", String(children.length)),
+      sub: parentTaskPath || t("dashboardTrellisLinksMissing"),
+      members: [
+        ...(parentTaskPath ? [refOf(parentTaskPath)] : []),
+        ...children.map(refOf),
+      ],
+    });
+  }
+  for (const group of Array.isArray(result.specGroups) ? result.specGroups : []) {
+    groups.push({
+      key: `s|${group.specPath}`,
+      label: t("dashboardTrellisLinksSharedSpec"),
+      sub: group.specPath,
+      members: group.tasks.slice(),
+    });
+  }
+  for (const group of Array.isArray(result.prdGroups) ? result.prdGroups : []) {
+    groups.push({
+      key: `p|${group.prdPath}`,
+      label: t("dashboardTrellisLinksSharedPrd"),
+      sub: group.prdPath,
+      members: [group.owner, ...group.tasks],
+    });
+  }
+  return groups;
+}
+
+function buildTrellisNetworkListGroup() {
+  // Real <button> head, same class contract as the spec group above.
+  const head = document.createElement("button");
+  head.type = "button";
+  head.className = "trellis-split-group-head trellis-split-group-toggle"
+    + (trellisSplit.networkGroupOpen ? "" : " is-collapsed");
+  head.setAttribute("aria-expanded", trellisSplit.networkGroupOpen ? "true" : "false");
+  const networkCaret = document.createElement("span");
+  networkCaret.className = "trellis-split-group-caret";
+  networkCaret.appendChild(iconSvg("caret", 12));
+  head.appendChild(networkCaret);
+  head.appendChild(createText("span", "trellis-split-group-title", t("dashboardTrellisLinksGroup")));
+  const groups = trellisNetwork.open ? trellisNetworkGroups() : [];
+  if (!trellisNetwork.loading && groups.length > 0) {
+    head.appendChild(createText("span", "trellis-split-group-count", String(groups.length)));
+  }
+  head.addEventListener("click", toggleTrellisNetworkGroup);
+  const wrap = document.createElement("div");
+  wrap.className = "trellis-split-group trellis-network-group-list";
+  wrap.appendChild(head);
+  if (!trellisSplit.networkGroupOpen) {
+    return wrap;
+  }
+  if (trellisNetwork.loading) {
+    wrap.appendChild(createText("div", "trellis-split-archive-hint", t("dashboardTrellisArchivedLoading")));
+    return wrap;
+  }
+  if (groups.length === 0) {
+    wrap.appendChild(createText("div", "trellis-split-archive-hint", t("dashboardTrellisLinksEmpty")));
+    return wrap;
+  }
+  for (const group of groups) {
+    const row = document.createElement("div");
+    row.className = "trellis-split-row trellis-network-row";
+    if (group.key === trellisSplit.networkGroupKey && trellisSplit.detailKind === "network") {
+      row.classList.add("is-selected");
+    }
+    row.dataset.networkKey = group.key;
+    const main = document.createElement("div");
+    main.className = "trellis-split-row-main";
+    const groupTitle = createText("span", "trellis-split-row-title", group.label);
+    groupTitle.title = group.label;
+    main.appendChild(groupTitle);
+    main.appendChild(createText("span", "trellis-split-row-sub", group.sub));
+    row.appendChild(main);
+    row.appendChild(createText("span", "trellis-split-row-side", String(group.members.length)));
+    row.addEventListener("click", () => {
+      trellisSplit.detailKind = "network";
+      trellisSplit.networkGroupKey = group.key;
+      // Same selection-only fast path as task/spec rows: class swap +
+      // right-pane rebuild, full rebuild only when stale/sandboxed.
+      if (!renderTrellisSplitSelectionOnly()) {
+        lastTrellisPanelSignature = null;
+        renderTrellisViewBody();
+      }
+    });
+    wrap.appendChild(row);
+  }
+  return wrap;
+}
+
+function buildTrellisFilterChips(labels, activeCounts, archiveCounts) {
+  const chips = document.createElement("div");
+  chips.className = "trellis-filter-chips";
+
+  // Global refresh LEADS the chip bar (09-25): ↻ sits before "全部项目".
+  // Appended FIRST so plain appendChild ordering puts it in front — the
+  // vm test DOM has no insertBefore/prepend.
+  chips.appendChild(buildTrellisSplitRefreshBtn());
+
+  const chip = (next, label, count, empty) => {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = "trellis-filter-chip";
+    if (empty) el.classList.add("trellis-filter-chip-empty");
+    if (next === trellisView.selectedRoot) el.classList.add("is-active");
+    el.setAttribute("aria-pressed", next === trellisView.selectedRoot ? "true" : "false");
+    el.appendChild(createText("span", "trellis-filter-chip-label", label));
+    el.appendChild(createText("span", "trellis-filter-count", String(count)));
+    el.addEventListener("click", () => {
+      trellisView.selectedRoot = next;
+      lastTrellisViewSignature = null;
+      renderTrellisView();
+    });
+    return el;
+  };
+
+  chips.appendChild(chip(null, t("dashboardTrellisFilterAll"), trellisView.active.tasks.length, false));
+  for (const root of trellisView.roots) {
+    const count = activeCounts.get(root) || 0;
+    const empty = count === 0 && (archiveCounts.get(root) || 0) === 0;
+    // Tooltip carries the full path (same convention as the roots rows);
+    // empty roots dim but stay clickable — the empty view is the point.
+    const el = chip(root, labels.get(root) || root, count, empty);
+    el.title = root;
+    chips.appendChild(el);
+  }
+  return chips;
+}
+
+// v7 R5 — the single project bar that replaces the old roots card plus
+// its separate filter card: title, chips, the spec-map entry and the ⚙
+// toggle that reveals the manage drawer below it.
+function buildTrellisProjectBar() {
+  if (trellisView.rootsError || !trellisView.roots.length) return null;
+
+  const labels = buildTrellisRootLabels(trellisView.roots);
+  const activeCounts = new Map();
+  for (const task of trellisView.active.tasks) {
+    const owner = trellisTaskOwningRoot(task && task.cwd, trellisView.roots);
+    if (owner) activeCounts.set(owner, (activeCounts.get(owner) || 0) + 1);
+  }
+  const archiveCounts = new Map();
+  for (const task of trellisView.archive.tasks) {
+    const owner = trellisTaskOwningRoot(task && task.cwd, trellisView.roots);
+    if (owner) archiveCounts.set(owner, (archiveCounts.get(owner) || 0) + 1);
+  }
+
+  const section = document.createElement("div");
+  section.className = "trellis-view-section trellis-filter-section";
+
+  const selected = trellisView.selectedRoot;
+  // "全部项目" redundant (chips already show every root; the section title
+  // says it again) — the title row only exists when a root is selected.
+  if (selected !== null) {
+    const titleRow = document.createElement("div");
+    titleRow.className = "trellis-view-section-title";
+    titleRow.appendChild(createText(
+      "span",
+      "trellis-filter-title",
+      labels.get(selected) || selected
+    ));
+    section.appendChild(titleRow);
+  }
+
+  const chipsRow = buildTrellisFilterChips(labels, activeCounts, archiveCounts);
+  section.appendChild(chipsRow);
+  return section;
+}
+
+function computeTrellisViewSignature() {
+  return JSON.stringify({
+    lang: (i18nPayload && i18nPayload.lang) || "en",
+    roots: trellisView.roots,
+    picks: trellisView.picks,
+    rootsLoaded: trellisView.rootsLoaded,
+    rootsError: trellisView.rootsError,
+    noProjectsHint: trellisView.noProjectsHint,
+    selectedRoot: trellisView.selectedRoot,
+    panelOpen: trellisView.panelOpen,
+    // v7 R8 drawers carry their own async state — a loading→result flip
+    // must rerender the view even when nothing else changed. NOTE: the
+    // spec group's SELECTED doc is deliberately absent — selection changes
+    // take the selection-only fast path (see renderTrellisSplitSelectionOnly)
+    // and must not invalidate this structural signature.
+    network: trellisNetwork.open
+      ? { loading: trellisNetwork.loading, root: trellisNetwork.root, result: trellisNetwork.result }
+      : null,
+    spec: trellisSpec.open
+      ? { loading: trellisSpec.loading, root: trellisSpec.root }
+      : null,
+    // v7 R10: the two extra groups are list-body state — a flip must
+    // rerender even when lists did not change. detailKind /
+    // networkGroupKey are selection state (fast path), NOT structure.
+    specGroupOpen: trellisSplit.specGroupOpen,
+    networkGroupOpen: trellisSplit.networkGroupOpen,
+    // Split-list structure (09-25 split polish): archive fold + collapse
+    // set live here instead of relying on every mutation site clearing
+    // the signature — cross-entry jumps (jumpToTrellisNetworkTask) mutate
+    // them directly before selecting, and the fast path must see the
+    // structure go stale and fall back to the full rebuild.
+    archiveOpen: trellisSplit.archiveOpen,
+    collapsedPaths: [...trellisSplit.collapsedPaths].sort(),
+    active: {
+      loading: trellisView.active.loading,
+      loaded: trellisView.active.loaded,
+      error: trellisView.active.error,
+      tasks: trellisView.active.tasks,
+    },
+    archive: {
+      loading: trellisView.archive.loading,
+      loaded: trellisView.archive.loaded,
+      error: trellisView.archive.error,
+      openMonths: trellisView.archive.openMonths
+        ? [...trellisView.archive.openMonths].sort()
+        : null,
+      tasks: trellisView.archive.tasks,
+    },
+  });
+}
+
+function renderTrellisView() {
+  if (!trellisViewEl || activeView !== "trellis") return;
+  const signature = computeTrellisViewSignature();
+  if (signature === lastTrellisViewSignature) {
+    // Nothing rebuilds — drop a stale entry animation arm so a later fold
+    // never replays the first-mount stagger (UI redesign 09-24 Batch D).
+    trellisSplit.entryPending = false;
+    return;
+  }
+  lastTrellisViewSignature = signature;
+
+  // Preserve the left-list scroll across structural rebuilds (folds,
+  // refreshes, cross-group jumps): the split list owns the scrolling and
+  // freshly built nodes would otherwise clamp it back to the top.
+  let savedScroll = null;
+  if (typeof trellisViewEl.querySelector === "function") {
+    const oldList = trellisViewEl.querySelector(".trellis-split-list");
+    if (oldList && Number.isFinite(oldList.scrollTop)) savedScroll = oldList.scrollTop;
+  }
+
+  const fragment = document.createDocumentFragment();
+  // v7 R10fix: an open spec/relations group follows the project scope —
+  // a chip switch (or unregister fallback) that reaches this rebuild
+  // resets and refetches both groups instead of showing the old root.
+  syncTrellisPanelScopes();
+  const projectBar = buildTrellisProjectBar();
+  if (projectBar) fragment.appendChild(projectBar);
+  const rootsSection = buildTrellisRootsSection();
+  if (rootsSection) fragment.appendChild(rootsSection);
+  // The filter is render-layer only: the full lists stay in memory and
+  // each rebuild slices them down to the selected root BEFORE the tree is
+  // built, so the nesting always reflects the filtered view (a parent
+  // filtered out flattens its orphaned children back to roots).
+  const selectedRoot = trellisView.selectedRoot;
+  const activeFiltered = filterTrellisTasksByRoot(trellisView.active.tasks, trellisView.roots, selectedRoot);
+  const archiveFiltered = filterTrellisTasksByRoot(trellisView.archive.tasks, trellisView.roots, selectedRoot);
+  // v7: the split list is the single view — flat depth-annotated rows
+  // (left groups) with the selection detail pane on the right. R10 adds
+  // the spec + relations groups below the phase groups in the SAME list.
+  fragment.appendChild(buildTrellisSplitSection(activeFiltered, archiveFiltered));
+  trellisViewEl.replaceChildren(fragment);
+
+  if (typeof trellisViewEl.querySelector === "function") {
+    const newList = trellisViewEl.querySelector(".trellis-split-list");
+    if (newList) {
+      if (savedScroll !== null) {
+        const maxScroll = newList.scrollHeight - newList.clientHeight;
+        const cap = Number.isFinite(maxScroll) ? Math.max(0, maxScroll) : savedScroll;
+        newList.scrollTop = Math.min(savedScroll, cap);
+      }
+      // After a structural rebuild that changed the selection (cross-group
+      // jump from a network ref, archive expand, root switch), reveal the
+      // newly selected row. scroll-keeping above wins when the row is
+      // already visible; scrollIntoView(nearest) moves the minimum needed.
+      if (trellisSplit.selectedTaskPath !== null || trellisSplit.networkGroupKey !== null
+        || trellisSpec.selected !== null) {
+        const selectedRow = findTrellisSelectedRow();
+        if (selectedRow && typeof selectedRow.scrollIntoView === "function") {
+          selectedRow.scrollIntoView({ block: "nearest" });
+        }
+      }
+    }
+  }
+}
+
+// ── Dashboard view switching ─────────────────────────────────────────────
+// Sessions ↔ Trellis: a pure display flip between the two scroll areas
+// (plus the sessions-only header extras). The active view is memory-only;
+// nothing is persisted.
+
+function switchDashboardView(view) {
+  if (view !== "sessions" && view !== "trellis") return;
+  if (view === activeView) return;
+  activeView = view;
+  const trellis = view === "trellis";
+  if (viewSessionsTabEl) {
+    viewSessionsTabEl.classList.toggle("is-active", !trellis);
+    viewSessionsTabEl.setAttribute("aria-selected", trellis ? "false" : "true");
+  }
+  if (viewTrellisTabEl) {
+    viewTrellisTabEl.classList.toggle("is-active", trellis);
+    viewTrellisTabEl.setAttribute("aria-selected", trellis ? "true" : "false");
+  }
+  if (trellisViewEl) trellisViewEl.hidden = !trellis;
+  if (contentEl) contentEl.classList.toggle("hidden", trellis);
+  if (sessionsHeaderExtrasEl) sessionsHeaderExtrasEl.hidden = trellis;
+  // Entry stagger plays on FIRST MOUNT only (UI redesign 09-24 Batch D):
+  // arming the flag right before render() lets the initial section build
+  // animate; every later rebuild (data ticks, selection, folds) is silent.
+  if (trellis) trellisSplit.entryPending = true;
+  render({ force: true });
+  if (trellis) refreshTrellisView();
+}
+
+function initDashboardViewSwitch() {
+  if (viewSessionsTabEl) {
+    viewSessionsTabEl.addEventListener("click", () => switchDashboardView("sessions"));
+  }
+  if (viewTrellisTabEl) {
+    viewTrellisTabEl.addEventListener("click", () => switchDashboardView("trellis"));
+  }
+}
+
+// ── Trellis archived-tasks section (independent view) ───────────────────────
+// The month-grouped browser: collapsed groups show just the header
+// ("2026-09 · 12"), expanding reveals that month's rows. This keeps a
+// 200-task archive navigable without an unbounded flat list. Each row opens
+// the same detail overlay as live tasks — taskPath already points into
+// tasks/archive/<month>/, which readTaskDetail answers.
+
+// Priority badge (v7 R7). task.py writes "P0".."P2"; tolerate a bare
+// digit from hand-written task.json files, and treat anything else as
+// unset so the row never shows a rank it cannot order.
+function normalizeTrellisPriority(value) {
+  if (typeof value !== "string") return null;
+  const match = /^p?([0-2])$/i.exec(value.trim());
+  return match ? `p${match[1]}` : null;
+}
+
+function formatTrellisArchiveDuration(ms) {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms <= 0) return "—";
+  if (ms < 60 * 60 * 1000) {
+    return t("dashboardTrellisArchivedDurationMinutes")
+      .replace("{n}", String(Math.max(1, Math.round(ms / (60 * 1000)))));
+  }
+  if (ms < 24 * 60 * 60 * 1000) {
+    return t("dashboardTrellisArchivedDurationHours")
+      .replace("{n}", String(Math.max(1, Math.round(ms / (60 * 60 * 1000)))));
+  }
+  return t("dashboardTrellisArchivedDurationDays")
+    .replace("{n}", String(Math.ceil(ms / (24 * 60 * 60 * 1000))));
+}
+
+function trellisArchiveCompletedLabel(task) {
+  if (task.completedAt) return task.completedAt;
+  if (typeof task.completedAtMs === "number" && Number.isFinite(task.completedAtMs)) {
+    // App language, not the system locale — same rule as formatResetDate.
+    try {
+      return new Date(task.completedAtMs).toLocaleDateString((i18nPayload && i18nPayload.lang) || "en");
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
+// ── Trellis task detail overlay ────────────────────────────────────────────
+// Opened by the row-tail ⓘ button: a modal card inside the Dashboard window.
+// Data is fetched once per open (single IPC round-trip, never polled); the
+// binding-session list and the card title are frozen from the panel's own
+// aggregate at open time, so the one-second rebuilds underneath do not churn
+// the open card. Only the language participates in re-renders.
+const trellisDetail = {
+  open: false,
+  loading: false,
+  seq: 0,
+  request: null, // { taskPath, title, cwd, sessions } — frozen at open time
+  result: null,  // IPC reply { status, task? }
+  activeTab: "overview", // "overview" | a doc name from result.task.docs
+  embedded: false, // true = rendered inside the split detail pane (no overlay)
+};
+// Per-document read state, one entry per (taskPath, doc) pair. Contents are
+// session-memory only: the cache dies with closeTrellisDetail() — never
+// persisted, never logged (PRD: document contents are ephemeral).
+const trellisDetailDocs = new Map(); // "taskPath\u0000doc" → { loading, result }
+// ── v4-b task network ───────────────────────────────────────────────────
+// Third overlay on the shared pattern: one task's structured linkage
+// (parent / children from task.json) as clickable refs that jump straight
+// into the task-detail overlay. Ephemeral; closing drops everything.
+// ── ⛓ project-wide network overview (v7 R8) ─────────
+// The relation graph is a project-level drawer now: one bounded IPC read
+// (readTaskNetworkOverview) over every task in the selected root. The old
+// single-task readTaskNetwork entry on detail cards is gone.
+
+const trellisOverlayCloseTimers = new WeakMap();
+const trellisCloseTimer = typeof setTimeout === "function" ? setTimeout : null;
+
+function resetTrellisDetailState() {
+  trellisDetail.open = false;
+  trellisDetail.loading = false;
+  trellisDetail.embedded = false;
+  trellisDetail.request = null;
+  trellisDetail.result = null;
+  trellisDetail.activeTab = "overview";
+  trellisDetailDocs.clear();
+  lastTrellisDetailSignature = null;
+}
+
+// Close handler for cards rendered INSIDE the split detail pane: no overlay
+// host is involved, so skip the close animation entirely.
+function cancelTrellisOverlayClose(overlayEl) {
+  if (!overlayEl) return;
+  const pending = trellisOverlayCloseTimers.get(overlayEl);
+  if (pending) {
+    clearTimeout(pending);
+    trellisOverlayCloseTimers.delete(overlayEl);
+  }
+  overlayEl.classList.remove("is-closing");
+}
+
+function animateTrellisOverlayClose(overlayEl, finish) {
+  const reduced = typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!overlayEl || overlayEl.hidden || reduced || !trellisCloseTimer) {
+    finish();
+    return;
+  }
+  cancelTrellisOverlayClose(overlayEl);
+  overlayEl.classList.add("is-closing");
+  trellisOverlayCloseTimers.set(
+    overlayEl,
+    trellisCloseTimer(() => {
+      trellisOverlayCloseTimers.delete(overlayEl);
+      overlayEl.classList.remove("is-closing");
+      finish();
+    }, 140)
+  );
+}
+
+const trellisNetwork = {
+  open: false,
+  loading: false,
+  seq: 0,
+  root: null,
+  result: null, // { status, nodes, edges, specGroups, prdGroups, truncated }
+};
+let lastTrellisNetworkSignature = null;
+
+async function fetchTrellisNetworkOverview() {
+  const seq = trellisNetwork.seq;
+  const root = trellisNetwork.root;
+  let result = null;
+  try {
+    result = await window.dashboardAPI.getTrellisNetworkOverview({ root });
+  } catch {
+    result = null;
+  }
+  if (!trellisNetwork.open || trellisNetwork.seq !== seq) return;
+  trellisNetwork.loading = false;
+  trellisNetwork.result = result && typeof result === "object" ? result : { status: "error" };
+  lastTrellisNetworkSignature = null;
+  lastTrellisViewSignature = null;
+  renderTrellisViewBody();
+}
+
+// Clicking a task inside the overview jumps to it in the split list: make
+// sure its root is selected (a different chip hides it) and archived tasks
+// need the DONE group open, then select — the detail pane follows.
+function jumpToTrellisNetworkTask(taskPath, taskCwd) {
+  if (typeof taskPath !== "string" || !taskPath) return;
+  const overviewRoot = trellisNetwork.root;
+  if (overviewRoot && trellisView.selectedRoot !== null && trellisView.selectedRoot !== overviewRoot) {
+    trellisView.selectedRoot = overviewRoot;
+  }
+  if (taskPath.includes("/archive/") && !trellisSplit.archiveOpen) {
+    trellisSplit.archiveOpen = true;
+  }
+  if (trellisSplit.collapsedPaths) trellisSplit.collapsedPaths.delete(taskPath);
+  // Composite key partner (09-25): overview nodes don't carry cwd — the
+  // overview was fetched FOR trellisNetwork.root, so that root IS the
+  // missing cwd scope in multi-root lists.
+  const resolvedCwd = typeof taskCwd === "string" && taskCwd ? taskCwd : overviewRoot || null;
+  selectTrellisSplitTask(taskPath, resolvedCwd);
+}
+
+function trellisNetworkRefButton(ref) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "trellis-network-ref";
+  if (ref && ref.taskPath && !ref.missing) {
+    btn.appendChild(document.createTextNode(ref.title || ref.taskPath));
+    if (ref.archived) {
+      const badge = document.createElement("span");
+      badge.className = "trellis-network-ref-badge";
+      badge.appendChild(document.createTextNode(t("dashboardTrellisLinksArchived")));
+      btn.appendChild(badge);
+    }
+    btn.addEventListener("click", () => {
+      jumpToTrellisNetworkTask(ref.taskPath, ref.cwd);
+    });
+  } else {
+    btn.disabled = true;
+    btn.classList.add("is-missing");
+    btn.setAttribute("aria-disabled", "true");
+    btn.appendChild(document.createTextNode(
+      (ref && (ref.title || ref.taskPath || ref.name)) || t("dashboardTrellisLinksMissing")
+    ));
+    const badge = document.createElement("span");
+    badge.className = "trellis-network-ref-badge";
+    badge.appendChild(document.createTextNode(t("dashboardTrellisLinksMissing")));
+    btn.appendChild(badge);
+  }
+  return btn;
+}
+
+
+// ── end task network ──────────────────────────────────────────────────────
+
+let lastTrellisDetailSignature = null;
+
+// ── v4-a spec map ──────────────────────────────────────────────────────────
+// A second overlay on the same pattern as the task-detail card: a left
+// file list over readSpecTree, a right pane rendering readSpecDoc through
+// the same whitelisted builder as task docs. Session-memory only; every
+// cached document dies with closeTrellisSpec().
+const trellisSpec = {
+  open: false,
+  loading: false,
+  seq: 0,
+  root: null, // registered root whose .trellis/spec is being browsed
+  files: [], // [{ relPath, group }] from readSpecTree
+  truncated: false,
+  selected: null, // relPath of the doc shown in the right pane
+};
+const trellisSpecDocs = new Map(); // "root\u0000relPath" → { loading, result }
+let lastTrellisSpecSignature = null;
+
+function trellisSpecDocKey(root, relPath) {
+  return `${root}\u0000${relPath}`;
+}
+
+function openTrellisSpec(root) {
+  // v7 R10fix: opening is just "expand the spec group" — the group then
+  // lazy-loads for the CURRENT scope root (chip selection or first root).
+  if (!trellisSplit.specGroupOpen) {
+    toggleTrellisSpecGroup();
+  }
+}
+
+
+function closeTrellisSpec() {
+  // v7 R10fix: closing = fold the spec group; selection/doc cache drops
+  // with the next expand (scope switch or re-open refetches).
+  if (trellisSplit.specGroupOpen) {
+    toggleTrellisSpecGroup();
+  }
+}
+
+
+function switchTrellisSpecRoot(root) {
+  if (!trellisSpec.open || typeof root !== "string" || !root || root === trellisSpec.root) return;
+  trellisSpec.root = root;
+  trellisSpec.files = [];
+  trellisSpec.truncated = false;
+  trellisSpec.selected = null;
+  trellisSpecDocs.clear();
+  lastTrellisSpecSignature = null;
+  renderTrellisSpec();
+  void fetchTrellisSpecTree(root);
+}
+
+function selectTrellisSpecDoc(relPath) {
+  if (typeof relPath !== "string" || !relPath) return;
+  trellisSpec.selected = relPath;
+  trellisSplit.detailKind = "spec";
+  trellisSplit.selectedTaskPath = null;
+  trellisSplit.networkGroupKey = null;
+  // Selection-only fast path (09-25 split polish): swap the spec row's
+  // is-selected class and rebuild just the right pane (spec doc content
+  // renders from the cache / loading hint). Structural fallback keeps
+  // the full rebuild for a stale signature or sandbox DOM.
+  if (!renderTrellisSplitSelectionOnly()) {
+    lastTrellisSpecSignature = null;
+    lastTrellisPanelSignature = null;
+    renderTrellisViewBody();
+  }
+  void fetchTrellisSpecDoc(relPath);
+}
+
+
+async function fetchTrellisSpecTree(root) {
+  if (typeof window.dashboardAPI.getTrellisSpecTree !== "function") return;
+  const seq = trellisSpec.seq;
+  trellisSpec.loading = true;
+  lastTrellisSpecSignature = null;
+  renderTrellisSpec();
+  let result = null;
+  try {
+    result = await window.dashboardAPI.getTrellisSpecTree({ root });
+  } catch {
+    result = null;
+  }
+  // Stale guard: a reply for a closed panel or a superseded root is dropped.
+  if (!trellisSpec.open || trellisSpec.root !== root || trellisSpec.seq !== seq) return;
+  trellisSpec.loading = false;
+  if (result && typeof result === "object" && result.status === "ok" && Array.isArray(result.files)) {
+    trellisSpec.files = result.files.filter(
+      (f) => f && typeof f === "object" && typeof f.relPath === "string" && f.relPath
+    );
+    trellisSpec.truncated = result.truncated === true;
+  } else {
+    trellisSpec.files = [];
+    trellisSpec.truncated = false;
+  }
+  lastTrellisSpecSignature = null;
+  renderTrellisSpec();
+}
+
+async function fetchTrellisSpecDoc(relPath) {
+  const root = trellisSpec.root;
+  if (!root || typeof window.dashboardAPI.getTrellisSpecDoc !== "function") return;
+  const key = trellisSpecDocKey(root, relPath);
+  if (trellisSpecDocs.has(key)) return;
+  trellisSpecDocs.set(key, { loading: true, result: null });
+  // Doc loading state only affects the RIGHT pane — keep the left list
+  // untouched: same fast path as selection changes (class swap is an
+  // idempotent no-op here, pane gets rebuilt, focus/scroll stay put).
+  // Fall back to the full spec render when the pane is not live yet.
+  if (!renderTrellisSplitSelectionOnly()) {
+    lastTrellisSpecSignature = null;
+    renderTrellisSpec();
+  }
+  let result = null;
+  try {
+    result = await window.dashboardAPI.getTrellisSpecDoc({ root, relPath });
+  } catch {
+    result = null;
+  }
+  const entry = trellisSpecDocs.get(key);
+  if (!entry) return; // closed / switched root dropped the cache
+  entry.loading = false;
+  entry.result = result && typeof result === "object" ? result : { status: "error" };
+  if (!renderTrellisSplitSelectionOnly()) {
+    lastTrellisSpecSignature = null;
+    renderTrellisSpec();
+  }
+}
+
+// v7 R10: spec document content for the RIGHT pane (detail slot), driven
+// by the spec group row click. Reuses the same doc cache and whitelisted
+// markdown renderer the old spec card used.
+function buildTrellisSpecDocContent(relPath) {
+  const pane = document.createElement("div");
+  pane.className = "trellis-spec-doc-content";
+  pane.appendChild(createText("h3", "trellis-detail-title", relPath));
+  const entry = trellisSpecDocs.get(trellisSpecDocKey(trellisSpec.root, relPath));
+  if (!entry || entry.loading) {
+    pane.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisDetailLoading")));
+    return pane;
+  }
+  if (entry.result && entry.result.status === "ok") {
+    const rendered = renderMarkdownDoc(trellisDocBuilder, entry.result.content || "");
+    pane.appendChild(rendered.root);
+    // R4 fix: spec-doc pane never wired collapse handlers — headings in
+    // spec files rendered via this path were not clickable at all.
+    wireTrellisDocCollapse(rendered.root);
+    if (rendered.truncated) {
+      pane.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisDocTruncated")));
+    }
+    return pane;
+  }
+  pane.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisSpecLoadFailed")));
+  return pane;
+}
+
+// v7 R10: one network group's content for the RIGHT pane — label, sub and
+// member rows; clicking a member jumps to that task in the split list.
+function buildTrellisNetworkGroupContent(key) {
+  const pane = document.createElement("div");
+  pane.className = "trellis-network-group-content";
+  const group = trellisNetworkGroups().find((g) => g.key === key);
+  if (!group) {
+    pane.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksEmpty")));
+    return pane;
+  }
+  pane.appendChild(createText("h3", "trellis-detail-title", group.label));
+  if (group.sub) {
+    pane.appendChild(createText("div", "trellis-detail-hint", group.sub));
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "trellis-network-group";
+  for (const ref of group.members) {
+    wrap.appendChild(trellisNetworkRefButton(ref));
+  }
+  pane.appendChild(wrap);
+  return pane;
+}
+
+
+function renderTrellisSpec() {
+  if (!trellisSpec.open) {
+    lastTrellisSpecSignature = null;
+    return;
+  }
+  const signature = JSON.stringify([
+    trellisSpec.loading,
+    trellisSpec.root,
+    trellisSpec.files.map((f) => `${f.group}|${f.relPath}|${f.filled}|${f.lines}|${f.refCount}`),
+    trellisSpec.truncated,
+    trellisSpec.selected,
+    [...trellisSpecDocs.entries()].map(([k, v]) => [k, v.loading, v.result && v.result.status, v.result && v.result.truncated]),
+    trellisView.roots,
+  ]);
+  if (signature === lastTrellisSpecSignature) return;
+  lastTrellisSpecSignature = signature;
+  // v7 R10: spec state drives the LEFT group rows and the RIGHT pane —
+  // rerender the split body (not the whole view header).
+  lastTrellisPanelSignature = null;
+  renderTrellisViewBody();
+}
+
+// ── end spec map ───────────────────────────────────────────────────────────
+
+function trellisDetailDocKey(taskPath, doc) {
+  return `${taskPath}\u0000${doc}`;
+}
+
+// Signature stays cheap on purpose: a 1 MB document must not be re-stringified
+// every second, so cached docs contribute a fingerprint (state + length), not
+// their content — the content of a cached doc never changes after landing.
+function trellisDetailDocsFingerprint() {
+  const out = [];
+  for (const [key, entry] of trellisDetailDocs) {
+    const result = entry && entry.result;
+    out.push([
+      key,
+      entry ? entry.loading : null,
+      result ? result.status : null,
+      result && typeof result.content === "string" ? result.content.length : null,
+      result ? result.truncated : null,
+    ]);
+  }
+  return out;
+}
+
+function computeTrellisDetailSignature() {
+  return JSON.stringify({
+    lang: (i18nPayload && i18nPayload.lang) || "en",
+    open: trellisDetail.open,
+    loading: trellisDetail.loading,
+    embedded: trellisDetail.embedded,
+    request: trellisDetail.request,
+    result: trellisDetail.result,
+    tab: trellisDetail.activeTab,
+    docs: trellisDetailDocsFingerprint(),
+  });
+}
+
+async function openTrellisDetail(task, opts) {
+  if (!trellisDetailOverlayEl || !task) return;
+  const sessions = Array.isArray(task.sessions) ? task.sessions : [];
+  const cwdSource = sessions.find((binding) => binding && binding.cwd);
+  trellisDetail.open = true;
+  trellisDetail.loading = true;
+  trellisDetail.seq += 1;
+  const seq = trellisDetail.seq;
+  trellisDetail.embedded = Boolean(opts && opts.embedded);
+  trellisDetail.request = {
+    taskPath: task.taskPath,
+    title: task.title || "",
+    // Archived rows carry the cwd their archive scan resolved (no live
+    // binding exists to donate one); live rows keep the first bound cwd.
+    cwd: task.cwd || (cwdSource ? cwdSource.cwd : ""),
+    sessions: sessions.slice(),
+  };
+  trellisDetail.result = null;
+  trellisDetail.activeTab = "overview";
+  // Opening another card without closing this one (same overlay) must not
+  // keep the previous task's cached documents alive: contents are ephemeral
+  // per open card, and the fingerprint must not carry stale keys forever.
+  trellisDetailDocs.clear();
+  lastTrellisDetailSignature = null;
+  renderTrellisDetail();
+
+  let result = null;
+  try {
+    if (typeof window.dashboardAPI.getTrellisTaskDetail !== "function") {
+      throw new Error("bridge-unavailable");
+    }
+    result = await window.dashboardAPI.getTrellisTaskDetail({
+      taskPath: trellisDetail.request.taskPath,
+      cwd: trellisDetail.request.cwd,
+    });
+  } catch {
+    result = null;
+  }
+  // Stale guard: another detail was opened (or this one closed) while the
+  // read was in flight — drop the reply instead of overwriting newer UI.
+  if (!trellisDetail.open || seq !== trellisDetail.seq) return;
+  trellisDetail.loading = false;
+  trellisDetail.result = result && typeof result === "object" ? result : { status: "error" };
+  lastTrellisDetailSignature = null;
+  renderTrellisDetail();
+}
+
+function closeTrellisDetail() {
+  if (!trellisDetail.open) return;
+  if (trellisDetail.embedded) {
+    // Embedded card lives inside the split detail pane: closing equals
+    // clearing the master-list selection (pane rebuilds to the empty
+    // state and quietly drops the card). Fallback covers external close
+    // calls while no row is selected.
+    if (trellisSplit.selectedTaskPath !== null) {
+      selectTrellisSplitTask(null);
+    } else {
+      resetTrellisDetailState();
+      renderTrellisViewBody();
+    }
+    return;
+  }
+  trellisDetail.loading = false;
+  trellisDetail.request = null;
+  trellisDetail.result = null;
+  trellisDetail.activeTab = "overview";
+  // Ephemeral by contract: closing the card drops every cached document
+  // content along with the card itself.
+  trellisDetailDocs.clear();
+  lastTrellisDetailSignature = null;
+  trellisDetail.open = false;
+  animateTrellisOverlayClose(trellisDetailOverlayEl, renderTrellisDetail);
+}
+
+// Tab switch inside an open card. "overview" is always available; a doc
+// tab lazily fetches its content once (the cache entry survives tab
+// switches within the same open card).
+function switchTrellisDetailTab(tab) {
+  if (!trellisDetail.open || tab === trellisDetail.activeTab) return;
+  if (tab !== "overview") {
+    const request = trellisDetail.request;
+    const detail = trellisDetail.result && trellisDetail.result.status === "ok"
+      ? trellisDetail.result.task
+      : null;
+    if (!request || !detail || !Array.isArray(detail.docs)) return;
+    if (!detail.docs.some((doc) => doc && doc.name === tab)) return;
+  }
+  trellisDetail.activeTab = tab;
+  lastTrellisDetailSignature = null;
+  renderTrellisDetail();
+  if (tab !== "overview") void fetchTrellisDetailDoc(tab);
+}
+
+async function fetchTrellisDetailDoc(doc) {
+  const request = trellisDetail.request;
+  if (!request || typeof window.dashboardAPI.getTrellisTaskDoc !== "function") return;
+  const key = trellisDetailDocKey(request.taskPath, doc);
+  if (trellisDetailDocs.has(key)) return;
+  trellisDetailDocs.set(key, { loading: true, result: null });
+  lastTrellisDetailSignature = null;
+  renderTrellisDetail();
+
+  let result = null;
+  try {
+    result = await window.dashboardAPI.getTrellisTaskDoc({
+      taskPath: request.taskPath,
+      cwd: request.cwd,
+      doc,
+    });
+  } catch {
+    result = null;
+  }
+  // The cache is keyed by (taskPath, doc), so a reply for a card that was
+  // closed (or superseded by another task) just lands in the cache unseen;
+  // closeTrellisDetail() drops it with everything else.
+  const entry = trellisDetailDocs.get(key);
+  if (!entry) return;
+  entry.loading = false;
+  entry.result = result && typeof result === "object" ? result : { status: "error" };
+  lastTrellisDetailSignature = null;
+  renderTrellisDetail();
+}
+
+function createTrellisDetailCheckItem(item) {
+  const li = document.createElement("li");
+  li.className = item.checked
+    ? "trellis-detail-check-item trellis-detail-check-item-done"
+    : "trellis-detail-check-item";
+  li.appendChild(createText("span", "trellis-detail-check-box", item.checked ? "☑" : "☐"));
+  li.appendChild(createText("span", "trellis-detail-check-text", item.text));
+  return li;
+}
+
+function appendTrellisDetailMeta(card, task) {
+  const meta = document.createElement("div");
+  meta.className = "trellis-detail-meta";
+  // Priority (v7 R7) leads the meta row: it is the field that decides
+  // whether the task gets looked at at all.
+  const priority = normalizeTrellisPriority(task.priority);
+  if (priority) {
+    const chip = createText(
+      "span",
+      `trellis-detail-meta-item trellis-priority pri-${priority}`,
+      priority.toUpperCase()
+    );
+    chip.setAttribute(
+      "aria-label",
+      t("dashboardTrellisDetailPriority").replace("{p}", priority.toUpperCase())
+    );
+    meta.appendChild(chip);
+  }
+  if (task.createdAt) {
+    meta.appendChild(createText(
+      "span",
+      "trellis-detail-meta-item",
+      t("dashboardTrellisDetailCreated").replace("{date}", task.createdAt)
+    ));
+  }
+  if (task.completedAt) {
+    meta.appendChild(createText(
+      "span",
+      "trellis-detail-meta-item",
+      t("dashboardTrellisDetailCompleted").replace("{date}", task.completedAt)
+    ));
+  }
+  if (task.checklist && task.checklist.total > 0) {
+    meta.appendChild(createText(
+      "span",
+      "trellis-detail-meta-item",
+      t("dashboardTrellisDetailSteps")
+        .replace("{done}", String(task.checklist.done))
+        .replace("{total}", String(task.checklist.total))
+    ));
+  }
+  if (meta.children.length) card.appendChild(meta);
+
+  if (task.checklist && task.checklist.total > 0) {
+    // v6.1: segmented energy ticks (same component as the tree rows), one
+    // cell per checklist step — replaces the continuous percentage bar.
+    const bar = document.createElement("div");
+    bar.className = "trellis-detail-progress";
+    const ticks = buildTrellisProgressTicks(task.checklist);
+    if (ticks) {
+      ticks.classList.add("trellis-detail-progress-ticks");
+      bar.appendChild(ticks);
+    }
+    bar.appendChild(createText(
+      "span",
+      "trellis-detail-progress-num",
+      `${task.checklist.done}/${task.checklist.total}`
+    ));
+    card.appendChild(bar);
+  }
+}
+
+function appendTrellisDetailChecklist(card, task) {
+  const section = document.createElement("div");
+  section.className = "trellis-detail-section";
+  section.appendChild(createText(
+    "div",
+    "trellis-detail-section-title",
+    t("dashboardTrellisDetailChecklist")
+  ));
+  const checklist = task.checklist;
+  if (checklist && checklist.total > 0) {
+    const list = document.createElement("ul");
+    list.className = "trellis-detail-checklist";
+    for (const item of checklist.items) list.appendChild(createTrellisDetailCheckItem(item));
+    section.appendChild(list);
+  } else {
+    section.appendChild(createText("div", "trellis-detail-empty", t("dashboardTrellisDetailChecklistEmpty")));
+  }
+  card.appendChild(section);
+}
+
+function appendTrellisDetailSessions(card, request) {
+  if (!request || !request.sessions.length) return;
+  const section = document.createElement("div");
+  section.className = "trellis-detail-section";
+  section.appendChild(createText(
+    "div",
+    "trellis-detail-section-title",
+    t("dashboardTrellisDetailSessions")
+  ));
+  const chips = document.createElement("div");
+  chips.className = "trellis-task-sessions";
+  for (const binding of request.sessions) chips.appendChild(createTrellisSessionChip(binding));
+  section.appendChild(chips);
+  card.appendChild(section);
+}
+
+// The doc renderer is a pure (builder → element) function; this adapter is
+// the only DOM touchpoint, so tests can swap in a fake document wholesale.
+const trellisDocBuilder = {
+  createElement: (tag) => document.createElement(tag),
+  createTextNode: (text) => document.createTextNode(text),
+  createElementNS: (ns, tag) => (typeof document.createElementNS === "function"
+    ? document.createElementNS(ns, tag)
+    : document.createElement(tag)),
+};
+
+function trellisDocHeadingLevel(el) {
+  for (let level = 1; level <= 4; level += 1) {
+    if (el.classList && el.classList.contains(`md-h${level}`)) return level;
+  }
+  return 0;
+}
+
+// ANY heading (h1..h4) collapses on click: flip the class + hide following
+// siblings up to (and excluding) the next same-or-higher heading. Default is
+// fully expanded; a card rebuild resets collapse state, which only happens
+// on tab or language changes — never on the periodic tick (signature guard).
+function toggleTrellisDocHeading(docRoot, heading) {
+  const level = trellisDocHeadingLevel(heading);
+  if (!level) return;
+  const collapsed = heading.classList.toggle("md-collapsed");
+  heading.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  // The caret is an always-down SVG rotated via CSS (.md-collapsed rule)
+  // — no glyph flipping here (UI redesign 09-24 Batch C).
+  const siblings = docRoot.children;
+  for (let i = siblings.length - 1; i >= 0; i -= 1) {
+    if (siblings[i] === heading) {
+      for (let j = i + 1; j < siblings.length; j += 1) {
+        const elLevel = trellisDocHeadingLevel(siblings[j]);
+        if (elLevel && elLevel <= level) break;
+        siblings[j].hidden = collapsed;
+      }
+      return;
+    }
+  }
+}
+
+function wireTrellisDocCollapse(docRoot) {
+  // querySelectorAll (not just top-level children): headings nested
+  // inside lists/blockquotes were previously unclickable ("折叠无效").
+  // Guard: the test sandbox DOM only implements children iteration.
+  if (typeof docRoot.querySelectorAll === "function") {
+    for (const el of docRoot.querySelectorAll(".md-heading-collapsible")) {
+      el.addEventListener("click", () => toggleTrellisDocHeading(docRoot, el));
+    }
+    return;
+  }
+  for (const el of docRoot.children) {
+    if (el.classList && el.classList.contains("md-heading-collapsible")) {
+      el.addEventListener("click", () => toggleTrellisDocHeading(docRoot, el));
+    }
+  }
+}
+
+function appendTrellisDetailTabs(card, docs) {
+  const tabs = document.createElement("div");
+  tabs.className = "trellis-detail-tabs";
+  tabs.setAttribute("role", "tablist");
+  const makeTab = (name, label) => {
+    const tab = document.createElement("button");
+    tab.type = "button";
+    tab.className = trellisDetail.activeTab === name
+      ? "trellis-detail-tab is-active"
+      : "trellis-detail-tab";
+    tab.textContent = label;
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-selected", trellisDetail.activeTab === name ? "true" : "false");
+    tab.addEventListener("click", () => switchTrellisDetailTab(name));
+    return tab;
+  };
+  tabs.appendChild(makeTab("overview", t("dashboardTrellisDetailTabOverview")));
+  for (const doc of docs) {
+    tabs.appendChild(makeTab(doc.name, doc.name.replace(/\.md$/, "")));
+  }
+  card.appendChild(tabs);
+}
+
+function appendTrellisDetailDocNote(container, key) {
+  container.appendChild(createText("div", "trellis-detail-doc-note", t(key)));
+}
+
+function appendTrellisDetailDocView(card, docName) {
+  const container = document.createElement("div");
+  container.className = "trellis-detail-doc";
+  const request = trellisDetail.request;
+  const entry = request ? trellisDetailDocs.get(trellisDetailDocKey(request.taskPath, docName)) : null;
+  if (!entry || entry.loading) {
+    appendTrellisDetailDocNote(container, "dashboardTrellisDetailLoading");
+    card.appendChild(container);
+    return;
+  }
+  const result = entry.result;
+  if (result && result.status === "ok" && typeof result.content === "string") {
+    if (result.truncated) {
+      appendTrellisDetailDocNote(container, "dashboardTrellisDocTruncated");
+    }
+    const { root, truncated } = renderMarkdownDoc(trellisDocBuilder, result.content);
+    if (truncated) {
+      appendTrellisDetailDocNote(container, "dashboardTrellisDocTruncated");
+    }
+    container.appendChild(root);
+    wireTrellisDocCollapse(root);
+  } else if (result && result.status === "missing") {
+    appendTrellisDetailDocNote(container, "dashboardTrellisDocMissing");
+  } else {
+    appendTrellisDetailDocNote(container, "dashboardTrellisDocReadError");
+  }
+  card.appendChild(container);
+}
+
+function buildTrellisDetailCard() {
+  const card = document.createElement("div");
+  card.className = "trellis-detail-card";
+  const request = trellisDetail.request || { title: "", taskPath: "", sessions: [] };
+
+  const header = document.createElement("div");
+  header.className = "trellis-detail-header";
+  const heading = document.createElement("div");
+  heading.className = "trellis-detail-heading";
+  const result = trellisDetail.result;
+  const detail = result && result.status === "ok" && result.task ? result.task : null;
+  heading.appendChild(createText(
+    "h2",
+    "trellis-detail-title",
+    (detail && detail.title) || request.title || request.taskPath
+  ));
+  if (detail) {
+    const badge = TRELLIS_PHASE_BADGE[detail.phase];
+    if (badge) {
+      heading.appendChild(createText("span", `trellis-phase-badge ${badge.cls}`, t(badge.labelKey)));
+    }
+    if (detail.archived) {
+      heading.appendChild(createText(
+        "span",
+        "trellis-detail-archived-badge",
+        t("dashboardTrellisDetailArchived")
+      ));
+    }
+  }
+  header.appendChild(heading);
+
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "trellis-detail-close";
+  close.appendChild(iconSvg("close", 12));
+  close.title = t("dashboardTrellisDetailClose");
+  close.setAttribute("aria-label", t("dashboardTrellisDetailClose"));
+  close.addEventListener("click", closeTrellisDetail);
+  header.appendChild(close);
+
+  // v7 R8: the ⛓ entry is gone from detail cards — the project bar's
+  // network overview replaced the per-task drill-down.
+  card.appendChild(header);
+
+  if (trellisDetail.loading) {
+    card.appendChild(createText("div", "trellis-detail-empty", t("dashboardTrellisDetailLoading")));
+  } else if (detail) {
+    const docs = Array.isArray(detail.docs)
+      ? detail.docs.filter((doc) => doc && typeof doc.name === "string" && doc.name)
+      : [];
+    if (docs.length) appendTrellisDetailTabs(card, docs);
+    if (docs.length && trellisDetail.activeTab !== "overview") {
+      appendTrellisDetailDocView(card, trellisDetail.activeTab);
+    } else {
+      appendTrellisDetailMeta(card, detail);
+      appendTrellisDetailChecklist(card, detail);
+    }
+  } else if (result && result.status === "missing") {
+    card.appendChild(createText("div", "trellis-detail-empty", t("dashboardTrellisDetailMissing")));
+  } else {
+    card.appendChild(createText("div", "trellis-detail-empty", t("dashboardTrellisDetailError")));
+  }
+
+  if (!detail || trellisDetail.activeTab === "overview") {
+    appendTrellisDetailSessions(card, request);
+  }
+  return card;
+}
+
+function renderTrellisDetail() {
+  if (!trellisDetailOverlayEl) return;
+  const signature = computeTrellisDetailSignature();
+  if (signature === lastTrellisDetailSignature) return;
+  lastTrellisDetailSignature = signature;
+  if (!trellisDetail.open) {
+    trellisDetailOverlayEl.hidden = true;
+    trellisDetailOverlayEl.replaceChildren();
+    return;
+  }
+  cancelTrellisOverlayClose(trellisDetailOverlayEl);
+  const card = buildTrellisDetailCard();
+  if (trellisDetail.embedded) {
+    // Embedded mode: render into the split detail pane host instead of the
+    // overlay. The overlay host stays hidden; card chrome (close button)
+    // differs — see buildTrellisDetailCard embedded branch.
+    trellisDetailOverlayEl.hidden = true;
+    trellisDetailOverlayEl.replaceChildren();
+    // Module-level host (set by buildTrellisSplitDetailPane) beats DOM
+    // queries: works in test sandboxes without document.querySelector.
+    const host = trellisSplitDetailHostEl || document.querySelector(".trellis-split-detail");
+    if (host) {
+      host.replaceChildren();
+      host.appendChild(card);
+    }
+    return;
+  }
+  trellisDetailOverlayEl.replaceChildren(card);
+  trellisDetailOverlayEl.hidden = false;
+  trellisDetailOverlayEl.setAttribute("aria-label", t("dashboardTrellisDetailTitle"));
+}
+
 function badgeLabel(badge) {
   const key = {
     running: "sessionBadgeRunning",
@@ -1386,9 +4363,38 @@ function finishSessionFolderAction(sessionId, feedbackText = "") {
   });
 }
 
+let enteringSessionIds = new Set();
+let knownSessionIds = null;
+let firstFrameShown = false;
+let firstFrameTimer = 0;
+const firstFrameEnroll = typeof setTimeout === "function" ? setTimeout : null;
+const firstFrameCancel = typeof clearTimeout === "function" ? clearTimeout : null;
+
+// Marks newly-seen sessions for a one-shot enter animation and runs the
+// first-frame stagger exactly once per window lifetime. Purely class
+// bookkeeping — all interpolation lives in CSS.
+function noteEnteringSessions(sessions) {
+  const ids = new Set(sessions.map((session) => session.id));
+  enteringSessionIds = knownSessionIds
+    ? new Set(Array.from(ids).filter((id) => !knownSessionIds.has(id)))
+    : new Set();
+  knownSessionIds = ids;
+  if (!firstFrameShown && sessions.length) {
+    firstFrameShown = true;
+    if (firstFrameEnroll && firstFrameCancel) {
+      contentEl.classList.add("is-first-frame");
+      firstFrameCancel(firstFrameTimer);
+      firstFrameTimer = firstFrameEnroll(() => contentEl.classList.remove("is-first-frame"), 480);
+    }
+  }
+}
+
 function createCard(session, now) {
   const card = document.createElement("article");
   card.className = session.canFocus === true ? "card" : "card card-unfocusable";
+  // Entering cards play their intro once; the next rebuild drops the class so
+  // the one-second tick never re-runs the animation.
+  if (enteringSessionIds.has(session.id)) card.classList.add("is-entering");
 
   // The digit badge is produced here, from the frozen round state, on every
   // rebuild. The one-second tick replaces the whole card tree, so anything
@@ -2087,10 +5093,21 @@ function render(options = {}) {
     if (!liveAutomationActionKeys.has(key)) sessionAutomationActionState.delete(key);
   }
   pruneSessionFolderActionState(sessions, now);
-  titleEl.textContent = t("dashboardWindowTitle");
-  countEl.textContent = t("dashboardCount").replace("{n}", count);
-  document.title = t("dashboardWindowTitle");
+  if (activeView === "trellis") {
+    titleEl.textContent = t("dashboardViewTrellis");
+    countEl.textContent = "";
+    document.title = t("dashboardViewTrellis");
+  } else {
+    titleEl.textContent = t("dashboardWindowTitle");
+    countEl.textContent = t("dashboardCount").replace("{n}", count);
+    document.title = t("dashboardWindowTitle");
+  }
+  if (viewSessionsTabEl) viewSessionsTabEl.textContent = t("dashboardViewSessions");
+  if (viewTrellisTabEl) viewTrellisTabEl.textContent = t("dashboardViewTrellis");
   renderQuotaSummary(snapshot);
+  renderTrellisPanel();
+  renderTrellisDetail();
+  renderTrellisView();
 
   renderQuickBanner();
 
@@ -2115,9 +5132,66 @@ function render(options = {}) {
   appendSessionHistory(fragment, now);
 
   contentEl.replaceChildren(fragment);
+  noteEnteringSessions(sessions);
 }
 
 async function init() {
+  // Detail overlay dismissal: ESC (when the keyboard mode is not holding the
+  // key) and a click on the dimmed backdrop outside the card.
+  if (typeof document.addEventListener === "function") {
+    document.addEventListener("keydown", (event) => {
+      if (!trellisDetail.open && !trellisSpec.open && !trellisNetwork.open) return;
+      if (quick.active || quick.pending) return;
+      if (event.key === "Escape") {
+        closeTrellisDetail();
+      }
+    });
+  }
+  // v6 split-mode keyboard navigation: ↑/↓ move the selection across the
+  // visible rows in group order, Enter opens the full detail overlay, Esc
+  // clears the selection (never the window). Only active while the split
+  // view is the current tab and no overlay/quick mode holds the key.
+  // Since v7 the detail card lives EMBEDDED in the split pane (open on
+  // every selection) and spec/relations are left-column groups — none of
+  // them owns the keyboard — so only a true overlay (non-embedded detail
+  // card) or quick mode blocks navigation (09-25 split polish).
+  if (typeof document.addEventListener === "function") {
+    document.addEventListener("keydown", (event) => {
+      if (activeView !== "trellis") return;
+      if (trellisDetail.open && !trellisDetail.embedded) return;
+      if (quick.active || quick.pending) return;
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown" && event.key !== "Enter" && event.key !== "Escape") return;
+      if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        moveTrellisSplitSelection(-1);
+      } else if (event.key === "ArrowDown") {
+        event.preventDefault();
+        moveTrellisSplitSelection(1);
+      } else if (event.key === "Enter") {
+        const rows = visibleTrellisRows(readTrellisTaskRows());
+        for (const row of rows) {
+          if (row.classList.contains("is-selected")) {
+            event.preventDefault();
+            row.dispatchEvent(new CustomEvent("dblclick", { bubbles: false }));
+            break;
+          }
+        }
+      } else if (event.key === "Escape") {
+        if (trellisSplit.selectedTaskPath !== null) {
+          event.preventDefault();
+          selectTrellisSplitTask(null);
+        }
+      }
+    });
+  }
+  // v7 R8: the network overview is an inline drawer (no overlay host,
+  // no backdrop); Esc above still closes it.
+  if (trellisDetailOverlayEl && typeof trellisDetailOverlayEl.addEventListener === "function") {
+    trellisDetailOverlayEl.addEventListener("click", (event) => {
+      if (event.target === trellisDetailOverlayEl) closeTrellisDetail();
+    });
+  }
   window.dashboardAPI.onLangChange((payload) => {
     i18nPayload = payload || i18nPayload;
     render();
@@ -2140,6 +5214,8 @@ async function init() {
     }
     render();
   });
+
+  initDashboardViewSwitch();
 
   const [nextI18n, nextSnapshot, nextKimiQuotaStatus] = await Promise.all([
     window.dashboardAPI.getI18n(),

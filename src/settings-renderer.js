@@ -15,6 +15,7 @@ const SIDEBAR_TABS = [
   { id: "discord-presence", labelKey: "sidebarDiscordPresence", available: true },
   { id: "remote-ssh", labelKey: "sidebarRemoteSsh", available: true },
   { id: "recap", labelKey: "sidebarRecap", available: true },
+  { id: "trellis", labelKey: "sidebarTrellis", available: true },
   { id: "about", labelKey: "sidebarAbout", available: true },
 ];
 
@@ -97,6 +98,7 @@ if (globalThis.ClawdSettingsTabRecap) globalThis.ClawdSettingsTabRecap.init(core
 globalThis.ClawdSettingsTabAbout.init(core);
 if (globalThis.ClawdSettingsTabRemoteSsh) globalThis.ClawdSettingsTabRemoteSsh.init(core);
 if (globalThis.ClawdSettingsTabMobile) globalThis.ClawdSettingsTabMobile.init(core);
+if (globalThis.ClawdSettingsTabTrellis) globalThis.ClawdSettingsTabTrellis.init(core);
 
 core.ops.restoreNavigationState();
 function selectRequestedTab(tab) {

@@ -146,6 +146,7 @@ Mini 状态映射：
 
 - working 子动画：Clawd 主题为 1 会话 → typing，2 → headphones groove，3+ → building；Calico / Cloudling 仍为 typing / juggling / building；官方可下载主题 Hash Sage（可选安装）为执笔制符 / 御剑哈希符文 / 纸灵忙碌协作
 - juggling 子动画：1 subagent → juggling，2+ → conducting（Hash Sage：1 → 御剑哈希符文，2+ → 纸灵忙碌协作）
+- `juggling` 还有第二个来源：**Trellis 并行任务 lift**（绑定项目里 ≥2 个 executing 任务、且 base state 仍为 `working` 时，由 `getSvgOverride` 临时改写 display state）。它不改逻辑状态、不改优先级表，也不与上一条的 subagent juggling 相互覆盖。详见 `agent-runtime-architecture.md` 的 Trellis Binding And Pet Feedback
 - mini 状态有独立动画槽；`mini-working` 是可选能力
 - 睡眠序列和 DND 行为见上面的 State Machine
 - `attention / error / sweeping / notification / carrying` 是一次性状态，显示后按 `autoReturn` 回退

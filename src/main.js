@@ -89,8 +89,15 @@ const {
   createSettingsSizePreviewSession,
 } = require("./settings-size-preview-session");
 const { registerSettingsIpc } = require("./settings-ipc");
+const { registerTrellisIpc } = require("./trellis-ipc");
 const createSettingsEffectRouter = require("./settings-effect-router");
 const { createRecapRuntime } = require("./recap-runtime");
+const { computeTrellisDailyCounts } = require("./recap-trellis");
+const { createTrellisActivity } = require("./trellis-activity");
+const { createTrellisRootsStore } = require("./trellis-roots");
+const { createTrellisCelebration } = require("./trellis-celebration");
+const { createTrellisBubble, TRELLIS_BUBBLE_DIMENSIONS } = require("./trellis-bubble");
+const { phaseLabelKey } = require("./trellis-phase");
 const { createKimiQuotaClient } = require("./kimi-quota-client");
 const { createKimiQuotaCredentialStore } = require("./kimi-quota-credential-store");
 const { createKimiQuotaRuntime } = require("./kimi-quota-runtime");
@@ -1051,11 +1058,18 @@ if (_loadedStartupTheme._id !== _requestedThemeId || _loadedStartupTheme._varian
 // wall clock — the midnight/holiday race the canonical payload exists to end.
 function getEffectivePetAccessoryPayloads(activeTheme = getActiveTheme()) {
   const snapshot = _settingsController.getSnapshot();
-  const headId = getEffectivePetAccessoryIdForTheme({
+  let headId = getEffectivePetAccessoryIdForTheme({
     petAccessory: snapshot.petAccessory,
     holidayAccessoryEnabled: snapshot.holidayAccessoryEnabled,
     themeId: activeTheme && activeTheme._id,
   });
+  // Trellis planning thinking cap (avatar R3): only fills an otherwise empty
+  // head slot — manual and holiday accessories keep priority. Themes without
+  // accessory support silently degrade via buildPetAccessoryPayload.
+  if (headId === "none") {
+    const phaseAccessoryId = getTrellisPhaseAccessoryId();
+    if (phaseAccessoryId) headId = phaseAccessoryId;
+  }
   const mouthId = getPetMouthAccessoryIdForTheme(
     snapshot.petMouthAccessory,
     activeTheme && activeTheme._id
@@ -1064,6 +1078,16 @@ function getEffectivePetAccessoryPayloads(activeTheme = getActiveTheme()) {
     head: buildPetAccessoryPayload(headId, activeTheme),
     mouth: buildPetMouthAccessoryPayload(mouthId, activeTheme),
   };
+}
+
+// Ephemeral, never persisted: while any bound live trellis task is in the
+// planning phase the pet wears the wizard hat. Shared by the accessory
+// payload resolver above and the holiday runtime's independent delivery so
+// both compute the same head slot.
+const TRELLIS_PLANNING_ACCESSORY_ID = "wizard-hat";
+function getTrellisPhaseAccessoryId() {
+  if (!_trellisActivity || !_trellisActivity.hasPlanningBinding()) return null;
+  return TRELLIS_PLANNING_ACCESSORY_ID;
 }
 
 function getEffectivePetAccessoryIds() {
@@ -1596,7 +1620,11 @@ function requestClickReaction(file, duration) {
 
 function sendToRenderer(channel, ...args) {
   if (channel === "state-change") {
-    return requestDisplayedVisual(args[0], args[1], args[2] || {});
+    const delivered = requestDisplayedVisual(args[0], args[1], args[2] || {});
+    // Pet render state settled on idle → bubble candidate (gate chain
+    // re-evaluates agent-idle + dedup inside maybeShow).
+    if (_trellisBubble && args[0] === "idle") _trellisBubble.maybeShow();
+    return delivered;
   }
   return sendRawToRenderer(channel, ...args);
 }
@@ -2012,6 +2040,18 @@ const _permCtx = {
   // pendingPermissions list changes (notifyPermissionsChanged), so a bubble
   // that leaves the list mid-edit can't strand the pet faded + click-through.
   syncImeEditingPetDodge: () => topmostRuntime.syncImeEditingPetDodge(),
+  // Waiting-auth display override: every pendingPermissions add/remove
+  // funnels through notifyPermissionsChanged, so re-resolve the pet display
+  // here (state.js owns the waiting visual, permission.js owns the list).
+  // DND keeps its own sleep visual — pending bubbles are dismissed before
+  // this fires and ctx.doNotDisturb is already true — and mini mode replays
+  // its own working visual, so both stay out of this re-resolve.
+  onPermissionsChanged: () => {
+    if (doNotDisturb) return;
+    if (_mini && _mini.getMiniMode()) return;
+    if (!_state) return;
+    try { _state.applyResolvedDisplayState(); } catch {}
+  },
   isAgentEnabled: (agentId) => _runtimeAgentGate.isAgentEnabled(agentId),
   isAgentPermissionsEnabled: (agentId) =>
     _runtimeAgentGate.isAgentPermissionsEnabled(agentId),
@@ -2254,6 +2294,12 @@ function deliverRendererThemeConfig() {
   return !!finalizePetAccessorySlotsDelivery(delivery, delivered);
 }
 
+// Trellis phase awareness (phase 3): constructed after _state below (it needs
+// _state.sessions as its live-session view); _stateCtx.trellisResolver reads
+// it lazily, so a plain forward let declaration is enough.
+let _trellisActivity = null;
+let _trellisBubble = null;
+
 const recapRuntime = createRecapRuntime({
   // A default-filled snapshot is not user authority when prefs were unreadable,
   // recovered, or written by a future app version. Start paused in that case;
@@ -2263,6 +2309,14 @@ const recapRuntime = createRecapRuntime({
   powerMonitor,
   logWarn: console.warn,
   onRecorded: () => settingsWindowRuntime.notifyRecapChanged(),
+  // Trellis lifecycle counts for the Footprints page: recomputed from the
+  // task trees of roots observed by _trellisActivity (created after this
+  // runtime, hence the lazy getter); never written into recap storage.
+  getTrellisDailyCounts: (localDate, timeZoneId) => computeTrellisDailyCounts({
+    roots: _trellisActivity ? _trellisActivity.getKnownRoots() : [],
+    localDate,
+    timeZoneId,
+  }),
 });
 
 const _stateCtx = {
@@ -2371,6 +2425,21 @@ const _stateCtx = {
     codexWorkingStaleMs,
     detachedIdleStaleMs,
   }),
+  // Trellis phase awareness (phase 3): snapshot entries query this lazily on
+  // every build, so the activity owner can be constructed after _state below
+  // (it needs _state.sessions) without reordering module setup.
+  trellisResolver: (sessionId) =>
+    _trellisActivity ? _trellisActivity.getTrellisInfo(sessionId) : null,
+  // Trellis parallel executing count (avatar R3.1): feeds the display-only
+  // working→juggling upgrade inside state.js. Same lazy forward reference as
+  // trellisResolver — pure aggregate cache read, zero extra IO.
+  getTrellisProjectExecutingCount: () =>
+    _trellisActivity ? _trellisActivity.getExecutingCount() : 0,
+  // Waiting-auth display override: feeds the display-only working→waiting
+  // lift inside state.js. Same lazy forward reference pattern as above — pure
+  // pending count read from the permission runtime, zero extra IO.
+  getPendingPermissionCount: () =>
+    _perm ? _perm.getPendingPermissionCount() : 0,
   hasReplyableCompletionMapping: (sessionId, session) => !!(
     telegramDirectSend
     && typeof telegramDirectSend.hasReplyableCompletionMapping === "function"
@@ -2389,6 +2458,296 @@ const _stateCtx = {
   hasAnyEnabledAgent: () => _runtimeAgentGate.hasAnyEnabledAgent(),
 };
 const _state = require("./state")(_stateCtx);
+const { parseSessionKey } = require("./session-key");
+// Trellis phase awareness (phase 3): read-only polling owner (design D3/D4).
+// Binds live sessions onto .trellis tasks, serves the snapshot resolver via
+// _stateCtx, and re-emits the session snapshot when a binding changes — the
+// signature (state-session-snapshot) already includes entry.trellis, so
+// emitSessionSnapshot fans the update out through the existing broadcast
+// path (Dashboard + HUD sendSnapshot with hudShow*/hudPinned merge).
+// Phase 4: onCelebration routes →finish/done transitions into the one-shot
+// reaction entry (requestClickReaction) shared with the 4-click combo — the
+// celebrate helper owns the DND / petHidden / mini gates and picks the
+// theme's reactions.double clip, silently skipping themes without one.
+// Idle thought-bubble: names the bound trellis task + next-step hint.
+// Same gate chain as the celebration; shown once per task per Clawd session.
+// Trigger points: state-change("idle") in sendToRenderer (above) and the
+// onTrellisUpdate callback just above.
+_trellisBubble = createTrellisBubble({
+  getDnd: () => doNotDisturb,
+  getPetHidden: () => petWindowRuntime.isPetEffectivelyHidden(),
+  getMiniMode: () => _mini.getMiniMode(),
+  getPetState: () => {
+    // "idle" here means no working session (agent idle), NOT the pet's
+    // mouse-idle animation state — the user is usually at the computer when
+    // the bubble should appear, so mouse activity must not gate it.
+    const snap = _state.getLastSessionSnapshot ? _state.getLastSessionSnapshot() : null;
+    const sessions = snap && Array.isArray(snap.sessions) ? snap.sessions : [];
+    return sessions.some((s) => s && s.state === "working") ? "working" : "idle";
+  },
+  getPetBounds: () => petWindowRuntime.getPetWindowBounds(),
+  getWorkArea: () => {
+    const b = petWindowRuntime.getPetWindowBounds() || { x: 0, y: 0, width: 0, height: 0 };
+    return screen.getDisplayMatching(b).workArea;
+  },
+  getAvoidRects: () => [
+    ..._perm.getVisibleBubbleBounds(),
+    ...(() => {
+      const hudWin = _sessionHud.getWindow();
+      return hudWin && !hudWin.isDestroyed() ? [hudWin.getBounds()] : [];
+    })(),
+  ],
+  getHudReservedOffset: () => _sessionHud.getHudReservedOffset(),
+  getPermissionReservedHeight: () =>
+    _perm.getVisibleBubbleBounds().reduce((max, r) => Math.max(max, r.height || 0), 0),
+  getSleepingLike: () => {
+    // Phase-transition bubble only: sleeping pets stay quiet even mid-work.
+    // DND/hidden/mini gates are shared with the idle bubble above.
+    try {
+      return _state.SLEEP_SEQUENCE.has(_state.getCurrentState());
+    } catch {
+      return false;
+    }
+  },
+  getWindow: () => {
+    // Same shape as update-bubble: standalone transparent window, no parent.
+    // macOS "panel" type matches the proven update-bubble construction.
+    const bubbleWin = new BrowserWindow({
+      width: TRELLIS_BUBBLE_DIMENSIONS.width,
+      height: TRELLIS_BUBBLE_DIMENSIONS.height,
+      show: false,
+      frame: false,
+      transparent: true,
+      alwaysOnTop: true,
+      resizable: false,
+      skipTaskbar: true,
+      hasShadow: false,
+      focusable: false,
+      ...(process.platform === "darwin" ? { type: "panel" } : {}),
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    });
+    bubbleWin.setAlwaysOnTop(true, "screen-saver");
+    bubbleWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false });
+    bubbleWin.loadFile(path.join(__dirname, "trellis-bubble.html"));
+    return bubbleWin;
+  },
+  setText: (win, { title, hint }) => {
+    if (!win || win.isDestroyed()) return;
+    const inject = () => {
+      if (win.isDestroyed()) return;
+      win.webContents.executeJavaScript(
+        `window.__setBubbleText(${JSON.stringify({ title, hint })})`
+      ).catch(() => { /* window closing */ });
+    };
+    // loadFile is async: injecting before did-finish-load means
+    // __setBubbleText is undefined and the error gets swallowed —
+    // the window then shows as fully transparent (invisible).
+    if (win.webContents.isLoadingMainFrame()) {
+      win.webContents.once("did-finish-load", inject);
+    } else {
+      inject();
+    }
+  },
+  formatHint: ({ key, params }) => {
+    let text = translate(key);
+    if (params) {
+      text = text
+        .replace("{done}", String(params.done))
+        .replace("{total}", String(params.total))
+        .replace("{nextStep}", params.nextStep == null ? "" : String(params.nextStep))
+        .replace("{phase}", params.phase == null ? "" : String(params.phase));
+    }
+    return text;
+  },
+  getTrellisInfo: () => {
+    // First live bound session wins; bubble names one task, not a list.
+    const snapshot = _state.getLastSessionSnapshot ? _state.getLastSessionSnapshot() : null;
+    const sessions = snapshot && Array.isArray(snapshot.sessions) ? snapshot.sessions : [];
+    for (const entry of sessions) {
+      const info = entry && entry.trellis;
+      if (info && info.taskPath) return info;
+    }
+    return null;
+  },
+});
+
+_trellisActivity = createTrellisActivity({
+  getLiveSessions: () => {
+    const snapshot = _state.getLastSessionSnapshot ? _state.getLastSessionSnapshot() : null;
+    const sessions = snapshot && Array.isArray(snapshot.sessions) ? snapshot.sessions : [];
+    return sessions.map((entry) => ({
+      id: entry.id,
+      sessionId: entry.id,
+      // Snapshot ids are scoped keys ("s1.<b64>.<b64>"); trellis pointer files
+      // on disk are named after the RAW session id, so decode before matching.
+      rawSessionId: (parseSessionKey(entry.id) || {}).rawSessionId || entry.id,
+      agentId: entry.agentId,
+      cwd: entry.cwd,
+      headless: !!entry.headless,
+    }));
+  },
+  state: _state,
+  onTrellisUpdate: (changedKeys) => {
+    _state.emitSessionSnapshot();
+    // Binding arrived/changed → let the bubble decide (its gate chain uses
+    // agent-idle semantics, not the pet's mouse-idle render state — those
+    // disagree exactly when the user is away from the mouse).
+    if (_trellisBubble) _trellisBubble.maybeShow();
+  },
+  // Avatar R3/R3.1: phase aggregates drive the pet visual. executingCount
+  // feeds the working→juggling display lift (state.js resolves it again on
+  // the next event; refresh here so the swap lands without waiting for one),
+  // planningActive toggles the wizard-hat via the standard accessory
+  // delivery. setState's own DND gate and the delivery's renderer-ack
+  // contract both stay intact; best-effort — a closed renderer retries on
+  // the next aggregate change.
+  onAggregateChange: () => {
+    try {
+      const displayState = _state.resolveDisplayState();
+      _state.setState(displayState, _state.getSvgOverride(displayState));
+    } catch {}
+    try { deliverAccessorySlotsSnapshot(); } catch {}
+  },
+  // v3 lifecycle feedback: every genuine phase transition drives the
+  // one-shot phase bubble (task name + localized phase label). Diff-driven
+  // off the existing polling round — no new timers. The finish/done
+  // celebration below keeps its own reactions channel; themes without
+  // celebration assets simply degrade to bubble-only here.
+  onPhaseTransition: (transition) => {
+    try {
+      if (!_trellisBubble) return;
+      const key = phaseLabelKey(transition && transition.toPhase);
+      _trellisBubble.showPhaseTransitionBubble({
+        ...transition,
+        phaseLabel: key ? translate(key) : null,
+      });
+    } catch { /* bubble feedback must never break the poll round */ }
+  },
+  onCelebration: createTrellisCelebration({
+    getDnd: () => doNotDisturb,
+    getPetHidden: () => petWindowRuntime.isPetEffectivelyHidden(),
+    getMiniMode: () => _mini.getMiniMode(),
+    getTheme: () => getActiveTheme(),
+    playReaction: requestClickReaction,
+  }),
+});
+_trellisActivity.start();
+
+// Registered Trellis project roots (Dashboard Trellis view): a tiny file
+// store under ~/.clawd, deliberately outside prefs. Loaded once at boot;
+// every add/remove keeps the activity's trust surface in sync.
+const _trellisRootsStore = createTrellisRootsStore({ warn: (message) => console.warn(message) });
+_trellisRootsStore.load();
+
+function syncTrellisPersistedRoots() {
+  if (_trellisActivity && typeof _trellisActivity.setPersistedRoots === "function") {
+    _trellisActivity.setPersistedRoots(_trellisRootsStore.list());
+  }
+}
+syncTrellisPersistedRoots();
+
+// Expand the picker's "picked" folder into the project roots that would
+// actually be registered: the pick itself when it is a project, else its
+// direct trellis children. Used for pick bookkeeping (single removable
+// entry) and by listTrellisRoots to report each managed entry's fan-out.
+async function expandTrellisPickToRoots(picked) {
+  if (typeof picked !== "string" || !picked.trim()) return [];
+  try {
+    if (await _trellisActivity.isDirectProjectRoot(picked)) return [path.normalize(picked)];
+  } catch {
+    /* fall through to children */
+  }
+  try {
+    return await _trellisActivity.listChildProjectRoots(picked);
+  } catch {
+    return [];
+  }
+}
+
+// Directory picker for the Trellis view's "Add project root": the path is
+// chosen in a native dialog and resolved towards the nearest .trellis here
+// in main — the renderer only ever triggers, never supplies a path.
+
+// Bookkeeping for user picks lives in the roots store itself
+// (`picks` in ~/.clawd/trellis-roots.json) — persisted with the roots, so
+// pick rows survive restarts. Removing one pick removes all of its roots
+// in a single action.
+function recordTrellisPick(picked, registeredRoots) {
+  _trellisRootsStore.recordPick(picked, registeredRoots);
+}
+
+async function pickAndRegisterTrellisRoot() {
+  const parent = _dashboard && typeof _dashboard.getWindow === "function"
+    ? _dashboard.getWindow()
+    : null;
+  let picked;
+  try {
+    const result = await electronDialog.showOpenDialog(
+      parent && typeof parent.isDestroyed === "function" && !parent.isDestroyed() ? parent : null,
+      { properties: ["openDirectory"] }
+    );
+    picked = result && !result.canceled && Array.isArray(result.filePaths) && result.filePaths.length
+      ? result.filePaths[0]
+      : null;
+  } catch {
+    picked = null;
+  }
+  if (typeof picked !== "string" || !picked.trim()) return { status: "cancelled" };
+  // The user's explicit pick is authoritative — NO upward .trellis walk here
+  // (that resolveProjectRoot climb is for session cwds and would register
+  // all of $HOME when a stray ~/.trellis exists). Three outcomes: the pick
+  // is itself a project; its direct children contain projects (register
+  // them all); or nothing trellis-related lives there (tell the user).
+  let isProject = false;
+  try {
+    isProject = await _trellisActivity.isDirectProjectRoot(picked);
+  } catch {
+    isProject = false;
+  }
+  if (isProject) {
+    const outcome = _trellisRootsStore.add(picked);
+    if (outcome.status !== "ok" && outcome.status !== "duplicate") {
+      return { status: outcome.status };
+    }
+    syncTrellisPersistedRoots();
+    recordTrellisPick(picked, [picked]);
+    return { status: "ok", roots: _trellisRootsStore.list() };
+  }
+  const children = await _trellisActivity.listChildProjectRoots(picked);
+  if (children.length) {
+    const registered = [];
+    for (const child of children) {
+      const childOutcome = _trellisRootsStore.add(child);
+      if (childOutcome.status === "ok" || childOutcome.status === "duplicate") registered.push(child);
+    }
+    if (registered.length > 0) {
+      syncTrellisPersistedRoots();
+      recordTrellisPick(picked, registered);
+      return { status: "ok", roots: _trellisRootsStore.list() };
+    }
+  }
+  return { status: "no-projects", picked };
+}
+
+function removeRegisteredTrellisRoot(root) {
+  // Only an already-registered member may be removed — a renderer-supplied
+  // string that never matched a registration is simply invalid.
+  const outcome = _trellisRootsStore.remove(root);
+  if (outcome.status !== "ok") return { status: outcome.status };
+  syncTrellisPersistedRoots();
+  return { status: "ok", roots: _trellisRootsStore.list() };
+}
+
+// Remove one bookkeeping pick and every still-registered root it produced.
+function removeTrellisPick(picked) {
+  const result = _trellisRootsStore.removePick(picked);
+  if (result.status === "ok") syncTrellisPersistedRoots();
+  return result;
+}
+
 displayedVisualProjection = createDisplayedVisualProjection({
   projectActualFile: ({ actualFile, requested }) => {
     const activeTheme = getActiveTheme();
@@ -3445,6 +3804,11 @@ function drainRemoteSshAndFeishuBeforeQuit() {
     settingsIpcRuntime.dispose();
   } catch (err) {
     console.error("settings IPC shutdown failed:", err && err.message);
+  }
+  try {
+    trellisIpcRuntime.dispose();
+  } catch (err) {
+    console.error("trellis IPC shutdown failed:", err && err.message);
   }
   if (_remoteSshRuntime && typeof _remoteSshRuntime.shutdown === "function") {
     drains.push(
@@ -4573,6 +4937,10 @@ const holidayAccessoryRuntime = createHolidayAccessoryRuntime({
   sendToRenderer,
   onAccessoryChange: syncHitWin,
   logWarn: console.warn,
+  // Avatar R3: holiday refreshes (midnight timer / clock events) re-derive
+  // the head slot independently — route them through the same trellis
+  // planning override so a holiday delivery can't silently drop the hat.
+  resolveHeadAccessoryOverride: () => getTrellisPhaseAccessoryId(),
 });
 
 const settingsEffectRouter = createSettingsEffectRouter({
@@ -4968,6 +5336,27 @@ const settingsIpcRuntime = registerSettingsIpc({
   getLanWsServer: () => _lanWss,
 });
 
+// ── Trellis panel (Settings → Trellis) ──
+//
+// Scan / preview are read-only; upgrade and add-platform spawn `trellis` and
+// are only reachable from a Settings button. Roots persist through
+// settings-controller (`trellisScanRoots`), never by writing prefs here.
+const trellisIpcRuntime = registerTrellisIpc({
+  ipcMain,
+  dialog,
+  settingsController: _settingsController,
+  getSettingsWindow,
+  sendToSettings: (channel, payload) => broadcastSettingsWindow(channel, payload),
+  // Reuse the Settings-window trust test: trellis-ipc refuses every call when
+  // this is missing or throws, so wiring it here is what opens the surface.
+  isTrustedEvent: settingsIpcRuntime.isTrustedEvent,
+  // Phase 5 (R5): the Settings → Trellis tab consumes the active-task digest
+  // through the existing scan payload; this getter is a pure cache read
+  // inside trellis-activity (no new channel, no fresh disk scan).
+  getActivityByProject: (projectPath) =>
+    _trellisActivity ? _trellisActivity.getByProject(projectPath) : null,
+});
+
 const sessionHistoryRuntime = createSessionHistoryRuntime({
   getSessions: () => _state.sessions,
   isAgentEnabled: (agentId) => (
@@ -5013,7 +5402,65 @@ registerSessionIpc({
     sessionAutomationCoordinator.clearSessionAutomationGrant(payload),
   getSessionHistory: () => sessionHistoryRuntime.getHistory(),
   resumeSessionFromHistory: (payload) => sessionHistoryRuntime.resume(payload),
+  getTrellisNetworkOverview: (payload) => {
+    if (!_trellisActivity || typeof _trellisActivity.readTaskNetworkOverview !== "function") {
+      return { status: "error", message: "trellis-activity-unavailable" };
+    }
+    return _trellisActivity.readTaskNetworkOverview(payload.root);
+  },
+  getTrellisTaskDetail: (payload) => {
+    if (!_trellisActivity || typeof _trellisActivity.readTaskDetail !== "function") {
+      return { status: "error", message: "trellis-activity-unavailable" };
+    }
+    return _trellisActivity.readTaskDetail(payload.cwd, payload.taskPath);
+  },
+  getTrellisSpecTree: (payload) => {
+    if (!_trellisActivity || typeof _trellisActivity.readSpecTree !== "function") {
+      return { status: "error", message: "trellis-activity-unavailable" };
+    }
+    return _trellisActivity.readSpecTree(payload.root);
+  },
+  getTrellisSpecDoc: (payload) => {
+    if (!_trellisActivity || typeof _trellisActivity.readSpecDoc !== "function") {
+      return { status: "error", message: "trellis-activity-unavailable" };
+    }
+    return _trellisActivity.readSpecDoc(payload.root, payload.relPath);
+  },
+  getTrellisTaskDoc: (payload) => {
+    if (!_trellisActivity || typeof _trellisActivity.readTaskDoc !== "function") {
+      return { status: "error", message: "trellis-activity-unavailable" };
+    }
+    return _trellisActivity.readTaskDoc(payload.cwd, payload.taskPath, payload.doc);
+  },
+  getTrellisArchiveList: () => {
+    if (!_trellisActivity || typeof _trellisActivity.readArchiveList !== "function") {
+      return { status: "error", message: "trellis-activity-unavailable" };
+    }
+    return _trellisActivity.readArchiveList();
+  },
+  listTrellisRoots: () => ({
+    status: "ok",
+    roots: _trellisRootsStore.list(),
+    // One entry per user pick: the folder they chose plus the roots that
+    // were registered from it. The UI lists picks (single remove per pick);
+    // roots is kept for backwards compatibility / diagnostics.
+    picks: _trellisRootsStore.listPicks(),
+  }),
+  addTrellisRoot: () => pickAndRegisterTrellisRoot(),
+  removeTrellisRoot: (root) => removeRegisteredTrellisRoot(root),
+  removeTrellisPick: (picked) => removeTrellisPick(picked),
+  getTrellisActiveList: () => {
+    if (!_trellisActivity || typeof _trellisActivity.readActiveList !== "function") {
+      return { status: "error", message: "trellis-activity-unavailable" };
+    }
+    return _trellisActivity.readActiveList();
+  },
   showDashboard: (options) => showDashboard(options),
+  setSessionHudTrellisDetailHeight: (px) => {
+    if (typeof _sessionHud.setTrellisDetailHeight === "function") {
+      _sessionHud.setTrellisDetailHeight(Number(px) || 0);
+    }
+  },
   setSessionHudPinned: (value) => {
     const result = _settingsController.applyUpdate("sessionHudPinned", !!value);
     if (result && typeof result.then === "function") {
@@ -5924,6 +6371,12 @@ if (!gotTheLock) {
     if (_lanWss) _lanWss.cleanup();
     _updateBubble.cleanup();
     if (displayedVisualProjection) displayedVisualProjection.dispose();
+    if (_trellisActivity) {
+      try { _trellisActivity.stop(); } catch {}
+    }
+    if (_trellisBubble) {
+      try { _trellisBubble.dispose(); } catch {}
+    }
     try { recapRuntime.dispose(); } catch {}
     _state.cleanup();
     _tick.cleanup();

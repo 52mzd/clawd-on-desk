@@ -11,6 +11,8 @@ const {
   countActiveSessionsByStates,
   selectTieredStateFile,
   getWinningSessionDisplayHint,
+  getJugglingSvg,
+  normalizeTierExtraCount,
   getSvgOverride,
 } = require("../src/state-visual-resolver");
 
@@ -150,5 +152,55 @@ describe("state-visual-resolver SVG overrides", () => {
       idleDefaultVisual: "idle-reading.svg",
     };
     assert.strictEqual(getSvgOverride("idle", options), "update-idle.svg");
+  });
+});
+
+// ── trellis parallel tasks as a juggling tier input (avatar R3.1) ──
+
+describe("state-visual-resolver trellis juggling tiers", () => {
+  const theme = {
+    jugglingTiers: [
+      { minSessions: 2, file: "two.svg" },
+      { minSessions: 1, file: "one.svg" },
+    ],
+  };
+  const stateSvgs = { juggling: ["fallback.svg"] };
+
+  it("coerces extra tier counts to non-negative integers", () => {
+    assert.strictEqual(normalizeTierExtraCount(2), 2);
+    assert.strictEqual(normalizeTierExtraCount("3"), 3);
+    assert.strictEqual(normalizeTierExtraCount(0), 0);
+    assert.strictEqual(normalizeTierExtraCount(-4), 0);
+    assert.strictEqual(normalizeTierExtraCount(Number.NaN), 0);
+    assert.strictEqual(normalizeTierExtraCount(undefined), 0);
+    assert.strictEqual(normalizeTierExtraCount("garbage"), 0);
+  });
+
+  it("picks the tier from trellis parallel tasks alone when no subagents are live", () => {
+    assert.strictEqual(
+      getJugglingSvg({ sessions: new Map(), theme, stateSvgs, trellisParallelCount: 2 }),
+      "two.svg"
+    );
+    assert.strictEqual(
+      getJugglingSvg({ sessions: new Map(), theme, stateSvgs, trellisParallelCount: 1 }),
+      "one.svg"
+    );
+    assert.strictEqual(
+      getJugglingSvg({ sessions: new Map(), theme, stateSvgs }),
+      "fallback.svg"
+    );
+  });
+
+  it("sums trellis parallel tasks with the live subagent count", () => {
+    // Legacy juggling session without a tracker keeps the one-session floor.
+    const sessions = new Map([["s1", session("juggling")]]);
+    assert.strictEqual(
+      getJugglingSvg({ sessions, theme, stateSvgs, trellisParallelCount: 1 }),
+      "two.svg"
+    );
+    assert.strictEqual(
+      getJugglingSvg({ sessions, theme, stateSvgs, trellisParallelCount: 0 }),
+      "one.svg"
+    );
   });
 });

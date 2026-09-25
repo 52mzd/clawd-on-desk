@@ -468,6 +468,13 @@ const SCHEMA = {
     defaultFactory: () => [],
     normalize: normalizePathList,
   },
+  // Directories the Settings → Trellis tab scans for Trellis projects. Same
+  // shape as customToolDiscoveryPaths: trimmed, deduped, capped at 64 entries.
+  trellisScanRoots: {
+    type: "array",
+    defaultFactory: () => [],
+    normalize: normalizePathList,
+  },
   customApplications: {
     type: "array",
     defaultFactory: () => [],
