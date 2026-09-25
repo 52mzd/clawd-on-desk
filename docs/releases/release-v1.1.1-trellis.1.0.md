@@ -1,4 +1,4 @@
-# Clawd on Desk v1.1.0-trellis.1.0
+# Clawd on Desk v1.1.1-trellis.1.0
 
 > **这是 fork 的预发布版本。** 基于上游 [`rullerzhou-afk/clawd-on-desk`](https://github.com/rullerzhou-afk/clawd-on-desk)
 > 的 `v1.1.0`（提交 `0533435b`），新增 **Trellis 工作流集成**。

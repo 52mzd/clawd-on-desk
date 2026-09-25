@@ -37,6 +37,7 @@ const IDENTITY_OVERRIDES = new Map(Object.entries({
   "shiji.shi@taobao.com": "brantshin",
   "vonsdite@gmail.com": "VonSdite",
   "52mzd@users.noreply.github.com": "52mzd",
+  "200491821+hanzhe-one@users.noreply.github.com": "hanzhe-one",
 }));
 
 function parseVersion(value) {
