@@ -1119,7 +1119,7 @@ h1 {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  background: color-mix(in srgb, var(--surface, rgba(127, 127, 127, 0.06)) 55%, transparent);
+  background: color-mix(in srgb, var(--surface, rgba(127, 127, 127, 0.06)) 55%, var(--bg, #16161e));
   border-right: 1px solid var(--border);
 }
 
@@ -1128,10 +1128,11 @@ h1 {
   align-items: center;
   gap: 8px;
   padding: 10px 6px 6px;
-  font-size: 12px;
+  /* R3: 12px was below comfortable reading for CJK labels (计划/执行/
+     检查/规范); 13px/600 + tight tracking matches row titles. */
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
   color: var(--muted);
   cursor: pointer;
   user-select: none;
@@ -1143,11 +1144,11 @@ h1 {
   height: auto;
   text-align: left;
   /* Group headers stick to the top of the scrolling list so the user
-     always knows which group the visible rows belong to. */
+     always knows which group the visible rows belong to. Opaque mix over
+     --bg so scrolled rows never bleed through. */
   position: sticky;
   top: 0;
-  /* opaque surface so rows scrolling under the header don't bleed through */
-  background: color-mix(in srgb, var(--surface, rgba(127, 127, 127, 0.06)) 100%, transparent);
+  background: color-mix(in srgb, var(--surface, rgba(127, 127, 127, 0.06)) 55%, var(--bg, #16161e));
   z-index: 1;
 }
 
@@ -1471,13 +1472,13 @@ h1 {
 .trellis-split-month-head {
   display: flex;
   align-items: center;
-  padding: 5px 6px 3px 14px;
+  padding: 6px 6px 4px 14px;
   user-select: none;
   /* Same sticky treatment as group headers: month dividers stay visible
-     while archive rows scroll. */
+     while archive rows scroll; opaque over --bg. */
   position: sticky;
   top: 0;
-  background: color-mix(in srgb, var(--surface, rgba(127, 127, 127, 0.06)) 100%, transparent);
+  background: color-mix(in srgb, var(--surface, rgba(127, 127, 127, 0.06)) 55%, var(--bg, #16161e));
   z-index: 1;
 }
 
@@ -1487,24 +1488,29 @@ h1 {
   gap: 6px;
   min-width: 0;
   height: auto;
-  padding: 0;
+  padding: 4px 8px;
   border: none;
+  border-radius: 6px;
   background: transparent;
   font-family: inherit;
-  font-size: 11px;
-  font-weight: 400;
+  /* R3: 11px/400 was too small for a date divider label; 12px/500 with a
+     pill hover/active background gives a clear click target highlight
+     (old :active scale(0.97) on a bare transparent row looked broken). */
+  font-size: 12px;
+  font-weight: 500;
   color: var(--muted);
   text-align: left;
   cursor: pointer;
-  transition: var(--trellis-press);
+  transition: background-color 0.12s ease, color 0.12s ease;
 }
 
 .trellis-split-month-toggle:hover {
   color: var(--text);
+  background: var(--surface-alt, rgba(127, 127, 127, 0.14));
 }
 
 .trellis-split-month-toggle:active {
-  transform: scale(0.97);
+  background: color-mix(in srgb, var(--accent, #7aa2f7) 12%, transparent);
 }
 
 .trellis-split-month-toggle:focus-visible {
@@ -2368,19 +2374,45 @@ h1 {
   user-select: none;
 }
 
-.md-heading-collapsible:hover {
-  color: var(--muted);
+/* Collapsible headings render as fold CARDS (R3): bordered surface row,
+   hover lifts the border, collapsed state tints accent — the old accent
+   text + gray-on-hover + hanging caret looked broken. */
+.md-heading-collapsible.md-h2,
+.md-heading-collapsible.md-h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface, rgba(127, 127, 127, 0.06));
+  transition: border-color 0.12s ease, background-color 0.12s ease;
+}
+
+.md-heading-collapsible.md-h2:hover,
+.md-heading-collapsible.md-h3:hover {
+  border-color: var(--accent, #7aa2f7);
+}
+
+.md-heading-collapsible.md-h2:active,
+.md-heading-collapsible.md-h3:active {
+  background: color-mix(in srgb, var(--accent, #7aa2f7) 10%, transparent);
+}
+
+.md-heading-collapsible.md-collapsed {
+  background: color-mix(in srgb, var(--accent, #7aa2f7) 8%, transparent);
+  border-color: color-mix(in srgb, var(--accent, #7aa2f7) 35%, var(--border));
 }
 
 .md-heading-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.3em;
-  margin-left: -1.3em; /* hang into the doc gutter, keep titles aligned */
+  flex: 0 0 auto;
+  width: 1.2em;
   color: var(--muted);
   font-size: 11px;
-  transition: color 0.15s ease;
+  transition: transform 0.15s ease, color 0.15s ease;
 }
 
 .md-heading-collapsible:hover .md-heading-toggle {

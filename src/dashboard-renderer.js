@@ -3591,6 +3591,15 @@ function toggleTrellisDocHeading(docRoot, heading) {
 }
 
 function wireTrellisDocCollapse(docRoot) {
+  // querySelectorAll (not just top-level children): headings nested
+  // inside lists/blockquotes were previously unclickable ("折叠无效").
+  // Guard: the test sandbox DOM only implements children iteration.
+  if (typeof docRoot.querySelectorAll === "function") {
+    for (const el of docRoot.querySelectorAll(".md-heading-collapsible")) {
+      el.addEventListener("click", () => toggleTrellisDocHeading(docRoot, el));
+    }
+    return;
+  }
   for (const el of docRoot.children) {
     if (el.classList && el.classList.contains("md-heading-collapsible")) {
       el.addEventListener("click", () => toggleTrellisDocHeading(docRoot, el));
