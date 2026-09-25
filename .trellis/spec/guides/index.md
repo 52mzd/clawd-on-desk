@@ -24,6 +24,7 @@ These guides help you **ask the right questions before coding**.
 | [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md) | Identify patterns and reduce duplication | When you notice repeated patterns |
 | [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md) | Think through data flow across layers | Features spanning multiple layers |
 | [Trellis Panel Contract](./trellis-panel-contract.md) | External-process contract: frozen argv, IPC trust gate, output-parsing identity | When spawning a CLI or parsing its output |
+| [Repository Export & Sync Guide](./repository-sync-guide.md) | Silent upstream rollback (`checkout <branch> -- <paths>`), check blind spots, baseline choice, dual-form policy values | When exporting a branch, syncing with upstream, or building a fork/release tree |
 
 ---
 
@@ -77,6 +78,18 @@ These guides help you **ask the right questions before coding**.
 - [ ] A tool's output could contain numbers about more than one subject
 
 → Read [Trellis Panel Contract](./trellis-panel-contract.md)
+
+---
+
+### When Exporting Or Syncing A Branch
+
+- [ ] You're building a tree from another branch (`checkout <branch> -- <paths>`)
+- [ ] You're syncing with upstream and need to prove nothing was lost
+- [ ] You're choosing a baseline for "did my change regress anything?"
+- [ ] A policy/threshold file legitimately holds different values in dev vs release form
+- [ ] You're about to claim "zero new failures" or "upstream fully included"
+
+→ Read [Repository Export & Sync Guide](./repository-sync-guide.md)
 
 ---
 
