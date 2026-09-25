@@ -95,6 +95,13 @@ flex 链路填满：`main` 改 `flex column`，section `flex:1 1 auto; min-heigh
    仍被 min-width 撑爆，视觉“箭头不明显/错位”）。同批还要覆盖 `height/min-height`。
 2. **`.trellis-view-section { flex-direction: column }`**：挂在它下面的新 section
    要并排布局必须显式 `flex-direction: row` 覆盖（v6.1 左右栏变上下）。
+3. **作者 `display` 打败 `[hidden]` 属性**：UA 对 `[hidden]` 的 `display:none`
+   优先级低于任何元素/类选择器里的显式 `display`（flex/grid/block）。给会被
+   JS `.hidden = true` 隐藏的元素写 `display: flex`（折叠卡片、quick banner、
+   quota summary 都踩过）后，hidden 属性失效、元素仍然可见。dashboard.html
+   已有全局守卫 `[hidden]{display:none!important}`（静态测试守护，勿删）；
+   新 HTML 页面同样要带这条守卫，或改用 class 切换 display。详见
+   `guides/trellis-panel-contract.md` §8c。
 
 调试方法：UI 错位时先用 CDP `getBoundingClientRect()` + `getComputedStyle()` 量化
 实际尺寸/坐标，再定位到规则；盲改 margin/padding 两轮都失败、量化后一次命中。
