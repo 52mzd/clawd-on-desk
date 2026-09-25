@@ -131,6 +131,46 @@ function isDirectory(target) {
 
 // Platform ids whose recorded config directory is missing on disk. Unknown ids
 // cannot be checked and are skipped. Read-only; never writes the record file.
+// Platform ids evidenced by CONFIG DIRECTORIES on disk (09-25): CLI
+// 0.7.0-beta.4 stopped recording platform files in .template-hashes.json,
+// so parsePlatforms(hashes) alone reports ZERO platforms for beta.4
+// projects. The directory set is the complementary evidence — the caller
+// unions both (hashes-recorded ∨ dir-present = installed), while stale
+// stays hashes-recorded ∧ dir-missing (staleIdsOf).
+function platformsFromDirs(projectPath) {
+  if (typeof projectPath !== "string" || !projectPath) return [];
+  const found = [];
+  for (const entry of PLATFORMS) {
+    if (isDirectory(path.join(projectPath, entry.dirPrefix))) found.push(entry.id);
+  }
+  return found.sort((a, b) => ORDER.get(a) - ORDER.get(b));
+}
+
+// Union of hashes-evidenced and dir-evidenced platform ids (catalog order,
+// unknown-prefix pass-through last). This is the single read path the
+// scanner uses; it must never be parsePlatforms alone (beta.4 blindness).
+function platformsOfUnion(hashes, projectPath) {
+  const fromHashes = parsePlatforms(hashes);
+  const fromDirs = platformsFromDirs(projectPath);
+  if (fromDirs.length === 0) return fromHashes;
+  const seen = new Set();
+  const ordered = [];
+  for (const id of fromHashes.concat(fromDirs)) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    ordered.push(id);
+  }
+  ordered.sort((a, b) => {
+    const ai = ORDER.get(a);
+    const bi = ORDER.get(b);
+    if (ai === undefined && bi === undefined) return a < b ? -1 : a > b ? 1 : 0;
+    if (ai === undefined) return 1;
+    if (bi === undefined) return -1;
+    return ai - bi;
+  });
+  return ordered;
+}
+
 function staleIdsOf(projectPath, ids) {
   if (typeof projectPath !== "string" || !projectPath || !Array.isArray(ids)) return [];
   const stale = [];
@@ -151,6 +191,8 @@ module.exports = {
   PLATFORMS,
   UNKNOWN_PREFIX,
   parsePlatforms,
+  platformsFromDirs,
+  platformsOfUnion,
   flagsFor,
   isKnownPlatformId,
   platformById,

@@ -769,15 +769,22 @@ h1 {
   color: var(--muted);
 }
 
-/* Cross-project origin tag on task rows (merged "all" view only). */
+/* Cross-project origin tag on task rows (merged "all" view only).
+   09-25: accent tint pill — in the merged view the project tag is the
+   ONLY disambiguator between same-named tasks; it must pop, not whisper. */
 .trellis-task-project {
   flex: 0 0 auto;
-  max-width: 40%;
+  max-width: 46%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--subtle);
+  padding: 1px 7px;
+  border-radius: var(--radius-s);
+  background: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 14%, transparent);
+  color: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 80%, var(--text));
   font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 /* Priority badge (v7 R7). The rank lives in the modifier class, so P0/P1
@@ -1210,8 +1217,13 @@ h1 {
 /* ── Left master list (fixed width, tinted) ─────────────────────── */
 
 .trellis-split-list {
-  flex: 0 0 clamp(280px, 30%, 344px);
-  min-width: 0;
+  /* Continuous narrow-window behavior (09-25): flex-shrink 1 — when the
+     window narrows, the LEFT rail yields first (344→240px) so the detail
+     pane keeps its readable width and fills the remaining window; only
+     below the 720px breakpoint does the overlay mode kick in. The old
+     `0 0` made the rail hog its width and starve the right pane. */
+  flex: 0 1 clamp(280px, 30%, 344px);
+  min-width: 240px;
   min-height: 0;
   align-self: stretch;
   overflow-y: auto;
@@ -1505,6 +1517,17 @@ h1 {
 .trellis-split-row-sub {
   font: var(--trellis-font-sub);
   color: var(--muted);
+  /* Flex row (09-25 fix): priority chip / project pill / meta text are
+     separate elements — without gap they render glued together. */
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.trellis-split-row-sub-text {
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1775,7 +1798,10 @@ h1 {
 /* ── Right detail pane (full-column browse surface) ─────────────── */
 
 .trellis-split-detail {
-  flex: 1 1 auto;
+  /* 400px basis + shrink-tolerant rail: in the narrow mid-range the pane
+     holds a readable content width while the rail compresses; the pane
+     itself still flexes to fill whatever the window has left. */
+  flex: 1 1 400px;
   min-width: 0;
   min-height: 0;
   padding: 14px 16px;
@@ -1984,31 +2010,26 @@ h1 {
   }
 }
 
-/* Narrow window: right pane becomes a drawer overlaying the list */
-
-@media (max-width: 1100px) {
+/* Narrow window: right pane becomes a drawer overlaying the list.
+   09-25 retune: popup ONLY when the two panes truly stop fitting —
+   left rail clamps at 280px + 6px resizer + ~400px detail ≈ 690px,
+   so 720px is the real floor. The old 1100px cutoff flipped to popup
+   while the right pane still had plenty of room. */
+@media (max-width: 720px) {
   .trellis-split-section {
     position: relative;
   }
 
+  /* Narrow window (09-25): the right pane VANISHES entirely and the left
+     rail fills the width. Tapping a card opens the full-screen overlay
+     (renderer switches embedded→overlay via matchMedia) — no side drawer
+     floating over the list. */
   .trellis-split-list {
     flex-basis: 100%;
   }
 
   .trellis-split-detail {
     display: none;
-    position: absolute;
-    inset: 0 0 auto 0;
-    max-height: 100%;
-    z-index: 3;
-    background: var(--surface, #fff);
-    box-shadow: var(--shadow-2);
-    border-radius: var(--radius-m);
-  }
-
-  .trellis-split-detail:has(.trellis-split-detail-card),
-  .trellis-split-detail:has(.trellis-detail-card) {
-    display: block;
   }
 }
 .trellis-board {

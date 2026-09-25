@@ -12,7 +12,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const { parsePlatforms, staleIdsOf } = require("./trellis-platforms");
+const { parsePlatforms, platformsOfUnion, staleIdsOf } = require("./trellis-platforms");
 
 const TRELLIS_DIR = ".trellis";
 const VERSION_FILE = ".version";
@@ -65,7 +65,11 @@ function readHashes(projectPath) {
 }
 
 function readPlatforms(projectPath) {
-  return parsePlatforms(readHashes(projectPath) || {});
+  // Union evidence (09-25): hashes alone is blind for CLI 0.7.0-beta.4+
+  // (platforms no longer recorded there) — config dirs on disk are the
+  // complementary proof. Stale semantics unchanged (staleIdsOf still
+  // checks hashes-recorded ids against missing dirs).
+  return platformsOfUnion(readHashes(projectPath) || {}, projectPath);
 }
 
 // Trellis counts as installed only when `.trellis/` is a real directory that

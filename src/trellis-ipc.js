@@ -24,6 +24,7 @@
 // A write happens only because a Settings button invoked one of these channels.
 
 const defaultPrefs = require("./prefs");
+const path = require("path");
 const defaultScanner = require("./trellis-scanner");
 const { createTrellisCli, TRELLIS_BIN, INIT_ARGS, INIT_ARGS_SUFFIX, REMOTE_CHANNELS } = require("./trellis-cli");
 const { createTrellisRuntime, normalizeChannel } = require("./trellis-runtime");
@@ -80,7 +81,7 @@ function withStaleFixes(projects) {
         id,
         label: platformLabel(id),
         command: flags && flags.length > 0
-          ? { bin: TRELLIS_BIN, args: [...INIT_ARGS, ...flags, ...INIT_ARGS_SUFFIX], cwd: project.path }
+          ? { bin: TRELLIS_BIN, args: [...INIT_ARGS, "-u", path.basename(String(project.path)) || "clawd", ...flags, ...INIT_ARGS_SUFFIX], cwd: project.path }
           : null,
       };
     });
@@ -211,6 +212,20 @@ function registerTrellisIpc(options = {}) {
 
   // Pure read: the runtime's preview never spawns. `platforms` (optional) adds
   // the "what would adding these platforms do" plan for installed projects.
+  handle("settings:trellis-dry-run", async (_event, payload) => {
+    // Real `trellis update --dry-run` output (09-25 wizard). Read-only;
+    // guarded by the same trust gate as every other channel.
+    const projectPath = payload && payload.path;
+    if (!validPaths([projectPath]).length) {
+      return { status: "error", message: "path must be a non-empty string" };
+    }
+    if (!isTrellisProject(projectPath)) {
+      return { status: "error", message: "path is not a registered trellis project" };
+    }
+    const result = await runtime.dryRunPreview(projectPath);
+    return { status: result && result.ok ? "ok" : "error", result };
+  });
+
   handle("settings:trellis-preview", (_event, payload) => {
     const channel = normalizeChannel(payload && payload.channel);
     const paths = validPaths(payload && payload.paths);
@@ -221,7 +236,9 @@ function registerTrellisIpc(options = {}) {
       return { status: "error", message: "platforms must be a non-empty array of known platform ids" };
     }
     const addPlan = paths
-      .filter((projectPath) => isTrellisProject(projectPath))
+      // Not filtered on isTrellisProject (09-25): first-time installs
+      // preview through this branch too — `trellis init` IS the previewed
+      // command for them. Platform ids were whitelist-checked above.
       .map((projectPath) => runtime.previewAddPlatforms(projectPath, requestedIds));
     return { status: "ok", plan, addPlan };
   });
@@ -264,8 +281,13 @@ function registerTrellisIpc(options = {}) {
     if (platformIds.some((id) => !isKnownPlatformId(id))) {
       return { status: "error", message: "unknown platform id", added: [] };
     }
-    if (!isTrellisProject(projectPath)) {
-      return { status: "error", message: "not a Trellis project", added: [] };
+    // NOT gated on isTrellisProject (09-25): this channel spawns
+    // `trellis init --<platform> -y`, which is exactly how a NOT-yet-
+    // installed project gets installed — the old gate made first-time
+    // install impossible ("not a Trellis project" on a fresh dir).
+    // The platform whitelist above is the real security boundary.
+    if (typeof projectPath !== "string" || !projectPath) {
+      return { status: "error", message: "path must be a non-empty string", added: [] };
     }
     return runtime.addPlatforms(projectPath, platformIds);
   });

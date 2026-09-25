@@ -319,7 +319,7 @@ describe("preview", () => {
     assert.deepStrictEqual(plan[0].platforms, ["claude-code"]);
     assert.deepStrictEqual(plan[0].command, {
       bin: "trellis",
-      args: ["update", "--force"],
+      args: ["update", "--force", "--migrate"],
       cwd: projectPath,
     });
   });
@@ -360,7 +360,7 @@ describe("preview", () => {
     assert.deepStrictEqual(plan.added, ["gemini", "pi"]);
     assert.deepStrictEqual(plan.command, {
       bin: "trellis",
-      args: ["init", "--gemini", "--pi", "-y"],
+      args: ["init", "-u", path.basename(projectPath), "--gemini", "--pi", "-y"],
       cwd: projectPath,
     });
     assert.strictEqual(cli.calls.addPlatforms, 0);

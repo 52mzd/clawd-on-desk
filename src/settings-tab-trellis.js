@@ -20,6 +20,32 @@
   // authoritative - `trellis-ipc` rejects any id outside it before an argv is
   // built. Until a scan succeeds the picker is empty rather than guessed.
   let platformCatalog = [];
+
+// Wizard bridges (09-25): thin adapters over the existing scan state so
+// the modal never touches IPC shapes directly. onFinished triggers the
+// same rescan the inline flows used.
+function wizardBridge() {
+  return {
+    t: (key) => t(key),
+    api: (typeof window !== "undefined" && window.settingsAPI) || {},
+    onFinished: runScan,
+  };
+}
+
+function openAddPlatformWizard(project, preselectId) {
+  if (typeof globalThis.ClawdTrellisWizard === "undefined") return;
+  globalThis.ClawdTrellisWizard.openAddPlatform(
+    wizardBridge(),
+    project,
+    platformCatalog,
+    preselectId || ""
+  );
+}
+
+function openUpgradePreviewWizard(project) {
+  if (typeof globalThis.ClawdTrellisWizard === "undefined") return;
+  globalThis.ClawdTrellisWizard.openUpgradePreview(wizardBridge(), project);
+}
   function platformById(id) {
     return platformCatalog.find((entry) => entry.id === id) || null;
   }
@@ -44,13 +70,14 @@
   let scanResult = null;
   let scanning = false;
   let scanError = "";
-  let previewPlan = null;
-  let previewVisible = false;
+  // One automatic scan attempt per tab lifetime (09-25) — see render().
+  let autoScanTried = false;
+  // previewPlan / previewVisible retired (09-25): the wizard modal owns
+  // previews; the standalone preview panel is gone.
   let filterIds = new Set();
   // "" means auto: keep the per-project inference. The values themselves come
   // from the scan snapshot's `channelCatalog`, so this file holds no second
   // copy of the channel list.
-  let channelFilter = "";
   // Different concern from `channelFilter`: that one picks the dist-tag the
   // *project list* is compared against, this one picks the dist-tag the *global
   // CLI* is upgraded to. "" means auto, where the CLI derives the channel from
@@ -59,10 +86,7 @@
   let channelCatalog = [];
   let progressByPath = new Map();
   let batchRunning = false;
-  let addTarget = null;
-  let addPlatformId = "";
-  let addPlan = null;
-  let addFailed = false;
+  // add-platform state retired (09-25): the wizard modal owns the flow.
   let unsubscribeProgress = null;
   let rowStatusNodes = new Map();
 
@@ -312,7 +336,8 @@
     }).catch(() => {});
   }
 
-  // ── section 2: toolbar ────────────────────────────────────────────
+  // ── section 2: remote/channel helpers (toolbar row retired 09-25,
+  // merged into buildGlobalSection) ─────────────────────────────────
   function channelOptions() {
     return Array.isArray(channelCatalog) ? channelCatalog : [];
   }
@@ -337,77 +362,9 @@
 
   // Only rendered once a scan has supplied the channel catalog: the list is
   // projected by the main process, so this file never owns a second copy.
-  function buildChannelSelect() {
-    const options = channelOptions();
-    if (options.length === 0) return null;
-    const select = document.createElement("select");
-    select.className = "trellis-platform-select";
-    const auto = document.createElement("option");
-    auto.value = "";
-    auto.textContent = t("trellisChannelAuto");
-    select.appendChild(auto);
-    for (const channel of options) {
-      const option = document.createElement("option");
-      option.value = channel;
-      option.textContent = channel;
-      select.appendChild(option);
-    }
-    select.value = channelFilter;
-    select.addEventListener("change", () => {
-      channelFilter = select.value;
-      runScan();
-    });
-    return select;
-  }
-
-  function buildToolbarSection() {
-    const label = scanning
-      ? `${t("trellisRemoteTitle")}: ${t("trellisRefresh")}…`
-      : `${t("trellisRemoteTitle")}: ${remoteText()}`;
-    const scopeCount = upgradablePaths().length;
-    const descParts = [];
-    if (scanError) descParts.push(scanError);
-    // The batch only ever touches the currently visible list, so the count is
-    // the filter-scoped one.
-    if (scopeCount > 0) descParts.push(tf("trellisUpgradeAllCount", { count: scopeCount }));
-    const { row, control } = buildRow(label, descParts.join(" · "));
-
-    const channelSelect = buildChannelSelect();
-    if (channelSelect) control.appendChild(channelSelect);
-    control.appendChild(helpers.buildButton({
-      label: t("trellisRefresh"),
-      size: "compact",
-      disabled: scanning,
-      onClick: () => { runScan(); },
-    }));
-    control.appendChild(helpers.buildButton({
-      label: t("trellisPreview"),
-      size: "compact",
-      disabled: scanning || !scanResult,
-      onClick: onPreview,
-    }));
-    control.appendChild(helpers.buildButton({
-      label: t("trellisUpgradeAll"),
-      tone: "accent",
-      size: "compact",
-      disabled: scanning || scopeCount === 0,
-      onClick: onUpgradeAll,
-    }));
-    control.appendChild(helpers.buildButton({
-      label: t("trellisCancel"),
-      size: "compact",
-      disabled: !batchRunning,
-      onClick: onCancelBatch,
-    }));
-    if (remoteFailed()) {
-      control.appendChild(helpers.buildButton({
-        label: t("trellisRetry"),
-        size: "compact",
-        onClick: () => { runScan(); },
-      }));
-    }
-    return helpers.buildSection("", [row]);
-  }
+  // ── toolbar section: RETIRED (09-25) — the remote-version row merged into
+  // buildGlobalSection (one card owns CLI state + refresh + upgrade); the
+  // upgrade-channel select moved into the global card's control area.
 
   function runScan() {
     const settingsApi = api();
@@ -420,7 +377,7 @@
     scanning = true;
     scanError = "";
     requestRender();
-    const request = channelFilter ? { channel: channelFilter } : {};
+    const request = {};
     return settingsApi.trellisScan(request).then((result) => {
       scanning = false;
       if (!result || result.status !== "ok") {
@@ -446,53 +403,9 @@
     });
   }
 
-  // ── section 3: preview (pure read — no spawn, no write) ───────────
-  function onPreview() {
-    const settingsApi = api();
-    if (!settingsApi || typeof settingsApi.trellisPreview !== "function") return;
-    const paths = installedProjects().map((project) => project.path);
-    const request = { paths };
-    if (channelFilter) request.channel = channelFilter;
-    previewVisible = true;
-    settingsApi.trellisPreview(request).then((result) => {
-      previewPlan = result && result.status === "ok" && Array.isArray(result.plan) ? result.plan : [];
-      requestRender();
-    }).catch(() => {
-      previewPlan = [];
-      requestRender();
-    });
-    requestRender();
-  }
-
-  function buildPreviewSection() {
-    if (!previewVisible) return null;
-    const rows = [];
-    const head = buildRow(t("trellisPreviewTitle"), "");
-    head.control.appendChild(helpers.buildButton({
-      label: t("trellisClose"),
-      size: "compact",
-      onClick: () => { previewVisible = false; requestRender(); },
-    }));
-    rows.push(head.row);
-
-    if (!previewPlan || previewPlan.length === 0) {
-      rows.push(buildDescRow(t("trellisPreviewEmpty")));
-    } else {
-      for (const item of previewPlan) rows.push(buildPreviewRow(item));
-    }
-    return helpers.buildSection("", rows);
-  }
-
-  function buildPreviewRow(item) {
-    const desc = [item.path, platformsText(item.platforms)].filter(Boolean).join(" · ");
-    const { row, control } = buildRow(item.name || item.path, desc);
-    const versions = document.createElement("span");
-    versions.className = "trellis-version";
-    versions.textContent = `${t("trellisColumnVersion")}: ${item.from || "—"} → ${item.to || "—"}`;
-    control.appendChild(versions);
-    if (item.command) control.appendChild(buildCommandBlock(item.command));
-    return row;
-  }
+  // ── section 3: RETIRED (09-25) — the standalone preview panel is gone;
+  // per-project upgrade previews live in the wizard modal. Function kept
+  // out entirely; previewPlan/previewVisible state removed above.
 
   // ── section 4: platform filter + add platform ─────────────────────
   function buildFilterSection() {
@@ -532,129 +445,13 @@
     wrap.appendChild(options);
     rows.push(wrap);
 
-    const addPanel = buildAddPlatformPanel();
-    if (addPanel) rows.push(...addPanel);
+    // add-platform inline panel removed (09-25): the wizard modal replaces it.
     return helpers.buildSection("", rows);
   }
 
   // Opened from a project row. The platform id is the only thing the renderer
   // sends; the main process maps it to a flag and pins the `["-y"]` suffix.
-  function buildAddPlatformPanel() {
-    if (!addTarget) return null;
-    const rows = [];
-    const head = buildRow(tf("trellisAddPlatformTitle", { name: addTarget.name }), "");
-    head.control.appendChild(helpers.buildButton({
-      label: t("trellisClose"),
-      size: "compact",
-      onClick: () => { closeAddPlatform(); },
-    }));
-    rows.push(head.row);
-
-    const target = projects().find((project) => project.path === addTarget.path);
-    const configured = new Set(target && Array.isArray(target.platforms) ? target.platforms : []);
-    const available = platformCatalog.filter((choice) => !configured.has(choice.id));
-
-    if (available.length === 0) {
-      rows.push(buildDescRow(t("trellisAddPlatformNone")));
-      return rows;
-    }
-
-    const { row, control } = buildRow(t("trellisAddPlatformSelect"), "");
-    const select = document.createElement("select");
-    select.className = "trellis-platform-select";
-    const placeholder = document.createElement("option");
-    placeholder.value = "";
-    placeholder.textContent = "—";
-    select.appendChild(placeholder);
-    for (const choice of available) {
-      const option = document.createElement("option");
-      option.value = choice.id;
-      option.textContent = choice.label;
-      select.appendChild(option);
-    }
-    select.value = addPlatformId || "";
-    select.addEventListener("change", () => {
-      addPlatformId = select.value;
-      addPlan = null;
-      addFailed = false;
-      requestRender();
-    });
-    control.appendChild(select);
-    control.appendChild(helpers.buildButton({
-      label: t("trellisPreview"),
-      size: "compact",
-      disabled: !addPlatformId,
-      onClick: onPreviewAddPlatform,
-    }));
-    control.appendChild(helpers.buildButton({
-      label: t("trellisAddPlatformAction"),
-      tone: "accent",
-      size: "compact",
-      disabled: !addPlatformId || !addPlan || (addPlan.added || []).length === 0,
-      onClick: onConfirmAddPlatform,
-    }));
-    rows.push(row);
-
-    if (addFailed) rows.push(buildDescRow(t("trellisAddPlatformFailed")));
-    if (addPlan) {
-      rows.push(buildDescRow(tf("trellisAddPlatformRun", { command: commandText(addPlan.command) })));
-      if (addPlan.command) {
-        const commandRow = document.createElement("div");
-        commandRow.className = "row";
-        commandRow.appendChild(buildCommandBlock(addPlan.command));
-        rows.push(commandRow);
-      }
-    }
-    return rows;
-  }
-
-  function closeAddPlatform() {
-    addTarget = null;
-    addPlatformId = "";
-    addPlan = null;
-    addFailed = false;
-    requestRender();
-  }
-
-  function onPreviewAddPlatform() {
-    const settingsApi = api();
-    if (!settingsApi || typeof settingsApi.trellisPreview !== "function" || !addTarget || !addPlatformId) return;
-    settingsApi.trellisPreview({ paths: [addTarget.path], platforms: [addPlatformId] }).then((result) => {
-      if (!result || result.status !== "ok" || !Array.isArray(result.addPlan) || !result.addPlan[0]) {
-        addPlan = null;
-        addFailed = true;
-      } else {
-        addPlan = result.addPlan[0];
-        addFailed = false;
-      }
-      requestRender();
-    }).catch(() => {
-      addPlan = null;
-      addFailed = true;
-      requestRender();
-    });
-  }
-
-  function onConfirmAddPlatform() {
-    const settingsApi = api();
-    if (!settingsApi || typeof settingsApi.trellisAddPlatform !== "function" || !addTarget || !addPlatformId) return;
-    settingsApi.trellisAddPlatform(addTarget.path, [addPlatformId]).then((result) => {
-      if (!result || result.status !== "ok") {
-        addFailed = true;
-        ops.showToast((result && result.message) || t("trellisAddPlatformFailed"), { error: true });
-        requestRender();
-        return;
-      }
-      ops.showToast(tf("trellisAddPlatformDone", { count: (result.added || []).length }));
-      closeAddPlatform();
-      runScan();
-    }).catch(() => {
-      addFailed = true;
-      requestRender();
-    });
-  }
-
-  // ── section 5: projects ───────────────────────────────────────────
+          // ── section 5: projects ───────────────────────────────────────────
   function buildProjectsSection() {
     const all = projects();
     const visible = visibleProjects();
@@ -694,7 +491,10 @@
   }
 
   function buildProjectRow(project) {
-    const desc = [project.path, platformsText(project.platforms)].filter(Boolean).join(" · ");
+    // (09-25) platforms ride the chip row ONLY — the old plain-text
+    // platformsText() in the desc duplicated every platform (one plain,
+    // one highlighted chip).
+    const desc = project.path || "";
     const { row, text, control } = buildRow(project.name || project.path, desc);
 
     if (project.staleRecord) {
@@ -726,6 +526,33 @@
       text.appendChild(digest);
     }
 
+    // Platform chips (09-25): REGISTERED platforms only (user feedback:
+    // unregistered ghosts cluttered the row — the wizard lists them when
+    // you actually go install). Stale platforms keep the warning mark.
+    const chipRow = document.createElement("div");
+    chipRow.className = "trellis-platform-chip-row";
+    const configured = new Set(Array.isArray(project.platforms) ? project.platforms : []);
+    const knownIds = new Set(platformCatalog.map((entry) => entry.id));
+    for (const entry of platformCatalog) {
+      if (!configured.has(entry.id)) continue;
+      const stale = Array.isArray(project.stalePlatforms)
+        && project.stalePlatforms.includes(entry.id);
+      const chip = document.createElement("span");
+      chip.className = "trellis-platform-chip is-registered" + (stale ? " is-stale" : "");
+      if (stale) chip.title = t("trellisPlatformStale");
+      chip.textContent = platformLabel(entry.id);
+      chipRow.appendChild(chip);
+    }
+    for (const id of configured) {
+      if (!knownIds.has(id)) {
+        const chip = document.createElement("span");
+        chip.className = "trellis-platform-chip is-registered";
+        chip.textContent = platformLabel(id);
+        chipRow.appendChild(chip);
+      }
+    }
+    text.appendChild(chipRow);
+
     const version = document.createElement("span");
     version.className = "trellis-version";
     version.textContent = versionTextFor(project);
@@ -740,23 +567,34 @@
 
     let upgradeButton = null;
     if (project.installed === true) {
+      // Upgrade goes through the PREVIEW wizard (09-25): old path executed
+      // immediately; the wizard shows current→to + dry-run before running.
       upgradeButton = helpers.buildButton({
-        label: t("trellisUpgrade"),
+        label: t("trellisUpgradePreview"),
         tone: "accent",
         size: "compact",
         disabled: project.upgradable !== true,
-        onClick: () => onUpgradeProject(project),
+        onClick: () => openUpgradePreviewWizard(project),
       });
       control.appendChild(upgradeButton);
       control.appendChild(helpers.buildButton({
         label: t("trellisAddPlatform"),
         size: "compact",
         onClick: () => {
-          addTarget = { path: project.path, name: project.name || project.path };
-          addPlatformId = "";
-          addPlan = null;
-          addFailed = false;
-          requestRender();
+          openAddPlatformWizard(project, "");
+        },
+      }));
+    } else {
+      // NOT-installed projects get an entry point too (09-25 feedback):
+      // the same wizard doubles as a first-time installer — with no
+      // registered platforms the wizard lists the FULL catalog and the
+      // confirm runs `trellis init --<platform> -y`.
+      control.appendChild(helpers.buildButton({
+        label: t("trellisInstall"),
+        tone: "accent",
+        size: "compact",
+        onClick: () => {
+          openAddPlatformWizard(project, "");
         },
       }));
     }
@@ -909,13 +747,44 @@
   function buildGlobalSection() {
     const rows = [];
     const global = scanResult && scanResult.global;
-    const { row, control } = buildRow(t("trellisGlobalTitle"), "");
+    // 09-25: the remote-versions toolbar row is MERGED into this section —
+    // one card owns CLI state: current version, remote channels, upgrade
+    // target, refresh. Refresh rides here too (it re-reads remote tags,
+    // which is exactly what this card displays).
+    const { row, control } = buildRow(t("trellisGlobalTitle"), remoteText());
     rows.push(row);
 
     if (!scanResult) {
-      rows.push(buildDescRow(t("trellisScanHint")));
+      // (09-25) duplicate hint removed: the card-head desc already carries
+      // the scan hint (remoteText()), a second desc row showed the SAME
+      // text twice. The refresh button stays for the explicit path.
+      control.appendChild(helpers.buildButton({
+        label: t("trellisRefresh"),
+        size: "compact",
+        disabled: scanning,
+        onClick: () => { runScan(); },
+      }));
       return helpers.buildSection("", rows);
     }
+
+    control.appendChild(helpers.buildButton({
+      label: t("trellisRefresh"),
+      size: "compact",
+      disabled: scanning,
+      onClick: () => { runScan(); },
+    }));
+    if (remoteFailed()) {
+      control.appendChild(helpers.buildButton({
+        label: t("trellisRemoteRetry"),
+        size: "compact",
+        disabled: scanning,
+        onClick: () => { runScan(); },
+      }));
+    }
+    // (09-25) channelFilter select REMOVED from this card: the global
+    // card already carries buildGlobalChannelSelect() for the upgrade
+    // target — a second dropdown here read as a duplicate (user feedback).
+    // The scan's auto channel remains the default.
 
     if (!global || global.installed !== true) {
       rows.push(buildDescRow(t("trellisGlobalNotInstalled")));
@@ -972,11 +841,20 @@
     // The global CLI block leads: it describes the local tool every project
     // below depends on, so it sits directly under the title.
     parent.appendChild(buildGlobalSection());
-    parent.appendChild(buildRootsSection());
-    parent.appendChild(buildToolbarSection());
 
-    const previewSection = buildPreviewSection();
-    if (previewSection) parent.appendChild(previewSection);
+    // Auto-scan on first entry (09-25): opening the Trellis tab IS the
+    // intent to see project state — no manual refresh click needed. Only
+    // ONE automatic attempt per tab lifetime (autoScanTried): a failed
+    // scan must not loop render→scan→render; the refresh button remains
+    // the manual retry path.
+    if (!autoScanTried && !scanResult && !scanning) {
+      autoScanTried = true;
+      runScan();
+    }
+    parent.appendChild(buildRootsSection());
+
+    // 09-25: the standalone preview section is retired — per-project
+    // upgrade previews live in the wizard modal now.
 
     parent.appendChild(buildFilterSection());
     parent.appendChild(buildProjectsSection());

@@ -304,7 +304,8 @@ describe("trellis IPC registration", () => {
     assert.deepStrictEqual(project.staleFixes.map((fix) => fix.id), ["claude-code"]);
     assert.deepStrictEqual(project.staleFixes[0].command, {
       bin: "trellis",
-      args: ["init", "--claude", "-y"],
+      // 09-25: -u <folder-name> rides init (fresh repairs abort without it).
+      args: ["init", "-u", "alpha", "--claude", "-y"],
       cwd: projectPath,
     });
     assert.strictEqual(h.cli.calls.addPlatforms, 0, "the repair command is displayed, never executed");
@@ -324,7 +325,7 @@ describe("trellis IPC registration", () => {
     assert.deepStrictEqual(project.platforms, ["claude-code", "gemini"]);
     assert.deepStrictEqual(project.staleIds, ["gemini"]);
     assert.deepStrictEqual(project.staleFixes.map((fix) => fix.id), ["gemini"]);
-    assert.deepStrictEqual(project.staleFixes[0].command.args, ["init", "--gemini", "-y"]);
+    assert.deepStrictEqual(project.staleFixes[0].command.args, ["init", "-u", "alpha", "--gemini", "-y"]);
   });
 });
 
@@ -436,13 +437,13 @@ describe("trellis IPC preview and global upgrade", () => {
     assert.strictEqual(result.plan.length, 1);
     assert.deepStrictEqual(result.plan[0].command, {
       bin: "trellis",
-      args: ["update", "--force"],
+      args: ["update", "--force", "--migrate"],
       cwd: projectPath,
     });
     assert.deepStrictEqual(Object.values(h.cli.calls), [0, 0, 0, 0, 0]);
   });
 
-  it("preview with platforms returns the add-platform plan for installed projects only", async () => {
+  it("preview with platforms returns the add-platform plan for every whitelisted path", async () => {
     const root = makeTmpDir();
     const projectPath = makeProject(root, "alpha");
     const plain = path.join(root, "plain");
@@ -453,9 +454,13 @@ describe("trellis IPC preview and global upgrade", () => {
       platforms: ["gemini"],
     });
     assert.strictEqual(result.status, "ok");
-    assert.strictEqual(result.addPlan.length, 1);
-    assert.deepStrictEqual(result.addPlan[0].added, ["gemini"]);
-    assert.deepStrictEqual(result.addPlan[0].command.args, ["init", "--gemini", "-y"]);
+    // 09-25: NOT filtered on isTrellisProject anymore — first-time install
+    // previews flow through the same branch (the init command IS the plan).
+    assert.strictEqual(result.addPlan.length, 2);
+    for (const entry of result.addPlan) {
+      assert.deepStrictEqual(entry.added, ["gemini"]);
+      assert.deepStrictEqual(entry.command.args, ["init", "-u", path.basename(entry.path), "--gemini", "-y"]);
+    }
     assert.deepStrictEqual(Object.values(h.cli.calls), [0, 0, 0, 0, 0]);
   });
 
@@ -482,7 +487,7 @@ describe("trellis IPC preview and global upgrade", () => {
     assert.strictEqual(result.plan[0].to, "0.7.0-beta.4");
     assert.deepStrictEqual(result.plan[0].command, {
       bin: "trellis",
-      args: ["update", "--force"],
+      args: ["update", "--force", "--migrate"],
       cwd: projectPath,
     });
     assert.deepStrictEqual(h.cli.calls, callsAfterScan, "preview spawns nothing");

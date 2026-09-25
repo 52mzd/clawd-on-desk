@@ -174,6 +174,14 @@ function createTrellisRuntime(options = {}) {
     });
   }
 
+  // Real `trellis update --dry-run` output for the upgrade-preview wizard
+  // (09-25). Unlike preview() this SPAWNS the CLI (read-only mode) so the
+  // user sees the actual file-level plan the CLI would execute. Timed out
+  // or failed runs still return partial output for diagnosis.
+  async function dryRunPreview(projectPath, runOptions = {}) {
+    return cli.dryRunUpdate(projectPath, runOptions);
+  }
+
   // Preview for "add a platform": shows what would be added and the exact
   // command, without spawning anything. Unknown ids fail closed here too.
   function previewAddPlatforms(projectPath, platformIds) {
@@ -194,7 +202,7 @@ function createTrellisRuntime(options = {}) {
       error: null,
       command: {
         bin: TRELLIS_BIN,
-        args: [...INIT_ARGS, ...flags, ...INIT_ARGS_SUFFIX],
+        args: [...INIT_ARGS, "-u", path.basename(String(projectPath)) || "clawd", ...flags, ...INIT_ARGS_SUFFIX],
         cwd: projectPath,
       },
     };
@@ -409,6 +417,7 @@ function createTrellisRuntime(options = {}) {
     scan,
     preview,
     previewAddPlatforms,
+    dryRunPreview,
     startBatch,
     cancelBatch,
     batchStatus,

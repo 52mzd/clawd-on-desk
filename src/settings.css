@@ -5466,3 +5466,184 @@ html, body {
   color: var(--text-tertiary);
   user-select: text;
 }
+
+/* ===== Trellis wizard modal (09-25) ===== */
+/* Chip family mirrors the dashboard card contract: radius-s, color-mix
+   tint, 11px/600. Registered = accent tint; unregistered = dashed ghost. */
+.trellis-platform-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: var(--radius-s, 6px);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: default;
+}
+
+.trellis-platform-chip.is-registered {
+  background: color-mix(in srgb, var(--accent, #d97757) 14%, transparent);
+  color: color-mix(in srgb, var(--accent, #d97757) 80%, var(--text, inherit));
+}
+
+button.trellis-platform-chip.is-unregistered {
+  border: 1px dashed var(--border, rgba(127, 127, 127, 0.35));
+  color: var(--text-tertiary, inherit);
+  cursor: pointer;
+  transition: background-color 120ms cubic-bezier(0.32, 0.72, 0, 1),
+    border-color 120ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+button.trellis-platform-chip.is-unregistered:hover {
+  border-color: color-mix(in srgb, var(--accent, #d97757) 55%, var(--border, transparent));
+  background: color-mix(in srgb, var(--accent, #d97757) 8%, transparent);
+}
+
+button.trellis-platform-chip.is-unregistered:active {
+  transform: scale(0.97);
+}
+
+.trellis-platform-chip.is-stale::after {
+  content: " \26A0"; /* warning sign */
+  opacity: 0.75;
+}
+
+/* Wizard dialog — rides the settings-confirm-modal base styles. */
+.trellis-wizard {
+  max-width: 520px;
+  width: min(520px, calc(100vw / var(--clawd-text-zoom, 1) - 48px));
+}
+
+.trellis-wizard-project {
+  margin: -6px 0 10px;
+  font-size: 12px;
+  color: var(--text-tertiary, inherit);
+}
+
+.trellis-wizard-project code {
+  font-weight: 600;
+  color: var(--text, inherit);
+}
+
+.trellis-wizard-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: calc(46vh / var(--clawd-text-zoom, 1));
+  overflow-y: auto;
+}
+
+.trellis-wizard-hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-secondary, inherit);
+}
+
+.trellis-wizard-platforms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.trellis-wizard-platform {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.35));
+  border-radius: var(--radius-s, 6px);
+  cursor: pointer;
+  font-size: 12.5px;
+}
+
+.trellis-wizard-platform:has(input:checked) {
+  border-color: color-mix(in srgb, var(--accent, #d97757) 55%, var(--border, transparent));
+  background: color-mix(in srgb, var(--accent, #d97757) 10%, transparent);
+}
+
+.trellis-wizard-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary, inherit);
+}
+
+.trellis-wizard-added {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+}
+
+.trellis-wizard-version {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.trellis-wizard-version code {
+  font-weight: 600;
+}
+
+.trellis-wizard-arrow {
+  color: var(--text-tertiary, inherit);
+}
+
+.trellis-wizard-command-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.trellis-wizard-command {
+  display: block;
+  padding: 8px 10px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.35));
+  border-radius: var(--radius-s, 6px);
+  background: var(--surface-alt, rgba(127, 127, 127, 0.08));
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.trellis-wizard-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.trellis-wizard-ok {
+  margin: 0;
+  font-weight: 600;
+  color: var(--ok, #3fb950);
+}
+
+.trellis-wizard-error {
+  margin: 0;
+  font-weight: 600;
+  color: var(--danger, #f85149);
+}
+
+.trellis-wizard-output {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-s, 6px);
+  background: var(--surface-alt, rgba(127, 127, 127, 0.08));
+  font-size: 11px;
+  max-height: calc(18vh / var(--clawd-text-zoom, 1));
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.trellis-wizard-stale {
+  opacity: 0.7;
+}

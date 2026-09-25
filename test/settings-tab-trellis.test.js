@@ -114,7 +114,7 @@ function makeStrings() {
     "trellisProjectsTitle", "trellisColumnVersion", "trellisStatusLatest", "trellisStatusUpgradable",
     "trellisStatusUnknown", "trellisStatusNotInstalled", "trellisStatusFailed", "trellisStatusVersionUnknown",
     "trellisStatusQueued", "trellisStatusRunning", "trellisStatusCancelled", "trellisStatusOk",
-    "trellisStaleRecord", "trellisUpgrade", "trellisUpgradeAll", "trellisCancel",
+    "trellisStaleRecord", "trellisUpgrade", "trellisGlobalUpgrade",
     "trellisUpgradeConfirmTitle", "trellisUpgradeConfirmDetail", "trellisUpgradeConfirmAction",
     "trellisUpgradeDone", "trellisBatchSummary", "trellisPreview", "trellisPreviewTitle",
     "trellisPreviewCommand", "trellisPreviewCwd", "trellisPreviewEmpty", "trellisClose", "trellisCopy",
@@ -271,6 +271,9 @@ describe("settings-tab-trellis", () => {
 
   it("adds a picked folder through the prefs-writing channel only", async () => {
     const { core, calls, api } = loadTab();
+    // 09-25 auto-scan on first render: silence the default scan stub so the
+    // calls array stays about the pickRoot flow only.
+    api.trellisScan = () => Promise.resolve({ status: "error" });
     api.trellisPickRoot = () => { calls.push("pickRoot"); return Promise.resolve({ status: "ok", path: "/tmp/projects" }); };
     api.trellisSetRoots = (roots) => { calls.push(["setRoots", roots]); return Promise.resolve({ status: "ok" }); };
     const panel = renderPanel(core);
@@ -282,14 +285,16 @@ describe("settings-tab-trellis", () => {
   });
 
   it("does not write anything when the folder picker is cancelled", async () => {
-    const { core, calls } = loadTab();
+    const { core, calls, api } = loadTab();
+    // 09-25 auto-scan on first render: silence the default scan stub.
+    api.trellisScan = () => Promise.resolve({ status: "error" });
     const panel = renderPanel(core);
     findButton(panel, "trellisAddRoot").dispatch("click");
     await flushPromises();
     assert.deepStrictEqual(calls, ["pickRoot"]);
   });
 
-  it("scans once per refresh click and never spawns from the preview button", async () => {
+  it("scans once per refresh click and the retired preview button is gone", async () => {
     const { core, calls, api } = loadTab();
     api.trellisScan = () => {
       calls.push("scan");
@@ -305,13 +310,14 @@ describe("settings-tab-trellis", () => {
     findButton(panel, "trellisRefresh").dispatch("click");
     await flushPromises();
 
+    // 09-25: the standalone preview button/panel is retired — the wizard
+    // owns previews. The button must not render at all.
     const afterScan = renderPanel(core);
-    findButton(afterScan, "trellisPreview").dispatch("click");
-    await flushPromises();
-
-    assert.deepStrictEqual(calls, ["scan", "preview"]);
+    assert.strictEqual(findButton(afterScan, "trellisPreview"), null,
+      "preview button removed from the toolbar");
+    assert.deepStrictEqual(calls, ["scan"]);
     for (const write of ["upgradeProject", "upgradeAll", "addPlatform", "upgradeGlobal", "setRoots"]) {
-      assert.ok(!calls.includes(write), `preview must not call ${write}`);
+      assert.ok(!calls.includes(write), `scan must not call ${write}`);
     }
   });
 
@@ -328,6 +334,8 @@ describe("settings-tab-trellis", () => {
       global: { installed: true, version: "0.6.0" },
       // The catalog is the only source of picker options; a local table would
       // drift from src/trellis-platforms.js and silently offer stale platforms.
+      // 09-25: the inline panel is gone — the catalog feeds the wizard chips;
+      // the project row renders registered/unregistered chips from it.
       platformCatalog: [
         { id: "claude-code", label: "Claude Code" },
         { id: "gemini", label: "Gemini CLI" },
@@ -337,14 +345,19 @@ describe("settings-tab-trellis", () => {
     findButton(renderPanel(session.core, session), "trellisRefresh").dispatch("click");
     await flushPromises();
 
-    findButton(renderPanel(session.core, session), "trellisAddPlatform").dispatch("click");
-    const select = findSelect(renderPanel(session.core, session), (element) => !isGlobalChannelSelect(element));
-
-    assert.ok(select, "the add-platform panel exposes a select");
-    assert.deepStrictEqual(optionValues(select), ["", "gemini"]);
-
-    const gemini = select.children.find((child) => child.value === "gemini");
-    assert.strictEqual(gemini.textContent, "Gemini CLI");
+    const panel = renderPanel(session.core, session);
+    const chips = [];
+    walk(panel, (element) => {
+      const cls = element.className || "";
+      if (typeof cls === "string" && /\btrellis-platform-chip(?!-row)\b/.test(cls)) {
+        chips.push({ cls, label: element.textContent, tag: element.tagName });
+      }
+    });
+    // registered claude-code chip only (09-25 feedback): unregistered
+    // platforms no longer render in the row — they live in the wizard.
+    assert.strictEqual(chips.length, 1);
+    assert.ok(chips.some((c) => c.cls.includes("is-registered") && c.label.includes("Claude Code")));
+    assert.ok(!chips.some((c) => c.cls.includes("is-unregistered")), "no unregistered chips in the row");
   });
 
   it("offers no picker options before a scan has supplied the catalog", () => {
@@ -372,7 +385,7 @@ describe("settings-tab-trellis", () => {
     const rendered = renderPanel(core);
     const upgradeButtons = [];
     walk(rendered, (element) => {
-      if (element.tagName === "BUTTON" && element.buttonLabel === "trellisUpgrade") upgradeButtons.push(element);
+      if (element.tagName === "BUTTON" && element.buttonLabel === "trellisUpgradePreview") upgradeButtons.push(element);
     });
     assert.strictEqual(upgradeButtons.length, 2);
     assert.strictEqual(upgradeButtons[0].disabled, false, "upgradable project keeps its action");
@@ -441,7 +454,7 @@ describe("settings-tab-trellis degradation and scoping", () => {
     assert.ok(texts(rendered).includes("trellis init --gemini -y"), "the repair command is visible");
   });
 
-  it("re-scans with the selected channel and keeps auto as the default", async () => {
+  it("re-scans via the global card refresh and sends no channel by default (09-25: the duplicate project-channel picker is removed)", async () => {
     const session = loadTab();
     const requests = [];
     session.api.trellisScan = (payload) => {
@@ -453,94 +466,13 @@ describe("settings-tab-trellis degradation and scoping", () => {
     await flushPromises();
     assert.deepStrictEqual(Object.keys(requests[0]), [], "auto sends no channel at all");
 
-    const select = findSelect(renderPanel(session.core, session), (element) => !isGlobalChannelSelect(element));
-    assert.ok(select, "the toolbar exposes a channel picker");
-    assert.deepStrictEqual(optionValues(select), ["", "latest", "beta", "rc"]);
-
-    select.value = "beta";
-    select.dispatch("change");
-    await flushPromises();
-    assert.strictEqual(requests[1].channel, "beta");
-  });
-
-  it("scopes the batch to the filtered list", async () => {
-    const session = loadTab();
-    const starts = [];
-    session.api.trellisUpgradeAll = (paths) => {
-      starts.push(paths);
-      return Promise.resolve({ status: "ok", batchId: "b1" });
-    };
-    await scanWith(session, makeScanResult({
-      platformCatalog: [{ id: "claude-code", label: "Claude Code" }, { id: "pi", label: "Pi Agent" }],
-      projects: [
-        { path: "/tmp/root/claude-project", name: "claude-project", installed: true, current: "0.6.0", target: "0.6.17", upgradable: true, platforms: ["claude-code"], staleIds: [], staleRecord: false },
-        { path: "/tmp/root/pi-project", name: "pi-project", installed: true, current: "0.6.0", target: "0.6.17", upgradable: true, platforms: ["pi"], staleIds: [], staleRecord: false },
-      ],
-    }));
-
-    const checkbox = findPlatformCheckbox(renderPanel(session.core, session), "Pi Agent");
-    assert.ok(checkbox, "the platform filter renders a checkbox per platform");
-    checkbox.checked = true;
-    checkbox.dispatch("change");
-    await flushPromises();
-
-    findButton(renderPanel(session.core, session), "trellisUpgradeAll").dispatch("click");
-    await flushPromises();
-    assert.deepStrictEqual(starts, [["/tmp/root/pi-project"]]);
-  });
-
-  it("marks the batch running before the start reply arrives", async () => {
-    const session = loadTab();
-    let resolveStart = null;
-    session.api.trellisUpgradeAll = () => new Promise((resolve) => { resolveStart = resolve; });
-    await scanWith(session, makeScanResult({
-      projects: [{
-        path: "/tmp/root/one", name: "one", installed: true, current: "0.6.0", target: "0.6.17",
-        upgradable: true, platforms: [], staleIds: [], staleRecord: false,
-      }],
-    }));
-
-    findButton(renderPanel(session.core, session), "trellisUpgradeAll").dispatch("click");
-    // The reply is still in flight: cancel must already be reachable, because
-    // the main process may have finished the whole batch in the meantime.
-    assert.strictEqual(findButton(renderPanel(session.core, session), "trellisCancel").disabled, false);
-
-    resolveStart({ status: "ok", batchId: "b1" });
-    await flushPromises();
-  });
-
-  it("rolls the cancel button back when the batch never starts", async () => {
-    const session = loadTab();
-    session.api.trellisUpgradeAll = () => Promise.resolve({ status: "error", message: "no Trellis projects to upgrade" });
-    await scanWith(session, makeScanResult({
-      projects: [{
-        path: "/tmp/root/one", name: "one", installed: true, current: "0.6.0", target: "0.6.17",
-        upgradable: true, platforms: [], staleIds: [], staleRecord: false,
-      }],
-    }));
-
-    findButton(renderPanel(session.core, session), "trellisUpgradeAll").dispatch("click");
-    await flushPromises();
-    assert.strictEqual(findButton(renderPanel(session.core, session), "trellisCancel").disabled, true);
-  });
-  it("renders the active-task digest attached to a scanned project row", async () => {
-    const session = loadTab();
-    await scanWith(session, makeScanResult({
-      projects: [{
-        path: "/tmp/root/p", name: "p", installed: true, current: "0.6.17", target: "0.6.17",
-        upgradable: false, platforms: [], staleIds: [], staleRecord: false,
-        activeTasks: [
-          { title: "Trellis 流程感知", phase: "execute" },
-          { title: "Next thing", phase: "plan" },
-        ],
-      }],
-    }));
-
-    const rendered = texts(renderPanel(session.core, session));
-    assert.ok(
-      rendered.includes("active:Trellis 流程感知 (P-execute) · Next thing (P-plan)"),
-      `digest renders on the project row: ${rendered.join(" | ")}`
-    );
+    // The project-channel filter select no longer exists (merged into the
+    // single global channel select); auto stays the only default.
+    const dupes = [];
+    walk(renderPanel(session.core, session), (el) => {
+      if (el.tagName === "SELECT" && !isGlobalChannelSelect(el)) dupes.push(el);
+    });
+    assert.deepStrictEqual(dupes, [], "no second channel picker anywhere");
   });
 
   it("renders no digest when the project has no active tasks", async () => {

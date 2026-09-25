@@ -71,7 +71,7 @@ describe("argv contract", () => {
 
     assert.strictEqual(stub.calls.length, 1);
     assert.strictEqual(stub.calls[0].bin, "trellis");
-    assert.deepStrictEqual(stub.calls[0].args, ["update", "--force"]);
+    assert.deepStrictEqual(stub.calls[0].args, ["update", "--force", "--migrate"]);
     assert.deepStrictEqual(stub.calls[0].args, Array.from(UPDATE_ARGS));
     assert.strictEqual(stub.calls[0].options.cwd, projectPath);
     assert.strictEqual(typeof stub.calls[0].options.timeout, "number");
@@ -79,7 +79,41 @@ describe("argv contract", () => {
     assert.strictEqual(result.ok, true);
   });
 
-  it("adds a platform with exactly [init, --gemini, -y]", async () => {
+  it("dry-run spawns exactly [update, --dry-run] and reports combined output", async () => {
+    // 09-25 wizard contract: the upgrade preview shows the REAL CLI output.
+    const projectPath = makeProject("0.6.17");
+    const stub = makeExecFileStub({
+      trellis: { stdout: "would update 3 files", stderr: "(dry run)" },
+    });
+    const result = await cliWith(stub).dryRunUpdate(projectPath);
+
+    assert.deepStrictEqual(stub.calls[0].args, ["update", "--dry-run"]);
+    assert.strictEqual(stub.calls[0].options.cwd, projectPath);
+    assert.strictEqual(result.ok, true);
+    assert.ok(result.output.includes("would update 3 files"));
+    assert.ok(result.output.includes("(dry run)"), "stderr folds into output");
+  });
+
+  it("dry-run restores .trellis/.version when the CLI rewrites it", async () => {
+    // AGENTS gotcha: older CLIs rewrite .version even on --dry-run when the
+    // project version differs. The wrapper snapshots and restores — the
+    // preview must stay read-only.
+    const projectPath = makeProject("0.6.17");
+    const versionPath = path.join(projectPath, ".trellis", ".version");
+    const stub = makeExecFileStub({
+      trellis: (call) => {
+        fs.writeFileSync(versionPath, "0.7.0-beta.4\n");
+        return { stdout: "plan" };
+      },
+    });
+    const result = await cliWith(stub).dryRunUpdate(projectPath);
+
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(fs.readFileSync(versionPath, "utf8"), "0.6.17\n",
+      ".version must be restored after a mutating dry-run");
+  });
+
+  it("adds a platform with exactly [init, -u <name>, --gemini, -y]", async () => {
     const projectPath = makeProject("0.6.17", { ".claude/x": "h" });
     const stub = makeExecFileStub({
       trellis: (call) => {
@@ -94,7 +128,8 @@ describe("argv contract", () => {
     });
 
     const result = await cliWith(stub).addPlatforms(projectPath, ["gemini"]);
-    assert.deepStrictEqual(stub.calls[0].args, ["init", "--gemini", "-y"]);
+    // 09-25: -u <folder-name> rides init (fresh projects abort without it).
+    assert.deepStrictEqual(stub.calls[0].args, ["init", "-u", path.basename(projectPath), "--gemini", "-y"]);
     assert.deepStrictEqual(Array.from(INIT_ARGS_SUFFIX), ["-y"]);
     assert.ok(!stub.calls[0].args.includes("-s"), "-s must never be passed to init");
     assert.ok(!stub.calls[0].args.includes("--skip-all"));
@@ -106,7 +141,7 @@ describe("argv contract", () => {
   });
 
   it("keeps the update and init argv constants separate", () => {
-    assert.deepStrictEqual(Array.from(UPDATE_ARGS), ["update", "--force"]);
+    assert.deepStrictEqual(Array.from(UPDATE_ARGS), ["update", "--force", "--migrate"]);
     assert.deepStrictEqual(Array.from(INIT_ARGS_SUFFIX), ["-y"]);
     assert.notStrictEqual(UPDATE_ARGS, INIT_ARGS_SUFFIX);
   });

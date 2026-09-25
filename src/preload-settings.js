@@ -278,6 +278,8 @@ contextBridge.exposeInMainWorld("settingsAPI", {
   trellisPickRoot: () => ipcRenderer.invoke("settings:trellis-pick-root"),
   trellisSetRoots: (roots) => ipcRenderer.invoke("settings:trellis-set-roots", { roots }),
   trellisPreview: (payload) => ipcRenderer.invoke("settings:trellis-preview", payload || {}),
+  trellisDryRun: (projectPath) =>
+    ipcRenderer.invoke("settings:trellis-dry-run", { path: projectPath }),
   trellisUpgradeProject: (projectPath) =>
     ipcRenderer.invoke("settings:trellis-upgrade-project", { path: projectPath }),
   trellisUpgradeAll: (paths) => ipcRenderer.invoke("settings:trellis-upgrade-all", { paths }),

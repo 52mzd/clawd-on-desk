@@ -1963,6 +1963,19 @@ function buildTrellisSplitRow(task, meta, labels, archived = false) {
   return row;
 }
 
+// Narrow-window mode (09-25): below the 720px CSS breakpoint the right
+// pane is display:none — selections must open the full-screen OVERLAY
+// instead of embedding into a hidden host. No matchMedia in the vm test
+// sandbox → default to embedded (wide) behavior, tests unaffected.
+function trellisUseEmbeddedDetail() {
+  try {
+    if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+      return !window.matchMedia("(max-width: 720px)").matches;
+    }
+  } catch { /* sandbox */ }
+  return true;
+}
+
 function buildTrellisSplitDetailPane(task) {
   const pane = document.createElement("div");
   pane.className = "trellis-split-detail";
@@ -1998,7 +2011,9 @@ function buildTrellisSplitDetailPane(task) {
   //     synchronously inline the card so the rebuild doesn't blank it.
   //  2. otherwise (fresh selection just set it): openTrellisDetail will
   //     render into this host on its first renderTrellisDetail() pass.
+  const embeddedMode = trellisUseEmbeddedDetail();
   if (
+    embeddedMode &&
     trellisDetail.open &&
     trellisDetail.embedded &&
     trellisDetail.request &&
@@ -2006,7 +2021,9 @@ function buildTrellisSplitDetailPane(task) {
   ) {
     pane.appendChild(buildTrellisDetailCard());
   } else {
-    void openTrellisDetail(task, { embedded: true });
+    // Narrow window forces overlay mode: the embedded host is hidden by
+    // CSS and an inline card would be invisible.
+    void openTrellisDetail(task, { embedded: embeddedMode });
   }
   return pane;
 }
@@ -2122,8 +2139,15 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
     while (i < subtree.length && subtree[i].depth > rootDepth) {
       const rowMeta = subtree[i];
       if (ancestorsExpanded) {
-        trellisSplit.tasksByPath.set(rowMeta.task.taskPath, rowMeta.task);
-        if (rowMeta.task.taskPath === trellisSplit.selectedTaskPath) selectedTask = rowMeta.task;
+        // Composite key (09-25 regression fix): renderSubtree rows are the
+        // CHILD tasks — the root branches migrated to trellisTaskKey but
+        // this line kept the bare path, so child lookups missed and the
+        // right pane rendered empty on child clicks.
+        trellisSplit.tasksByPath.set(trellisTaskKey(rowMeta.task.taskPath, rowMeta.task.cwd), rowMeta.task);
+        if (
+          rowMeta.task.taskPath === trellisSplit.selectedTaskPath
+          && (rowMeta.task.cwd || "") === (trellisSplit.selectedTaskCwd || "")
+        ) selectedTask = rowMeta.task;
         groupEl.appendChild(buildTrellisSplitRow(rowMeta.task, rowMeta, splitLabels, archived));
       }
       if (rowMeta.hasChildren) parentPaths.push(rowMeta.task.taskPath);
@@ -3144,7 +3168,7 @@ async function fetchTrellisNetworkOverview() {
 // Clicking a task inside the overview jumps to it in the split list: make
 // sure its root is selected (a different chip hides it) and archived tasks
 // need the DONE group open, then select — the detail pane follows.
-function jumpToTrellisNetworkTask(taskPath) {
+function jumpToTrellisNetworkTask(taskPath, taskCwd) {
   if (typeof taskPath !== "string" || !taskPath) return;
   const overviewRoot = trellisNetwork.root;
   if (overviewRoot && trellisView.selectedRoot !== null && trellisView.selectedRoot !== overviewRoot) {
@@ -3154,7 +3178,11 @@ function jumpToTrellisNetworkTask(taskPath) {
     trellisSplit.archiveOpen = true;
   }
   if (trellisSplit.collapsedPaths) trellisSplit.collapsedPaths.delete(taskPath);
-  selectTrellisSplitTask(taskPath);
+  // Composite key partner (09-25): overview nodes don't carry cwd — the
+  // overview was fetched FOR trellisNetwork.root, so that root IS the
+  // missing cwd scope in multi-root lists.
+  const resolvedCwd = typeof taskCwd === "string" && taskCwd ? taskCwd : overviewRoot || null;
+  selectTrellisSplitTask(taskPath, resolvedCwd);
 }
 
 function trellisNetworkRefButton(ref) {
@@ -3170,7 +3198,7 @@ function trellisNetworkRefButton(ref) {
       btn.appendChild(badge);
     }
     btn.addEventListener("click", () => {
-      jumpToTrellisNetworkTask(ref.taskPath);
+      jumpToTrellisNetworkTask(ref.taskPath, ref.cwd);
     });
   } else {
     btn.disabled = true;

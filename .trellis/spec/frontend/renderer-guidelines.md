@@ -203,6 +203,19 @@ dashboard 渲染层的 node:test 用 `vm.runInNewContext` + 极简 DOM stub，�
 map 缓存」，键一律用 `trellisTaskKey(path, cwd)`；只按 path 匹配会全高亮、
 跳错行。新增同类列表时先问：这个 id 跨项目唯一吗？不唯一就带 scope。
 
+## trellis 平台安装的三个隐藏契约（09-25 向导踩坑）
+
+1. **`trellis init` 必须带 `-u <名字>`**：无 `-u` 时 CLI 直接失败退出
+（Settings 安装向导曾报"安装失败"）。默认名 = 项目文件夹 basename；
+argv 形态冻结为 `[init, -u, <name>, --<platform>…, -y]`。
+2. **CLI 0.7.0-beta.4 起 `.template-hashes.json` 不再记录平台文件**：
+只 parse hashes 会把装好的平台报成 0 个。平台读取必须走并集证据
+`platformsOfUnion(hashes, path)`（hashes 记录 ∨ 配置目录存在）；
+stale 语义不变（hashes 记录 ∧ 目录缺失）。
+3. **未安装项目的首装不能过 `isTrellisProject` 门禁**：首装命令就是
+`trellis init`，装完才有 .trellis 目录；IPC 通道对 init 类命令只做
+平台白名单校验，不做项目存在性校验。
+
 ## Trellis 列表卡片族契约（09-25 R7 定型）
 
 左栏 split view 与会话内 trellis 面板共用**同一卡片族**，改其中一处 UI

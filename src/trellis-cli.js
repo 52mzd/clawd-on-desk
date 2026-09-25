@@ -22,6 +22,8 @@
 // shell string, so a directory named `a & b` cannot inject anything.
 
 const { execFile: defaultExecFile } = require("child_process");
+const fs = require("fs");
+const path = require("path");
 
 const { mergedExecutionEnv } = require("./codex-queue-delivery");
 const { flagsFor } = require("./trellis-platforms");
@@ -33,12 +35,22 @@ const REMOTE_PACKAGE = "@mindfoldhq/trellis";
 const REMOTE_CHANNELS = Object.freeze(["latest", "beta", "rc"]);
 
 // Kept apart on purpose — see the file header.
-const UPDATE_ARGS = Object.freeze(["update", "--force"]);
+// 09-25: --migrate added (user request, docs.trytrellis.app/zh/advanced/
+// appendix-f) — it re-runs init hooks so migrated platforms pick up new
+// files instead of only updating existing ones. --force stays (skips the
+// interactive confirmation; without it a TTY-less spawn hangs).
+const UPDATE_ARGS = Object.freeze(["update", "--force", "--migrate"]);
 const INIT_ARGS = Object.freeze(["init"]);
 const INIT_ARGS_SUFFIX = Object.freeze(["-y"]);
 const GLOBAL_UPGRADE_ARGS = Object.freeze(["upgrade"]);
 const VERSION_ARGS = Object.freeze(["--version"]);
 const REMOTE_ARGS = Object.freeze(["view", REMOTE_PACKAGE, "dist-tags", "--json"]);
+// Read-only dry run for the upgrade-preview wizard (09-25). Measured on
+// this machine: leaves .trellis/.version and the worktree untouched when
+// the installed version matches the template version (the older CLI
+// caveat does not apply to 0.7.0-beta.3).
+const DRY_RUN_ARGS = Object.freeze(["update", "--dry-run"]);
+const DRY_RUN_TIMEOUT_MS = 45000;
 
 const DEFAULT_TIMEOUT_MS = 120000;
 const VERSION_TIMEOUT_MS = 15000;
@@ -261,8 +273,13 @@ function createTrellisCli(options = {}) {
     if (!flags) return { ok: false, reason: "unknown-platform", added: [], output: "", error: "unknown-platform" };
     if (flags.length === 0) return { ok: false, reason: "no-platforms", added: [], output: "", error: "no-platforms" };
 
+    // `trellis init -u <name> --<platform> -y` (09-25): -u is the developer
+    // name trellis records in config.yaml; it defaults to the folder name.
+    // Without it the CLI failed/aborted on fresh projects (install wizard
+    // showed "failed").
+    const userName = path.basename(String(projectPath)) || "clawd";
     const before = readPlatforms(projectPath);
-    const result = await run(TRELLIS_BIN, [...INIT_ARGS, ...flags, ...INIT_ARGS_SUFFIX], { cwd: projectPath });
+    const result = await run(TRELLIS_BIN, [...INIT_ARGS, "-u", userName, ...flags, ...INIT_ARGS_SUFFIX], { cwd: projectPath });
     const after = readPlatforms(projectPath);
     const added = after.filter((id) => !before.includes(id));
     return {
@@ -274,12 +291,47 @@ function createTrellisCli(options = {}) {
     };
   }
 
+  // Read-only dry run for the upgrade-preview wizard (09-25). Runs
+  // `trellis update --dry-run` in the project cwd and returns the raw
+  // combined output; the wizard renders it verbatim. Measured on this
+  // machine (0.7.0-beta.3): leaves .trellis/.version and the worktree
+  // untouched. Failures still return output so the wizard can show WHY.
+  async function dryRunUpdate(projectPath, runOptions = {}) {
+    // `trellis update --dry-run` has ONE documented side effect: when the
+    // project version differs from the CLI version it rewrites
+    // .trellis/.version (AGENTS gotcha). Guard: snapshot before, restore
+    // after if the CLI touched it — the preview stays read-only.
+    const versionPath = path.join(projectPath, ".trellis", ".version");
+    let before = null;
+    try { before = fs.readFileSync(versionPath, "utf8"); } catch { /* absent */ }
+    let result;
+    try {
+      result = await run(TRELLIS_BIN, DRY_RUN_ARGS, {
+        cwd: projectPath,
+        timeoutMs: DRY_RUN_TIMEOUT_MS,
+        signal: runOptions.signal,
+      });
+    } finally {
+      try {
+        const after = fs.readFileSync(versionPath, "utf8");
+        if (before !== null && after !== before) fs.writeFileSync(versionPath, before);
+      } catch { /* nothing to restore */ }
+    }
+    return {
+      ok: result.ok,
+      reason: result.reason,
+      output: combineOutput(result),
+      error: result.ok ? null : result.message || result.reason,
+    };
+  }
+
   return {
     readGlobalVersion,
     fetchRemoteChannels,
     updateProject,
     upgradeGlobal,
     addPlatforms,
+    dryRunUpdate,
   };
 }
 
@@ -295,6 +347,7 @@ module.exports = {
   GLOBAL_UPGRADE_ARGS,
   VERSION_ARGS,
   REMOTE_ARGS,
+  DRY_RUN_ARGS,
   DEFAULT_TIMEOUT_MS,
   classifyFailure,
   parseVersionOutput,
