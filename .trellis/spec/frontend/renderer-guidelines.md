@@ -152,3 +152,35 @@ function syncPanelScopes() {
 
 判据：任何按 root/cwd/过滤词取数的缓存，问一句"切 chip 后它重拉吗？"
 答不上来就是漏了。
+
+## 动效 = CSS class 记账，重建不重播（apple-design R1 踩过）
+
+**Dashboard 每 1s 全量重建 DOM，任何挂在卡片上的 animation class 都会在下一轮
+replaceChildren 后重播**。入场动画只能"标记新增"，不能"标记在场"：
+
+```js
+// ✅ 用 id 集合 diff 标记新增卡，下一轮重建自动丢 class（一次性）
+enteringSessionIds = new Set(ids.filter(id => !knownSessionIds.has(id)));
+if (enteringSessionIds.has(session.id)) card.classList.add("is-entering");
+
+// ❌ 直接给所有卡加入场动画 → 每秒闪一次
+```
+
+首帧整列表入场用容器 class（`is-first-frame`）+ setTimeout 摘除，而不是逐卡
+stagger（卡片活在各自 group 父级里，逐卡 index 维护成本高）。
+
+**vm sandbox 陷阱**：renderer 会被 node:test 的 vm.runInNewContext 无 timer 环境
+加载（dashboard-session-history.test.js），顶层直接调 `setTimeout` 会 ReferenceError。
+新代码用 timer 前先惰性探测：
+
+```js
+const enroll = typeof setTimeout === "function" ? setTimeout : null;
+if (enroll) { ... } // 探测不到就跳过动画布防，功能不受损
+```
+
+## 设计 token 只收敛"同形异值"，不借机改值域（apple-design P1 教训）
+
+border-radius/token 迁移时按**现状值域分档**（3/4/5→xs、6/7→s、8→m、12→l、18→xl），
+而不是按理想值重新设计（初稿 -s=6/-m=10/-l=14 会一次性改变全应用观感）。
+机械替换保留特例：`50%`/`999px`（圆）、复合值（多角）、`var()` 引用不碰。
+每次批量替换后用 Counter 验证分布，防止误伤。
