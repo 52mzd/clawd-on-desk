@@ -70,21 +70,6 @@ Download and smoke-test the draft release assets before publishing the draft.
 If the draft is wrong, fix the issue before publishing; do not publish a known
 bad draft release.
 
-### v1.1.1-trellis.1.0 Draft Smoke Checklist
-
-This is the fork release (`52mzd/clawd-on-desk`). It reuses the upstream v1.1.0
-checklist below — only the version strings and the signing situation differ.
-
-- Confirm the packaged app shows `1.1.1-trellis.1.0` metadata.
-- Settings -> About shows `v1.1.1-trellis.1.0`, sourced from `app.getVersion()`.
-- Expect Gatekeeper / SmartScreen warnings: this build is **ad-hoc signed and not
-  notarized** (no Apple Developer or Windows code-signing certificate is
-  configured). See `docs/releases/release-v1.1.1-trellis.1.0.md` for the
-  per-platform workaround.
-- Built via `workflow_dispatch` on the fork (a `v*` tag build deliberately fails
-  closed without the full signing secret set).
-- All other items: use the v1.1.0 checklist below.
-
 ### v1.1.0 Draft Smoke Checklist
 
 Use the draft release installer or package artifact, not `npm start`. Windows
