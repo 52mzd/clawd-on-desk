@@ -2722,11 +2722,53 @@ h1 {
   border-radius: var(--radius-m);
   background: var(--surface);
   box-shadow: var(--shadow-1);
-  transition: box-shadow var(--dur-2) var(--ease-out-apple), border-color var(--dur-2) var(--ease-out-apple);
+  transition: box-shadow var(--dur-2) var(--ease-out-apple), border-color var(--dur-2) var(--ease-out-apple), transform var(--dur-1) var(--ease-out-apple);
 }
 
 .card:hover {
   box-shadow: var(--shadow-2);
+}
+
+.card:not(.card-unfocusable):active {
+  transform: scale(0.985);
+}
+
+/* Entering cards play once; the next rebuild drops .is-entering so the
+   1s tick never re-runs the intro. The first frame fades the whole list in
+   instead of per-card stagger (cards live in per-group parents). */
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.card.is-entering {
+  animation: card-enter var(--dur-3) var(--ease-out-apple) both;
+}
+
+.content.is-first-frame {
+  animation: card-enter var(--dur-3) var(--ease-out-apple) both;
+}
+
+@keyframes card-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card.is-entering,
+  .content.is-first-frame {
+    animation: card-fade var(--dur-2) ease both;
+  }
 }
 
 .card-unfocusable {
@@ -3143,6 +3185,11 @@ button {
   font-weight: 700;
   cursor: pointer;
   padding: 0 10px;
+  transition: transform var(--dur-1) var(--ease-out-apple);
+}
+
+button:active {
+  transform: scale(0.97);
 }
 
 button:hover:not(:disabled) { background: var(--accent-hover); }

@@ -4059,9 +4059,38 @@ function finishSessionFolderAction(sessionId, feedbackText = "") {
   });
 }
 
+let enteringSessionIds = new Set();
+let knownSessionIds = null;
+let firstFrameShown = false;
+let firstFrameTimer = 0;
+const firstFrameEnroll = typeof setTimeout === "function" ? setTimeout : null;
+const firstFrameCancel = typeof clearTimeout === "function" ? clearTimeout : null;
+
+// Marks newly-seen sessions for a one-shot enter animation and runs the
+// first-frame stagger exactly once per window lifetime. Purely class
+// bookkeeping — all interpolation lives in CSS.
+function noteEnteringSessions(sessions) {
+  const ids = new Set(sessions.map((session) => session.id));
+  enteringSessionIds = knownSessionIds
+    ? new Set(Array.from(ids).filter((id) => !knownSessionIds.has(id)))
+    : new Set();
+  knownSessionIds = ids;
+  if (!firstFrameShown && sessions.length) {
+    firstFrameShown = true;
+    if (firstFrameEnroll && firstFrameCancel) {
+      contentEl.classList.add("is-first-frame");
+      firstFrameCancel(firstFrameTimer);
+      firstFrameTimer = firstFrameEnroll(() => contentEl.classList.remove("is-first-frame"), 480);
+    }
+  }
+}
+
 function createCard(session, now) {
   const card = document.createElement("article");
   card.className = session.canFocus === true ? "card" : "card card-unfocusable";
+  // Entering cards play their intro once; the next rebuild drops the class so
+  // the one-second tick never re-runs the animation.
+  if (enteringSessionIds.has(session.id)) card.classList.add("is-entering");
 
   // The digit badge is produced here, from the frozen round state, on every
   // rebuild. The one-second tick replaces the whole card tree, so anything
@@ -4791,6 +4820,7 @@ function render(options = {}) {
   appendSessionHistory(fragment, now);
 
   contentEl.replaceChildren(fragment);
+  noteEnteringSessions(sessions);
 }
 
 async function init() {
