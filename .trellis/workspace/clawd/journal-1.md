@@ -476,3 +476,33 @@ v5 可读性重构：① v5-a 8ff9c9aa 弹窗三卡（detail/spec/network）从 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 16: Trellis UI 重设计 + 四轮交互打磨（R1-R4）
+
+**Date**: 2026-09-25
+**Task**: Trellis UI 重设计 + 四轮交互打磨（R1-R4）
+**Branch**: `main`
+
+### Summary
+
+按 emil-design-eng 规则重设计 Dashboard Trellis UI（排版 token 化、三态交互、SVG 图标体系、动画纪律），随后四轮实测打磨：R1 selection-only 轻量路径+签名重构；R2 滚动保持+sticky 分组头+去 hover 位移+activeView guard；R3 分组/月份头字号+折叠卡片；R4 修复 [hidden] 级联陷阱（display:flex 打败 hidden 属性）与 spec pane 漏接线 wireTrellisDocCollapse。知识固化：契约 8b/8c、renderer-guidelines 全局样式陷阱、静态守卫测试（[hidden] 守卫+接线计数）。全程 npm test 保持基线 11045/10979/20。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bb7d2de3` | (see git log) |
+| `0f205988` | (see git log) |
+| `5d2e3e3f` | (see git log) |
+| `4b8759b7` | (see git log) |
+| `cafacdff` | (see git log) |
+| `dc696eb1` | (see git log) |
+| `eef3683d` | (see git log) |
+| `daa74e33` | (see git log) |
+| `44b6df9e` | (see git log) |
+| `67ead01d` | (see git log) |
+
+### Status
+
+[OK] **Completed**
