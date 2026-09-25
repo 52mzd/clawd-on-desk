@@ -79,7 +79,7 @@ Copilot CLI 同步走 `<COPILOT_HOME 或 ~/.copilot>/hooks/hooks.json`，marker-
 
 ## Read These Docs
 
-- `docs/project/agent-runtime-architecture.md`：运行时架构、模块边界、启动与数据流、多 agent、permission bubble、终端聚焦和自动同步
+- `docs/project/agent-runtime-architecture.md`：运行时架构、模块边界、启动与数据流、多 agent、permission bubble、Trellis 绑定与宠物反馈、终端聚焦和自动同步
 - `docs/project/theme-state-ui.md`：状态机、主题系统、settings、mini mode、素材规则、平台限制、待落地 UI 决策
 - `docs/project/trellis-settings-panel.md`：Trellis Settings 面板的模块分层、IPC 契约、以及不可放宽的写入约束（argv 冻结、预览零写盘、信任门禁）
 - `docs/project/release-process.md`：发版 checklist、release note 核对、tag 触发 GitHub 打包和资产确认
