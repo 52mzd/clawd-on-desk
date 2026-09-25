@@ -178,6 +178,34 @@ const enroll = typeof setTimeout === "function" ? setTimeout : null;
 if (enroll) { ... } // 探测不到就跳过动画布防，功能不受损
 ```
 
+## 折叠类交互必须局部 class 翻转，禁止整树重建（09-25 折叠动画失效复盘）
+
+**根因**：CSS transition 需要*存活的元素*经历 from→to；折叠实现走
+`replaceChildren` 重建，新元素生来终态，transition 静默失效（caret 不转、
+行不收——不崩，只是"感觉不对"）。
+
+```js
+// ❌ 折叠 = 改状态 + 整树重建 → 所有 transition 失效
+trellisSplit.collapsedPhases.add(phase);
+lastTrellisPanelSignature = null;
+renderTrellisViewBody();
+
+// ✅ 折叠 = 找到已挂载的卡，翻 class；caret 旋转是可感知反馈
+card.classList.toggle("is-folded", folded);   // CSS: > .row { display:none }
+toggle.classList.toggle("is-collapsed", folded); // CSS: caret rotate 过渡
+```
+
+配套：行常驻渲染（折叠行也 mount，靠 class 隐藏）+ `data-depth` 标层级
+（折叠时按深度扫兄弟行）；vm 沙箱无 parentNode 时回退重建（行为正确、
+无动画）。选中（renderTrellisSplitSelectionOnly）与折叠是同一模式，
+新增「状态翻转→视觉反馈」交互一律走此路径。
+
+**布局补偿陷阱**（第一次修复失败原因）：用负 margin（-6px）吃掉折叠行
+占位时，补偿值必须与容器实际 gap 同源——本次 gap 是 2px，-6 失配导致
+展开时行与相邻卡重合。`max-height: 0→auto` 本身不可插值（auto 非动画值）。
+结论：**行显隐用 display:none，可感知反馈只留 caret 旋转**——零 layout
+残留，KISS。
+
 ## 设计 token 只收敛"同形异值"，不借机改值域（apple-design P1 教训）
 
 border-radius/token 迁移时按**现状值域分档**（3/4/5→xs、6/7→s、8→m、12→l、18→xl），

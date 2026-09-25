@@ -1729,19 +1729,29 @@ function toggleTrellisSplitArchive() {
   renderTrellisViewBody();
 }
 
-// Left-rail phase groups (plan/execute/check…) fold independently of the
-// archive. Default is OPEN; folding only hides rows, keyboard nav keeps
-// working because tasksByPath stays populated.
+// Left-rail phase groups (plan/execute/check…) fold LOCALLY (09-25 motion
+// fix): the card stays mounted, only the fold class flips — the caret
+// rotates via CSS transition and rows collapse. No tree rebuild, so the
+// scroll position and any in-flight CSS transitions survive.
 function toggleTrellisSplitPhase(phase) {
   if (trellisSplit.collapsedPhases.has(phase)) trellisSplit.collapsedPhases.delete(phase);
   else trellisSplit.collapsedPhases.add(phase);
-  // Reveal-on-EXPAND (09-25): the rebuilt listPane starts scrolled to top,
-  // so expanding a deep group loses the selected row — scroll it back into
-  // view after the rebuild instead of "showing the top entries".
-  trellisSplit.pendingPhaseReveal = trellisSplit.collapsedPhases.has(phase) ? null : phase;
+  const card = trellisViewEl && typeof trellisViewEl.querySelector === "function"
+    ? trellisViewEl.querySelector(`.trellis-split-phase-card[data-phase="${CSS.escape(phase)}"]`)
+    : null;
+  if (card) {
+    const folded = trellisSplit.collapsedPhases.has(phase);
+    card.classList.toggle("is-folded", folded);
+    const toggle = card.querySelector(".trellis-split-group-toggle");
+    if (toggle) {
+      toggle.classList.toggle("is-collapsed", folded);
+      toggle.setAttribute("aria-expanded", String(!folded));
+    }
+    return;
+  }
+  // Card not mounted yet (first render races) — fall back to a rebuild.
   lastTrellisPanelSignature = null;
   renderTrellisViewBody();
-  trellisSplit.pendingPhaseReveal = null;
 }
 
 // Keyboard navigation across the VISIBLE rows in group order — derived
@@ -1823,6 +1833,9 @@ function iconSvg(name, size = 12) {
 function buildTrellisSplitRow(task, meta, labels, archived = false) {
   const row = document.createElement("div");
   row.className = "trellis-split-row";
+  // Subtree membership for LOCAL folds (09-25): flat rows carry their
+  // depth so a fold can walk following siblings without rebuilding.
+  row.dataset.depth = String(meta ? meta.depth : 0);
   // Focusable for keyboard navigation only (not in the Tab order): ↑/↓
   // move the selection AND the DOM focus so :focus-visible outlines the
   // keyboard-active row (UI redesign 09-24 Batch B).
@@ -1868,15 +1881,39 @@ function buildTrellisSplitRow(task, meta, labels, archived = false) {
     const caret = document.createElement("button");
     caret.type = "button";
     caret.className = "trellis-split-caret";
+    // Fold-state mirror for expand/collapse-all LOCAL paths (09-25):
+    // hasChildren rides on the row so bulk folds can find group heads.
+    row.dataset.hasChildren = "true";
+    if (trellisSplit.collapsedPaths.has(task.taskPath)) {
+      caret.classList.add("is-collapsed");
+      row.classList.add("is-folded");
+    }
     caret.setAttribute("aria-label", t("dashboardTrellisSplitToggle"));
     caret.setAttribute("aria-expanded", String(!trellisSplit.collapsedPaths.has(task.taskPath)));
     caret.appendChild(iconSvg("caret", 12));
     caret.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      if (trellisSplit.collapsedPaths.has(task.taskPath)) {
-        trellisSplit.collapsedPaths.delete(task.taskPath);
-      } else {
-        trellisSplit.collapsedPaths.add(task.taskPath);
+      const nowFolded = !trellisSplit.collapsedPaths.has(task.taskPath);
+      if (nowFolded) trellisSplit.collapsedPaths.add(task.taskPath);
+      else trellisSplit.collapsedPaths.delete(task.taskPath);
+      row.classList.toggle("is-folded", nowFolded);
+      caret.classList.toggle("is-collapsed", nowFolded);
+      caret.setAttribute("aria-expanded", String(!nowFolded));
+      // LOCAL fold (09-25 motion fix): walk the parent's children when the
+      // DOM supports it (real browser); the vm sandbox lacks parentNode —
+      // fall back to a rebuild there, behavior stays correct.
+      const parent = row.parentNode;
+      if (parent && Array.isArray(parent.children)) {
+        const siblings = parent.children;
+        const myDepth = Number(row.dataset.depth || "0");
+        const start = siblings.indexOf(row) + 1;
+        for (let k = start; k < siblings.length; k++) {
+          const node = siblings[k];
+          if (!node.classList || !node.classList.contains("trellis-split-row")) break;
+          if (Number(node.dataset.depth || "0") <= myDepth) break;
+          node.classList.toggle("is-subtree-folded", nowFolded);
+        }
+        return;
       }
       lastTrellisPanelSignature = null;
       renderTrellisViewBody();
@@ -2134,21 +2171,23 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
   // floating divider above disconnected rows. renderSubtree appends into
   // the CURRENT group container.
   let groupEl = listPane;
-  const renderSubtree = (subtree, startIdx, rootDepth, ancestorsExpanded, archived = false) => {
+  const renderSubtree = (subtree, startIdx, rootDepth, ancestorsExpanded, archived = false, monthOpen = true, monthRowsSink = null) => {
     let i = startIdx;
     while (i < subtree.length && subtree[i].depth > rootDepth) {
       const rowMeta = subtree[i];
-      if (ancestorsExpanded) {
-        // Composite key (09-25 regression fix): renderSubtree rows are the
-        // CHILD tasks — the root branches migrated to trellisTaskKey but
-        // this line kept the bare path, so child lookups missed and the
-        // right pane rendered empty on child clicks.
+      {
+        // Rows ALWAYS mount (09-25 motion fix): subtree folds hide via a
+        // class on the row so fold/unfold animates without a rebuild.
         trellisSplit.tasksByPath.set(trellisTaskKey(rowMeta.task.taskPath, rowMeta.task.cwd), rowMeta.task);
         if (
           rowMeta.task.taskPath === trellisSplit.selectedTaskPath
           && (rowMeta.task.cwd || "") === (trellisSplit.selectedTaskCwd || "")
         ) selectedTask = rowMeta.task;
-        groupEl.appendChild(buildTrellisSplitRow(rowMeta.task, rowMeta, splitLabels, archived));
+        const childRow = buildTrellisSplitRow(rowMeta.task, rowMeta, splitLabels, archived);
+        if (!ancestorsExpanded) childRow.classList.add("is-subtree-folded");
+        if (!monthOpen) childRow.classList.add("is-month-folded");
+        if (monthRowsSink) monthRowsSink.push(childRow);
+        groupEl.appendChild(childRow);
       }
       if (rowMeta.hasChildren) parentPaths.push(rowMeta.task.taskPath);
       i = renderSubtree(
@@ -2156,7 +2195,9 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
         i + 1,
         subtree[i].depth,
         ancestorsExpanded && !trellisSplit.collapsedPaths.has(rowMeta.task.taskPath),
-        archived
+        archived,
+        monthOpen,
+        monthRowsSink
       );
     }
     return i;
@@ -2353,25 +2394,31 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
           } else {
             state.openMonths.add(month);
           }
-          lastTrellisPanelSignature = null;
-          renderTrellisViewBody();
+          // LOCAL fold (09-25 motion fix): flip classes on the collected
+          // rows — caret rotates via CSS transition, rows collapse. No
+          // rebuild, no sibling-walk (sandbox-safe).
+          const open = state.openMonths.has(month);
+          monthHead.classList.toggle("is-collapsed", !open);
+          monthToggle.setAttribute("aria-expanded", String(open));
+          for (const r of monthRows) r.classList.toggle("is-month-folded", !open);
         });
         monthHead.appendChild(monthToggle);
+        // 09-25 motion fix, sandbox-safe: collect THIS month's rows in a
+        // closure at build time — no nextElementSibling walk (the vm test
+        // DOM lacks it). The array dies with this DOM generation; the next
+        // rebuild re-collects.
+        const monthRows = [];
         groupEl.appendChild(monthHead);
-        if (monthOpen) {
-          for (const subtree of byMonth.get(month)) {
-            const rootMeta = subtree[0];
-            trellisSplit.tasksByPath.set(trellisTaskKey(rootMeta.task.taskPath, rootMeta.task.cwd), rootMeta.task);
-            if (rootMeta.task.taskPath === trellisSplit.selectedTaskPath && (rootMeta.task.cwd || "") === (trellisSplit.selectedTaskCwd || "")) selectedTask = rootMeta.task;
-            groupEl.appendChild(buildTrellisSplitRow(rootMeta.task, rootMeta, splitLabels, true));
-            if (rootMeta.hasChildren) parentPaths.push(rootMeta.task.taskPath);
-            renderSubtree(subtree, 1, rootMeta.depth, !trellisSplit.collapsedPaths.has(rootMeta.task.taskPath), true);
-          }
-        } else {
-          // keep collapsed months' tasks selectable via keyboard nav map
-          for (const subtree of byMonth.get(month)) {
-            trellisSplit.tasksByPath.set(trellisTaskKey(subtree[0].task.taskPath, subtree[0].task.cwd), subtree[0].task);
-          }
+        for (const subtree of byMonth.get(month)) {
+          const rootMeta = subtree[0];
+          trellisSplit.tasksByPath.set(trellisTaskKey(rootMeta.task.taskPath, rootMeta.task.cwd), rootMeta.task);
+          if (rootMeta.task.taskPath === trellisSplit.selectedTaskPath && (rootMeta.task.cwd || "") === (trellisSplit.selectedTaskCwd || "")) selectedTask = rootMeta.task;
+          const row = buildTrellisSplitRow(rootMeta.task, rootMeta, splitLabels, true);
+          if (!monthOpen) row.classList.add("is-month-folded");
+          monthRows.push(row);
+          groupEl.appendChild(row);
+          if (rootMeta.hasChildren) parentPaths.push(rootMeta.task.taskPath);
+          renderSubtree(subtree, 1, rootMeta.depth, true, true, monthOpen, monthRows);
         }
       }
       listPane.appendChild(groupEl);
@@ -2379,16 +2426,10 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
       continue;
     }
     if (group.phase !== "done" && trellisSplit.collapsedPhases.has(group.phase)) {
-      // Folded phase group: keep keyboard nav + selection data alive,
-      // skip DOM rows (the head still shows the root count).
-      for (const subtree of subtrees) {
-        const rootMeta = subtree[0];
-        trellisSplit.tasksByPath.set(trellisTaskKey(rootMeta.task.taskPath, rootMeta.task.cwd), rootMeta.task);
-        if (rootMeta.task.taskPath === trellisSplit.selectedTaskPath && (rootMeta.task.cwd || "") === (trellisSplit.selectedTaskCwd || "")) selectedTask = rootMeta.task;
-      }
-      listPane.appendChild(groupEl);
-      groupIndex += 1;
-      continue;
+      // Folded phase card (09-25 motion fix): rows still RENDER (display
+      // controlled by .is-folded on the card) so the fold can animate on
+      // class toggle without a tree rebuild; keyboard nav map stays hot.
+      groupEl.classList.add("is-folded");
     }
     for (const subtree of subtrees) {
       const rootMeta = subtree[0];
@@ -2414,17 +2455,10 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
       target.scrollIntoView({ block: "nearest" });
     }
   }
-  // Section-level empty hints (v6 semantics kept in the single view):
-  // no live task at all → the active guide; archive expanded but empty →
-  // the archive guide (collapsed head already shows its own 0 count).
-  if (activeCount === 0) {
-    listPane.appendChild(createText("p", "trellis-split-empty-text", t("dashboardTrellisActiveEmpty")));
-  }
-  // Archive-empty hint renders even while collapsed (the collapsed head
-  // shows no rows); expanding is how users verify it is really empty.
-  if (archiveCount === 0) {
-    listPane.appendChild(createText("p", "trellis-split-empty-text", t("dashboardTrellisArchivedEmpty")));
-  }
+  // (09-25) The empty-state hint texts are RETIRED — the phase cards'
+  // own heads + counts already communicate emptiness; a free-floating
+  // "no active tasks" line read as clutter and collided with the archive
+  // card's sticky head on expand.
   const foot = document.createElement("div");
   foot.className = "trellis-split-foot";
   foot.appendChild(createText(
@@ -2443,6 +2477,18 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
   expandAll.title = t("dashboardTrellisTreeExpandAll");
   expandAll.addEventListener("click", () => {
     trellisSplit.collapsedPaths.clear();
+    // LOCAL unfold (09-25 motion fix): flip classes on mounted rows — no
+    // rebuild, so carets rotate and rows slide back in.
+    if (trellisViewEl && typeof trellisViewEl.querySelectorAll === "function") {
+      for (const row of trellisViewEl.querySelectorAll(".trellis-split-row.is-subtree-folded")) {
+        row.classList.remove("is-subtree-folded");
+      }
+      for (const caret of trellisViewEl.querySelectorAll(".trellis-split-row .trellis-split-caret.is-collapsed")) {
+        caret.classList.remove("is-collapsed");
+        caret.setAttribute("aria-expanded", "true");
+      }
+      return;
+    }
     lastTrellisPanelSignature = null;
     renderTrellisViewBody();
   });
@@ -2454,6 +2500,21 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
   collapseAll.title = t("dashboardTrellisTreeCollapseAll");
   collapseAll.addEventListener("click", () => {
     for (const p of parentPaths) trellisSplit.collapsedPaths.add(p);
+    // LOCAL fold (09-25 motion fix): flip classes on mounted rows.
+    if (trellisViewEl && typeof trellisViewEl.querySelectorAll === "function") {
+      for (const row of trellisViewEl.querySelectorAll(".trellis-split-row")) {
+        const depth = Number(row.dataset.depth || "0");
+        if (depth > 0) row.classList.add("is-subtree-folded");
+        else {
+          const caret = row.querySelector(".trellis-split-caret");
+          if (caret && row.dataset.hasChildren === "true") {
+            caret.classList.add("is-collapsed");
+            caret.setAttribute("aria-expanded", "false");
+          }
+        }
+      }
+      return;
+    }
     lastTrellisPanelSignature = null;
     renderTrellisViewBody();
   });

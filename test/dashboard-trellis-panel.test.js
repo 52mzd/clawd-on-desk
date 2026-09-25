@@ -1284,8 +1284,10 @@ describe("dashboard trellis independent view", () => {
     await switchToTrellis(app);
     assert.equal(byClass(app.view, "trellis-root-row").length, 0);
     assert.ok(textOf(app.view).includes(i18n.en.dashboardTrellisRootsEmptyHint));
-    assert.ok(textOf(app.view).includes(i18n.en.dashboardTrellisActiveEmpty));
-    assert.ok(textOf(app.view).includes(i18n.en.dashboardTrellisArchivedEmpty));
+    // 09-25: the split-view empty hints (ActiveEmpty/ArchivedEmpty) are
+    // retired — the phase heads' own 0-counts communicate emptiness.
+    assert.ok(!textOf(app.view).includes(i18n.en.dashboardTrellisActiveEmpty));
+    assert.ok(!textOf(app.view).includes(i18n.en.dashboardTrellisArchivedEmpty));
     assert.ok(byClass(app.view, "trellis-view-add-root").length === 0,
       "no add-root button in the view — Settings owns add/remove");
   });
@@ -1415,10 +1417,12 @@ describe("dashboard trellis independent view", () => {
     assert.equal(monthToggle.attributes["aria-expanded"], "true", "newest month starts open");
 
     await monthToggle.dispatch("click");
-    assert.equal(byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-archived")).length, 0,
+    // 09-25 LOCAL folds: rows stay mounted and carry the fold class — the
+    // old "count rows" check became "count rows WITHOUT the fold class".
+    assert.equal(byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-archived") && !el.classList.contains("is-month-folded")).length, 0,
       "collapsing the month hides its rows");
     await byClass(app.view, "trellis-split-month-toggle")[0].dispatch("click");
-    assert.equal(byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-archived")).length, 1);
+    assert.equal(byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-archived") && !el.classList.contains("is-month-folded")).length, 1);
 
     // The archive group head carries its own ↻ refresh button.
     // Global refresh lives in the chip bar (09-25): one ↻ refreshes
@@ -1497,7 +1501,7 @@ describe("dashboard trellis independent view", () => {
     // selectable like any other row (split view renders into the pane).
     await carets[0].dispatch("click");
     assert.equal(
-      byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-child")).length,
+      byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-child") && !el.classList.contains("is-subtree-folded")).length,
       0,
       "folding the branch hides its child rows",
     );
@@ -1565,7 +1569,7 @@ describe("dashboard trellis independent view", () => {
     assert.equal(childRows().length, 1, "branches start expanded");
 
     await tools[1].dispatch("click");
-    assert.equal(childRows().length, 0, "collapse-all folds every branch");
+    assert.equal(childRows().filter((el) => !el.classList.contains("is-subtree-folded")).length, 0, "collapse-all folds every branch");
 
     await tools[0].dispatch("click");
     assert.equal(childRows().length, 1, "expand-all restores every branch");
@@ -1762,8 +1766,9 @@ describe("dashboard trellis project filter (rendering)", () => {
 
     await chips[2].dispatch("click");
     assert.equal(byClass(app.view, "trellis-task-row").length, 0);
-    assert.ok(textOf(app.view).includes(i18n.en.dashboardTrellisActiveEmpty));
-    assert.ok(textOf(app.view).includes(i18n.en.dashboardTrellisArchivedEmpty));
+    // 09-25: empty hint texts retired in the split view.
+    assert.ok(!textOf(app.view).includes(i18n.en.dashboardTrellisActiveEmpty));
+    assert.ok(!textOf(app.view).includes(i18n.en.dashboardTrellisArchivedEmpty));
   });
 
   it("falls back to All when the selected root gets unregistered", async () => {

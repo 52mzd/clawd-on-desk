@@ -1216,6 +1216,27 @@ h1 {
 
 /* ── Left master list (fixed width, tinted) ─────────────────────── */
 
+/* LOCAL fold states (09-25 motion fix, take 2): rows always MOUNT so
+   carets rotate in place, but folding uses display:none — the earlier
+   max-height:0 + margin-top:-6px trick mis-compensated the card gap
+   (2px) and rows visually overlapped neighbors on expand. Caret rotation
+   is the surviving motion; row reveal is instant (KISS, no layout tricks).
+   Keyboard nav still finds rows (they exist in the DOM). */
+.trellis-split-row.is-subtree-folded,
+.trellis-split-row.is-month-folded {
+  display: none;
+}
+
+.trellis-split-row {
+  transition: background-color var(--dur-1) var(--ease-out-apple);
+}
+
+/* Phase card fold (09-25): hides the card's rows (not the head) so the
+   fold toggles on class flip without a rebuild. */
+.trellis-split-phase-card.is-folded > .trellis-split-row {
+  display: none;
+}
+
 .trellis-split-list {
   /* Continuous narrow-window behavior (09-25): flex-shrink 1 — when the
      window narrows, the LEFT rail yields first (344→240px) so the detail
