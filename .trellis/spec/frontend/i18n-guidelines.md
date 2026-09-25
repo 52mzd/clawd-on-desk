@@ -1,6 +1,6 @@
 # i18n Guidelines
 
-> `src/i18n.js` 单文件七语言（en/zh/zh-TW/ko/ja/pt-BR/es）。新键七块全加，漏一块运行时丢文案。
+> `src/i18n.js`（dashboard 窗口）与 `src/settings-i18n.js`（settings 窗口）各为单文件七语言（en/zh/zh-TW/ko/ja/pt-BR/es）。新键七块全加，漏一块运行时丢文案。
 
 ---
 
@@ -25,6 +25,11 @@
   语言无关字符可硬编码）
 - ❌ 批量脚本按单行 pattern 替换 i18n/测试文件——locale 块内行重复率高，必须带
   上下文锚定（见 cross-layer guide Mistake 9）
+- ❌ 按值子串定位插入点（09-25 事故）：`trellisUpgrade: "…"` 这样的值匹配正则会
+  命中**另一键字符串内部**的相同文案（ja 的 trellisStaleFix 长句里含同样词），
+  新键被拼进句子中间、整个文件语法损坏。插入/替换必须整行锚定：
+  `^(\s*)keyName: "value",\s*$`（^ 和 $ 缺一不可），插完立刻
+  `node --check` + 按语言块计数验证
 
 ## 大小与维护
 
