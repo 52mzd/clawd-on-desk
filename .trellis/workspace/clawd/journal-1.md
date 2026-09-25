@@ -506,3 +506,30 @@ v5 可读性重构：① v5-a 8ff9c9aa 弹窗三卡（detail/spec/network）从 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 17: Dashboard apple-design 重构（P1-P4 + R7 卡片族统一）
+
+**Date**: 2026-09-25
+**Task**: Dashboard apple-design 重构（P1-P4 + R7 卡片族统一）
+**Branch**: `main`
+
+### Summary
+
+按 apple-design 体系重构 Dashboard 视觉层：P1 token scale（radius/shadow/motion/material 五组亮暗双套，border-radius 76 处收敛）+ 排版负 tracking；P2 材质深度（卡片 shadow 分级、badge color-mix tint、overlay scrim blur、prefers-reduced-transparency 兜底）；P3 动效系统（:active 即时反馈、新增卡一次性入场 is-entering、首帧整列表淡入、统一 reduced-motion cross-fade，vm 沙箱 timer 惰性探测）；R7 左栏/会话内 trellis 卡片族统一（phase 卡片化、grouped-list 行、月份头同解剖、空卡跳过、左栏可拖宽 240-480px）；交互修复（全部项目同名任务 (path,cwd) 二元组选中身份、折叠后选中行 scrollIntoView 回归）；全局刷新前置于 chip bar、管理根项目移至 Settings；CSS 结构静态守卫 3 条 + spec 契约沉淀（卡片族表、vm DOM 方法黑名单、localStorage 守卫）。npm test 失败集合与存量基线全程一致。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9e0e100d` | (see git log) |
+| `c1cbb527` | (see git log) |
+| `778978ae` | (see git log) |
+| `faa51981` | (see git log) |
+| `27342409` | (see git log) |
+| `922d62db` | (see git log) |
+| `928e71ee` | (see git log) |
+
+### Status
+
+[OK] **Completed**

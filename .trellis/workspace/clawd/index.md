@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 16
+- **Total Sessions**: 17
 - **Last Active**: 2026-09-25
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~508 | Active |
+| `journal-1.md` | ~535 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 17 | 2026-09-25 | Dashboard apple-design 重构（P1-P4 + R7 卡片族统一） | `9e0e100d`, `c1cbb527`, `778978ae`, `faa51981`, `27342409`, `922d62db`, `928e71ee` | `main` |
 | 16 | 2026-09-25 | Trellis UI 重设计 + 四轮交互打磨（R1-R4） | `bb7d2de3`, `0f205988`, `5d2e3e3f`, `4b8759b7`, `cafacdff`, `dc696eb1`, `eef3683d`, `daa74e33`, `44b6df9e`, `67ead01d` | `main` |
 | 15 | 2026-09-24 | v7 split 单视图全弧线：R1去树形 → R8项目级关联+spec内嵌 → R10左栏分组定稿 + 两轮回归修复 | `85398dec`, `d307a492`, `0826d4a9`, `6f0b64b9`, `0f894c07`, `efa1c5e4`, `cbd78fa4`, `3fa1b200`, `9b2dedeb`, `fc549df7`, `f6d4166d` | `main` |
 | 14 | 2026-09-23 | v6.1 split 视图华丽化落地 | `00dd64a4`, `4ea84dd8`, `2e4a7ae4`, `f58c1108`, `9d4e29e2`, `58e94b66` | `main` |
