@@ -2369,6 +2369,13 @@ h1 {
   color: var(--muted);
 }
 
+/* Fold-card headings set display:flex, which BEATS the [hidden]
+   attribute in the cascade — collapsed parents would leave nested h3
+   cards visible ("有些点击不会折叠"). Force hidden to win. */
+[hidden] {
+  display: none !important;
+}
+
 .md-heading-collapsible {
   cursor: pointer;
   user-select: none;

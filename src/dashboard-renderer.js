@@ -3226,6 +3226,9 @@ function buildTrellisSpecDocContent(relPath) {
   if (entry.result && entry.result.status === "ok") {
     const rendered = renderMarkdownDoc(trellisDocBuilder, entry.result.content || "");
     pane.appendChild(rendered.root);
+    // R4 fix: spec-doc pane never wired collapse handlers — headings in
+    // spec files rendered via this path were not clickable at all.
+    wireTrellisDocCollapse(rendered.root);
     if (rendered.truncated) {
       pane.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisDocTruncated")));
     }
