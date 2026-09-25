@@ -533,3 +533,26 @@ v5 可读性重构：① v5-a 8ff9c9aa 弹窗三卡（detail/spec/network）从 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 18: Settings Trellis 安装向导 + dry-run 升级预览 + 平台证据并集
+
+**Date**: 2026-09-25
+**Task**: Settings Trellis 安装向导 + dry-run 升级预览 + 平台证据并集
+**Branch**: `main`
+
+### Summary
+
+Settings → Trellis 页全面向导化：新增 ClawdTrellisWizard modal（安装平台 checkbox→预览→执行 / 升级预览=真实 trellis update --dry-run 输出+版本计划→确认升级），替换旧内联 addTarget 面板与直达升级；项目行平台 chip 化（仅已注册 accent tint chip+stale ⚠，未注册平台移入向导）。CLI 契约修复三条：trellis init 必带 -u <文件夹名>（否则 CLI 失败）；CLI 0.7.0-beta.4 起不写平台进 template-hashes → readPlatforms 改 platformsOfUnion(hashes∪目录并集)，12345 项目实测修复；add-platform IPC 移除 isTrellisProject 门禁支持首装。全局 CLI 卡合并（远程版本+刷新+频道+升级一卡，删重复 desc 与重复频道下拉），进 tab 自动扫描一次。dryRunUpdate 带 .version 快照恢复守卫。spec 沉淀三条：状态文件=版本化契约（多源证据判据）、i18n 插键整行锚定（值子串正则事故）、CLI 三契约。npm test 失败集合与存量基线全程一致。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4c7ddcc4` | (see git log) |
+| `e9d1ee5d` | (see git log) |
+| `737f9bb2` | (see git log) |
+
+### Status
+
+[OK] **Completed**
