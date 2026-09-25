@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 18
-- **Last Active**: 2026-09-25
+- **Total Sessions**: 19
+- **Last Active**: 2026-09-26
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~558 | Active |
+| `journal-1.md` | ~581 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 19 | 2026-09-26 | Trellis 折叠动画真机修复 + 宠物行为关联图谱 | `acb422fb`, `d8559a6f`, `0f1a6a22` | `main` |
 | 18 | 2026-09-25 | Settings Trellis 安装向导 + dry-run 升级预览 + 平台证据并集 | `4c7ddcc4`, `e9d1ee5d`, `737f9bb2` | `main` |
 | 17 | 2026-09-25 | Dashboard apple-design 重构（P1-P4 + R7 卡片族统一） | `9e0e100d`, `c1cbb527`, `778978ae`, `faa51981`, `27342409`, `922d62db`, `928e71ee` | `main` |
 | 16 | 2026-09-25 | Trellis UI 重设计 + 四轮交互打磨（R1-R4） | `bb7d2de3`, `0f205988`, `5d2e3e3f`, `4b8759b7`, `cafacdff`, `dc696eb1`, `eef3683d`, `daa74e33`, `44b6df9e`, `67ead01d` | `main` |

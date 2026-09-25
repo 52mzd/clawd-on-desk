@@ -556,3 +556,26 @@ Settings → Trellis 页全面向导化：新增 ClawdTrellisWizard modal（安�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 19: Trellis 折叠动画真机修复 + 宠物行为关联图谱
+
+**Date**: 2026-09-26
+**Task**: Trellis 折叠动画真机修复 + 宠物行为关联图谱
+**Branch**: `main`
+
+### Summary
+
+Trellis 折叠动画两轮修复。acb422fb 首版改局部 class 翻转，但真机从未生效：Element.children 是 HTMLCollection、Array.isArray() 恒 false，子树折叠 100% 落进整树重建回退；沙箱 FakeElement.children 是数组、走同一条回退路径，测试与真机「一致地都错」，全绿骗过审查。经独立审查（Electron 实测 + 逆向验证）推翻后由 0f1a6a22 重修：探测条件改为 parent.children 存在性判断、归一化下沉到 applySubtreeFold() 内部 Array.from；折叠 class 记账收敛（行显隐与 caret 旋转职责分离，点击/重建/expand-all/collapse-all 四处写同一套，删零消费者裸类）；新增 syncTrellisViewSignature() 防 1s tick 把存储态当新数据整树重建；行常驻 DOM 后补 isTrellisRowVisible() 可见性过滤（↑/↓、Enter、选中行查找、滚动聚焦目标）；修 archive 分支 renderSubtree 第 4 参导致的子行重建后复活；清 pendingPhaseReveal 死代码、14 个死 i18n 键（整行锚定）、一条重复 transition 声明。测试 dashboard-trellis-panel 72/72，新增 DOM 节点复用断言、跨 1s tick 复用断言、类 HTMLCollection stub 直测、键盘导航落地行断言，以及两条静态断言（禁 Array.isArray(…children) 形态、禁 row/caret 上的 is-folded），全部经逆向验证（注入错误形态即变红）；沙箱 FakeElement 补最小 parentNode/querySelector(All) 使折叠局部路径与导航真正可测。另有 d8559a6f 沉淀宠物行为 × Trellis 关联图谱到 agent-runtime-architecture（五条通道 + 五条边界）与 theme-state-ui（juggling 双来源）。全量 npm test 与 macOS 存量失败基线 26 条逐个一致，零新增失败；动画手感 / reduced-motion 观感 / 深色模式仍属人工目视项。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `acb422fb` | (see git log) |
+| `d8559a6f` | (see git log) |
+| `0f1a6a22` | (see git log) |
+
+### Status
+
+[OK] **Completed**
