@@ -1564,6 +1564,18 @@ function renderTrellisViewBody() {
   renderTrellisView();
 }
 
+// An in-place (LOCAL) fold updates the DOM without going through
+// renderTrellisView — but `collapsedPaths` / `archive.openMonths` still
+// live in the structural signature. Leaving it stale makes the next 1s
+// tick read the stored state as "new structure" and rebuild the whole
+// list, which silently undoes the point of the local path (in-flight CSS
+// transitions are cut, row nodes / focus are thrown away). Refreshing the
+// signature after a successful local mutation keeps it describing the
+// LIVE DOM, so a rebuild really only happens when the DATA changed (A1).
+function syncTrellisViewSignature() {
+  lastTrellisViewSignature = computeTrellisViewSignature();
+}
+
 // v6 master-detail split state. Session-level, never persisted. Entry
 // stagger is one-shot (flag consumed by the builder); archive group starts
 // collapsed every session.
@@ -1614,9 +1626,68 @@ function trellisTaskKey(taskPath, cwd) {
   return `${taskPath}\u0000${cwd || ""}`;
 }
 
+// LOCAL-fold visibility (09-25 motion fix, take 3): rows ALWAYS mount now,
+// so `querySelectorAll` keeps handing back folded rows — `display:none`
+// does not remove a node from the tree. Two class roles, deliberately
+// separate (merging them would break either hiding or rotation):
+//   - HIDING: `.is-subtree-folded` / `.is-month-folded` on the row,
+//     `.is-folded` on the owning phase card (child selector).
+//   - ROTATION: `.is-collapsed` on the row (CSS anchor is
+//     `.trellis-split-row.is-collapsed .trellis-split-caret`).
+// A folded phase card hides by CHILD selector, hence the ancestor walk;
+// parentNode is missing on detached/vm-stub nodes, so it is probed.
+function isTrellisRowVisible(row) {
+  if (!row || !row.classList) return false;
+  if (row.classList.contains("is-subtree-folded") || row.classList.contains("is-month-folded")) return false;
+  let node = row.parentNode || null;
+  while (node) {
+    if (node.classList && node.classList.contains("trellis-split-phase-card")
+      && node.classList.contains("is-folded")) return false;
+    node = node.parentNode || null;
+  }
+  return true;
+}
+
+function visibleTrellisRows(rows) {
+  return Array.from(rows || []).filter(isTrellisRowVisible);
+}
+
+// Sibling walk for a LOCAL subtree fold (09-25 motion fix, take 3): the
+// real Electron DOM hands out an HTMLCollection — `Array.isArray()` is
+// ALWAYS false and there is no `indexOf`, which is exactly why the first
+// attempt silently fell back to a full tree rebuild (no caret rotation).
+// `Array.from()` normalizes both an HTMLCollection and a plain array.
+// Returns the rows it touched (classList is the only side effect) so the
+// scan stays directly testable with an array-like stub.
+function applySubtreeFold(childrenLike, row, folded) {
+  const touched = [];
+  if (!row) return touched;
+  const siblings = Array.from(childrenLike || []);
+  const start = siblings.indexOf(row) + 1;
+  if (start <= 0) return touched;
+  const myDepth = Number(row.dataset.depth || "0");
+  for (let k = start; k < siblings.length; k++) {
+    const node = siblings[k];
+    if (!node || !node.classList || !node.classList.contains("trellis-split-row")) break;
+    if (Number(node.dataset.depth || "0") <= myDepth) break;
+    node.classList.toggle("is-subtree-folded", folded);
+    touched.push(node);
+  }
+  return touched;
+}
+
+// Task-row query shared by the keyboard cursor, Enter activation and the
+// post-rebuild focus re-query. Returns [] (never throws) in the vm sandbox.
+function readTrellisTaskRows() {
+  if (!trellisViewEl || typeof trellisViewEl.querySelectorAll !== "function") return [];
+  return trellisViewEl.querySelectorAll(".trellis-split-row[data-task-path]");
+}
+
 function findTrellisSelectedRow() {
   if (!trellisViewEl || typeof trellisViewEl.querySelectorAll !== "function") return null;
   for (const row of trellisViewEl.querySelectorAll(".trellis-split-row")) {
+    // Folded rows are still mounted: never reveal/scroll/focus one.
+    if (!isTrellisRowVisible(row)) continue;
     if (row.dataset.taskPath !== undefined) {
       if (
         trellisSplit.detailKind === "task"
@@ -1658,7 +1729,9 @@ function renderTrellisSplitSelectionOnly() {
         && row.dataset.networkKey === trellisSplit.networkGroupKey;
     }
     row.classList.toggle("is-selected", selected);
-    if (selected) targetRow = row;
+    // Only a VISIBLE row becomes the scroll/focus target — a selected row
+    // inside a folded subtree must not steal the focus ring.
+    if (selected && isTrellisRowVisible(row)) targetRow = row;
   }
 
   // 2) Rebuild just the right pane. Same builder as the full path, so
@@ -1736,17 +1809,35 @@ function toggleTrellisSplitArchive() {
 function toggleTrellisSplitPhase(phase) {
   if (trellisSplit.collapsedPhases.has(phase)) trellisSplit.collapsedPhases.delete(phase);
   else trellisSplit.collapsedPhases.add(phase);
-  const card = trellisViewEl && typeof trellisViewEl.querySelector === "function"
-    ? trellisViewEl.querySelector(`.trellis-split-phase-card[data-phase="${CSS.escape(phase)}"]`)
-    : null;
+  const folded = trellisSplit.collapsedPhases.has(phase);
+  // Class-scan instead of a `[data-phase]` attribute selector: the phase
+  // ids are a closed set, and the vm sandbox has no CSS.escape.
+  const cards = trellisViewEl && typeof trellisViewEl.querySelectorAll === "function"
+    ? trellisViewEl.querySelectorAll(".trellis-split-phase-card")
+    : [];
+  let card = null;
+  for (const el of cards) {
+    if (el.dataset && el.dataset.phase === phase) card = el;
+  }
   if (card) {
-    const folded = trellisSplit.collapsedPhases.has(phase);
+    // Row HIDING is the CARD class; caret ROTATION is written on the head
+    // AND its toggle button — both are live CSS anchors (dashboard.html
+    // .trellis-split-group-head.is-collapsed and
+    // .trellis-split-group-toggle.is-collapsed), and the rebuild path
+    // writes both too.
     card.classList.toggle("is-folded", folded);
-    const toggle = card.querySelector(".trellis-split-group-toggle");
-    if (toggle) {
-      toggle.classList.toggle("is-collapsed", folded);
-      toggle.setAttribute("aria-expanded", String(!folded));
+    const writeCaretState = (el) => {
+      if (el) el.classList.toggle("is-collapsed", folded);
+    };
+    if (typeof card.querySelector === "function") {
+      writeCaretState(card.querySelector(".trellis-split-group-head"));
     }
+    const toggle = typeof card.querySelector === "function"
+      ? card.querySelector(".trellis-split-group-toggle")
+      : null;
+    writeCaretState(toggle);
+    if (toggle) toggle.setAttribute("aria-expanded", String(!folded));
+    syncTrellisViewSignature();
     return;
   }
   // Card not mounted yet (first render races) — fall back to a rebuild.
@@ -1755,15 +1846,16 @@ function toggleTrellisSplitPhase(phase) {
 }
 
 // Keyboard navigation across the VISIBLE rows in group order — derived
-// from the DOM so it can never drift from what is actually rendered
-// (collapsed archive group simply has no rows in the DOM).
+// from the DOM so it can never drift from what is actually rendered.
+// Rows are always MOUNTED since the local-fold fix, so "visible" has to be
+// computed: folded subtrees, folded months and rows inside a folded phase
+// card are skipped (otherwise ↓ selects a display:none row and the list
+// looks frozen while the right pane silently swaps).
 function moveTrellisSplitSelection(delta) {
-  const rows = trellisViewEl
-    ? trellisViewEl.querySelectorAll(".trellis-split-row[data-task-path]")
-    : [];
+  const rows = visibleTrellisRows(readTrellisTaskRows());
   if (rows.length === 0) return;
-  const paths = [...rows].map((r) => r.dataset.taskPath);
-  const cwds = [...rows].map((r) => r.dataset.taskCwd || "");
+  const paths = rows.map((r) => r.dataset.taskPath);
+  const cwds = rows.map((r) => r.dataset.taskCwd || "");
   const index = paths.findIndex(
     (p, i) => p === trellisSplit.selectedTaskPath && cwds[i] === (trellisSplit.selectedTaskCwd || "")
   );
@@ -1778,9 +1870,7 @@ function moveTrellisSplitSelection(delta) {
     // test sandbox elements have no focus()); this query re-focuses the
     // node in place after a structural fallback rebuild, and is an
     // idempotent no-op otherwise.
-    const focused = trellisViewEl
-      ? trellisViewEl.querySelectorAll(".trellis-split-row[data-task-path]")[nextIndex]
-      : null;
+    const focused = visibleTrellisRows(readTrellisTaskRows())[nextIndex] || null;
     if (focused && typeof focused.focus === "function") focused.focus();
   }
 }
@@ -1884,10 +1974,6 @@ function buildTrellisSplitRow(task, meta, labels, archived = false) {
     // Fold-state mirror for expand/collapse-all LOCAL paths (09-25):
     // hasChildren rides on the row so bulk folds can find group heads.
     row.dataset.hasChildren = "true";
-    if (trellisSplit.collapsedPaths.has(task.taskPath)) {
-      caret.classList.add("is-collapsed");
-      row.classList.add("is-folded");
-    }
     caret.setAttribute("aria-label", t("dashboardTrellisSplitToggle"));
     caret.setAttribute("aria-expanded", String(!trellisSplit.collapsedPaths.has(task.taskPath)));
     caret.appendChild(iconSvg("caret", 12));
@@ -1896,23 +1982,20 @@ function buildTrellisSplitRow(task, meta, labels, archived = false) {
       const nowFolded = !trellisSplit.collapsedPaths.has(task.taskPath);
       if (nowFolded) trellisSplit.collapsedPaths.add(task.taskPath);
       else trellisSplit.collapsedPaths.delete(task.taskPath);
-      row.classList.toggle("is-folded", nowFolded);
-      caret.classList.toggle("is-collapsed", nowFolded);
+      // Caret ROTATION anchors on the ROW (dashboard.html:
+      // `.trellis-split-row.is-collapsed .trellis-split-caret`); the caret
+      // button itself only carries the aria state.
+      row.classList.toggle("is-collapsed", nowFolded);
       caret.setAttribute("aria-expanded", String(!nowFolded));
-      // LOCAL fold (09-25 motion fix): walk the parent's children when the
-      // DOM supports it (real browser); the vm sandbox lacks parentNode —
-      // fall back to a rebuild there, behavior stays correct.
+      // LOCAL fold (09-25 motion fix, take 3): walk the parent's children.
+      // `parent.children` is an HTMLCollection on the real Electron DOM and
+      // applySubtreeFold normalizes it via Array.from. A detached row (vm
+      // sandbox) has no parentNode — rebuild there: correct behavior, just
+      // without the in-place motion.
       const parent = row.parentNode;
-      if (parent && Array.isArray(parent.children)) {
-        const siblings = parent.children;
-        const myDepth = Number(row.dataset.depth || "0");
-        const start = siblings.indexOf(row) + 1;
-        for (let k = start; k < siblings.length; k++) {
-          const node = siblings[k];
-          if (!node.classList || !node.classList.contains("trellis-split-row")) break;
-          if (Number(node.dataset.depth || "0") <= myDepth) break;
-          node.classList.toggle("is-subtree-folded", nowFolded);
-        }
+      if (parent && parent.children) {
+        applySubtreeFold(parent.children, row, nowFolded);
+        syncTrellisViewSignature();
         return;
       }
       lastTrellisPanelSignature = null;
@@ -2401,6 +2484,7 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
           monthHead.classList.toggle("is-collapsed", !open);
           monthToggle.setAttribute("aria-expanded", String(open));
           for (const r of monthRows) r.classList.toggle("is-month-folded", !open);
+          syncTrellisViewSignature();
         });
         monthHead.appendChild(monthToggle);
         // 09-25 motion fix, sandbox-safe: collect THIS month's rows in a
@@ -2418,7 +2502,20 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
           monthRows.push(row);
           groupEl.appendChild(row);
           if (rootMeta.hasChildren) parentPaths.push(rootMeta.task.taskPath);
-          renderSubtree(subtree, 1, rootMeta.depth, true, true, monthOpen, monthRows);
+          // Archive sub-rows follow the SAME collapsedPaths contract as the
+          // active branch: passing a constant `true` leaked the direct
+          // children of a folded archive root back into view after any
+          // rebuild (poll / chip switch / refresh) while deeper rows stayed
+          // hidden (09-25 review).
+          renderSubtree(
+            subtree,
+            1,
+            rootMeta.depth,
+            !trellisSplit.collapsedPaths.has(rootMeta.task.taskPath),
+            true,
+            monthOpen,
+            monthRows
+          );
         }
       }
       listPane.appendChild(groupEl);
@@ -2443,22 +2540,14 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
     groupIndex += 1;
   }
 
-  // Reveal-on-expand (09-25): after a full listPane rebuild, scroll the
-  // selected row (or the expanded phase's first row) back into view so
-  // expanding a deep group does not strand the viewport at the top.
-  if (trellisSplit.pendingPhaseReveal) {
-    const card = listPane.querySelector(`.trellis-split-phase-card[data-phase="${CSS.escape(trellisSplit.pendingPhaseReveal)}"]`);
-    const target = (trellisSplit.detailKind === "task" && trellisSplit.selectedTaskPath
-      && findTrellisSelectedRow())
-      || (card && card.querySelector(".trellis-split-row"));
-    if (target && typeof target.scrollIntoView === "function") {
-      target.scrollIntoView({ block: "nearest" });
-    }
-  }
   // (09-25) The empty-state hint texts are RETIRED — the phase cards'
   // own heads + counts already communicate emptiness; a free-floating
   // "no active tasks" line read as clutter and collided with the archive
   // card's sticky head on expand.
+  // (09-25 review) The reveal-on-expand hook (`pendingPhaseReveal`) went
+  // with it: folds are LOCAL now (no rebuild → no scroll loss), and
+  // renderTrellisView already saves/restores `.trellis-split-list`
+  // scrollTop across the rebuilds that remain.
   const foot = document.createElement("div");
   foot.className = "trellis-split-foot";
   foot.appendChild(createText(
@@ -2478,15 +2567,21 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
   expandAll.addEventListener("click", () => {
     trellisSplit.collapsedPaths.clear();
     // LOCAL unfold (09-25 motion fix): flip classes on mounted rows — no
-    // rebuild, so carets rotate and rows slide back in.
+    // rebuild, so carets rotate and rows come back in place. Row HIDING
+    // (`.is-subtree-folded`) and caret ROTATION (`.is-collapsed` on the
+    // row) are SEPARATE classes; both must clear or the caret keeps
+    // pointing at the folded state after expand-all.
     if (trellisViewEl && typeof trellisViewEl.querySelectorAll === "function") {
-      for (const row of trellisViewEl.querySelectorAll(".trellis-split-row.is-subtree-folded")) {
+      for (const row of trellisViewEl.querySelectorAll(".trellis-split-row")) {
         row.classList.remove("is-subtree-folded");
+        if (row.dataset.hasChildren !== "true") continue;
+        row.classList.remove("is-collapsed");
+        const caret = typeof row.querySelector === "function"
+          ? row.querySelector(".trellis-split-caret")
+          : null;
+        if (caret) caret.setAttribute("aria-expanded", "true");
       }
-      for (const caret of trellisViewEl.querySelectorAll(".trellis-split-row .trellis-split-caret.is-collapsed")) {
-        caret.classList.remove("is-collapsed");
-        caret.setAttribute("aria-expanded", "true");
-      }
+      syncTrellisViewSignature();
       return;
     }
     lastTrellisPanelSignature = null;
@@ -2500,19 +2595,20 @@ function buildTrellisSplitSection(activeTasks, archiveTasks) {
   collapseAll.title = t("dashboardTrellisTreeCollapseAll");
   collapseAll.addEventListener("click", () => {
     for (const p of parentPaths) trellisSplit.collapsedPaths.add(p);
-    // LOCAL fold (09-25 motion fix): flip classes on mounted rows.
+    // LOCAL fold (09-25 motion fix): row HIDING = `.is-subtree-folded` on
+    // every nested row; caret ROTATION = `.is-collapsed` on the parent rows
+    // themselves (CSS anchors the rotation on the row, not the caret).
     if (trellisViewEl && typeof trellisViewEl.querySelectorAll === "function") {
       for (const row of trellisViewEl.querySelectorAll(".trellis-split-row")) {
-        const depth = Number(row.dataset.depth || "0");
-        if (depth > 0) row.classList.add("is-subtree-folded");
-        else {
-          const caret = row.querySelector(".trellis-split-caret");
-          if (caret && row.dataset.hasChildren === "true") {
-            caret.classList.add("is-collapsed");
-            caret.setAttribute("aria-expanded", "false");
-          }
-        }
+        if (Number(row.dataset.depth || "0") > 0) row.classList.add("is-subtree-folded");
+        if (row.dataset.hasChildren !== "true") continue;
+        row.classList.add("is-collapsed");
+        const caret = typeof row.querySelector === "function"
+          ? row.querySelector(".trellis-split-caret")
+          : null;
+        if (caret) caret.setAttribute("aria-expanded", "false");
       }
+      syncTrellisViewSignature();
       return;
     }
     lastTrellisPanelSignature = null;
@@ -5055,9 +5151,7 @@ async function init() {
         event.preventDefault();
         moveTrellisSplitSelection(1);
       } else if (event.key === "Enter") {
-        const rows = trellisViewEl
-          ? trellisViewEl.querySelectorAll(".trellis-split-row[data-task-path]")
-          : [];
+        const rows = visibleTrellisRows(readTrellisTaskRows());
         for (const row of rows) {
           if (row.classList.contains("is-selected")) {
             event.preventDefault();

@@ -332,6 +332,37 @@ class FakeClassList {
   }
 }
 
+// Non-enumerable so a stray deepEqual/JSON.stringify on an element can
+// never walk the whole tree back up through its parents (cycles).
+function linkParent(child, parent) {
+  if (!child || typeof child !== "object") return;
+  Object.defineProperty(child, "parentNode", {
+    value: parent, writable: true, configurable: true, enumerable: false,
+  });
+}
+
+// Selector subset the dashboard renderer actually uses: `.class`,
+// `.class[attr]`, `.class[attr="value"]` and the descendant combinator.
+// `data-*` attributes are matched through dataset too, because FakeElement
+// does not mirror dataset writes into `attributes` the way the real DOM
+// does. Unknown syntax simply does not match (a silent miss is fine here —
+// the empty result is what a wrong selector produces in the browser too).
+function selectorCompoundMatches(el, compound) {
+  if (!el || !el.classList) return false;
+  for (const cls of compound.match(/\.[A-Za-z0-9_-]+/g) || []) {
+    if (!el.classList.contains(cls.slice(1))) return false;
+  }
+  for (const [, name, value] of compound.matchAll(/\[([A-Za-z0-9_-]+)(?:="([^"]*)")?\]/g)) {
+    const camel = name.replace(/^data-/, "").replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+    const actual = el.attributes[name] !== undefined
+      ? el.attributes[name]
+      : el.dataset[camel];
+    if (actual === undefined) return false;
+    if (value !== undefined && String(actual) !== value) return false;
+  }
+  return true;
+}
+
 class FakeElement {
   constructor(tagName) {
     this.tagName = String(tagName).toUpperCase();
@@ -346,8 +377,37 @@ class FakeElement {
     this.style = { setProperty() {} };
     this.dataset = {};
   }
-  appendChild(child) { this.children.push(child); return child; }
-  replaceChildren(...children) { this.children = children; }
+  appendChild(child) {
+    this.children.push(child);
+    linkParent(child, this);
+    return child;
+  }
+  replaceChildren(...children) {
+    this.children = children;
+    for (const child of children) linkParent(child, this);
+  }
+  // 09-25: the fold/keyboard paths (isTrellisRowVisible, applySubtreeFold,
+  // moveTrellisSplitSelection) need parentNode + querySelectorAll to run
+  // at all. Without them the tests silently took the rebuild fallback —
+  // "consistent" with the broken-vs-correct split but never exercising it.
+  querySelectorAll(selector) {
+    const chain = String(selector).trim().split(/\s+/);
+    const last = chain[chain.length - 1];
+    return descendants(this).filter((el) => {
+      if (!selectorCompoundMatches(el, last)) return false;
+      let node = el.parentNode || null;
+      for (let i = chain.length - 2; i >= 0; i--) {
+        let found = false;
+        while (node) {
+          if (selectorCompoundMatches(node, chain[i])) { found = true; node = node.parentNode || null; break; }
+          node = node.parentNode || null;
+        }
+        if (!found) return false;
+      }
+      return true;
+    });
+  }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
   setAttribute(name, value) { this.attributes[name] = String(value); }
   addEventListener(name, listener) {
     if (!this.listeners.has(name)) this.listeners.set(name, []);
@@ -552,6 +612,9 @@ function loadDashboard({
     panel: elements.get("trellisPanel"),
     overlay: elements.get("trellisDetailOverlay"),
     view: elements.get("trellisView"),
+    // Renderer module scope, for the pure fold helpers (applySubtreeFold /
+    // isTrellisRowVisible) — they are DOM-shape logic, not DOM plumbing.
+    sandbox: context,
     content: elements.get("content"),
     titleEl: elements.get("title"),
     trellisTab: elements.get("viewTrellisTab"),
@@ -1285,9 +1348,8 @@ describe("dashboard trellis independent view", () => {
     assert.equal(byClass(app.view, "trellis-root-row").length, 0);
     assert.ok(textOf(app.view).includes(i18n.en.dashboardTrellisRootsEmptyHint));
     // 09-25: the split-view empty hints (ActiveEmpty/ArchivedEmpty) are
-    // retired — the phase heads' own 0-counts communicate emptiness.
-    assert.ok(!textOf(app.view).includes(i18n.en.dashboardTrellisActiveEmpty));
-    assert.ok(!textOf(app.view).includes(i18n.en.dashboardTrellisArchivedEmpty));
+    // retired — the phase heads' own 0-counts communicate emptiness. The
+    // i18n keys themselves were deleted, so nothing to assert here.
     assert.ok(byClass(app.view, "trellis-view-add-root").length === 0,
       "no add-root button in the view — Settings owns add/remove");
   });
@@ -1496,6 +1558,9 @@ describe("dashboard trellis independent view", () => {
     const carets = byClass(app.view, "trellis-split-caret");
     assert.equal(carets.length, 1, "only the branch row carries a caret");
     assert.equal(carets[0].attributes["aria-expanded"], "true");
+    const branchRow = byClass(app.view, "trellis-split-row").find(
+      (el) => el.dataset.hasChildren === "true",
+    );
 
     // v7: the caret is the only fold affordance; the branch row itself is
     // selectable like any other row (split view renders into the pane).
@@ -1506,6 +1571,27 @@ describe("dashboard trellis independent view", () => {
       "folding the branch hides its child rows",
     );
     assert.equal(byClass(app.view, "trellis-split-caret")[0].attributes["aria-expanded"], "false");
+    // 09-25 review: the "hidden state" assertion above is green on BOTH
+    // paths — a full rebuild re-applies the fold class too. Only node
+    // identity proves the LOCAL path ran (and that the CSS caret
+    // transition got a surviving element with a from→to pair).
+    assert.equal(
+      byClass(app.view, "trellis-split-row").find((el) => el.classList.contains("is-child")),
+      kidRows[0],
+      "the child row node must be REUSED, not rebuilt",
+    );
+    assert.equal(byClass(app.view, "trellis-split-caret")[0], carets[0], "the caret node is reused too");
+    assert.ok(branchRow.classList.contains("is-collapsed"),
+      "caret rotation anchors on the ROW (.trellis-split-row.is-collapsed)");
+    // …and the 1s tick must not mistake the local fold for new data and
+    // rebuild the tree: the structural signature has to stay in sync or the
+    // local path's work is thrown away one tick later.
+    app.tickRender();
+    assert.equal(
+      byClass(app.view, "trellis-split-row").find((el) => el.classList.contains("is-child")),
+      kidRows[0],
+      "the 1s tick keeps the folded row mounted (no rebuild after a local fold)",
+    );
 
     await byClass(app.view, "trellis-split-caret")[0].dispatch("click");
     assert.equal(
@@ -1513,6 +1599,13 @@ describe("dashboard trellis independent view", () => {
       1,
       "the caret alone re-expands the subtree",
     );
+    assert.equal(
+      byClass(app.view, "trellis-split-row").find((el) => el.classList.contains("is-child")),
+      kidRows[0],
+      "the same child node comes back on expand",
+    );
+    assert.ok(!branchRow.classList.contains("is-collapsed"),
+      "expanding clears the row's caret rotation class");
 
     // A leaf row keeps the v2 click semantics: render its detail.
     const leafRow = byClass(app.view, "trellis-split-row").filter(
@@ -1567,12 +1660,183 @@ describe("dashboard trellis independent view", () => {
     const childRows = () =>
       byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-child"));
     assert.equal(childRows().length, 1, "branches start expanded");
+    const branchRow = byClass(app.view, "trellis-split-row").find(
+      (el) => el.dataset.hasChildren === "true",
+    );
+    const keptChild = childRows()[0];
 
     await tools[1].dispatch("click");
     assert.equal(childRows().filter((el) => !el.classList.contains("is-subtree-folded")).length, 0, "collapse-all folds every branch");
+    assert.equal(childRows()[0], keptChild, "collapse-all must reuse the mounted row, not rebuild");
+    assert.ok(branchRow.classList.contains("is-collapsed"),
+      "collapse-all rotates the caret via the ROW class (it only wrote the caret before)");
+    assert.equal(byClass(app.view, "trellis-split-caret")[0].attributes["aria-expanded"], "false");
 
     await tools[0].dispatch("click");
     assert.equal(childRows().length, 1, "expand-all restores every branch");
+    assert.equal(childRows()[0], keptChild, "expand-all must reuse the mounted row too");
+    assert.ok(!branchRow.classList.contains("is-collapsed"),
+      "expand-all clears the row's caret rotation (it only cleared the caret's before)");
+    assert.equal(byClass(app.view, "trellis-split-caret")[0].attributes["aria-expanded"], "true");
+  });
+
+  it("walks an HTMLCollection-shaped sibling list for local subtree folds", () => {
+    // Real Electron DOM: `parent.children` is an HTMLCollection — no
+    // indexOf, and Array.isArray() is ALWAYS false. The first fix probed
+    // Array.isArray() there, so production silently took the rebuild
+    // fallback while the (array-backed) test sandbox "agreed" via the same
+    // fallback. This stub is the real shape.
+    const app = loadDashboard({ activeResult: { status: "ok", tasks: [] } });
+    const makeRow = (depth) => {
+      const row = new FakeElement("div");
+      row.className = "trellis-split-row";
+      row.dataset.depth = String(depth);
+      return row;
+    };
+    const root = makeRow(0);
+    const child = makeRow(1);
+    const grandchild = makeRow(2);
+    const siblingRoot = makeRow(0);
+    const collection = { 0: root, 1: child, 2: grandchild, 3: siblingRoot, length: 4 };
+    assert.equal(Array.isArray(collection), false);
+    assert.equal(typeof collection.indexOf, "undefined");
+
+    const touched = app.sandbox.applySubtreeFold(collection, root, true);
+    assert.equal(touched.length, 2);
+    assert.equal(touched[0], child);
+    assert.equal(touched[1], grandchild);
+    assert.ok(child.classList.contains("is-subtree-folded"));
+    assert.ok(grandchild.classList.contains("is-subtree-folded"));
+    assert.ok(!siblingRoot.classList.contains("is-subtree-folded"),
+      "the next same-depth row belongs to a different subtree");
+
+    app.sandbox.applySubtreeFold(collection, root, false);
+    assert.ok(!child.classList.contains("is-subtree-folded"));
+    assert.ok(!grandchild.classList.contains("is-subtree-folded"));
+  });
+
+  it("skips folded rows when navigating with the arrow keys", async () => {
+    const app = loadDashboard({
+      rootsResult: { status: "ok", roots: ["/proj/one"] },
+      activeResult: { status: "ok", tasks: [
+        { taskPath: ".trellis/tasks/p", title: "Plan task", phase: "plan", cwd: "/proj/one" },
+        { taskPath: ".trellis/tasks/a", title: "Task A", phase: "execute", cwd: "/proj/one" },
+        { taskPath: ".trellis/tasks/kid", title: "Kid", parent: "a", phase: "execute", cwd: "/proj/one" },
+      ] },
+      archiveResult: { status: "ok", tasks: [] },
+    });
+    await flush();
+    await switchToTrellis(app);
+    const rowNamed = (text) => byClass(app.view, "trellis-split-row")
+      .find((el) => textOf(el).includes(text));
+    const selected = () => byClass(app.view, "trellis-split-row")
+      .find((el) => el.classList.contains("is-selected"));
+
+    // Fold the execute branch, then walk down from the plan row: ↓ must
+    // skip the folded "Kid" row (it is still mounted, just display:none).
+    await byClass(app.view, "trellis-split-caret")[0].dispatch("click");
+    await rowNamed("Plan task").dispatch("click");
+    await flush();
+    assert.ok(rowNamed("Kid").classList.contains("is-subtree-folded"), "Kid sits behind a folded branch");
+    app.pressKey("ArrowDown");
+    await flush();
+    assert.ok(textOf(selected()).includes("Task A"),
+      "↓ lands on the next VISIBLE row, never on a row inside a folded subtree");
+    app.pressKey("ArrowUp");
+    await flush();
+    assert.ok(textOf(selected()).includes("Plan task"));
+    assert.ok(!app.detailCalls.some((call) => call.taskPath === ".trellis/tasks/kid"),
+      "keyboard navigation never selects the folded row");
+
+    // Phase-card fold hides a whole group by CHILD selector — same rule.
+    const executeHead = byClass(app.view, "trellis-split-group-head")
+      .find((el) => textOf(el).includes(i18n.en.dashboardTrellisPhaseExecute));
+    const executeCard = byClass(app.view, "trellis-split-phase-card")
+      .find((el) => el.dataset.phase === "execute");
+    const aRow = rowNamed("Task A");
+    await groupHeadToggle(executeHead).dispatch("click");
+    assert.ok(executeCard.classList.contains("is-folded"), "phase fold hides rows via the CARD class");
+    assert.equal(byClass(app.view, "trellis-split-phase-card")
+      .find((el) => el.dataset.phase === "execute"), executeCard,
+    "the phase card is reused, not rebuilt");
+    assert.equal(rowNamed("Task A"), aRow, "the hidden rows are reused too");
+    assert.ok(executeHead.classList.contains("is-collapsed"), "head keeps the rotation anchor");
+    app.pressKey("ArrowDown");
+    await flush();
+    assert.ok(textOf(selected()).includes("Plan task"),
+      "a selection inside a folded phase card falls back to the first visible row");
+    assert.equal(rowNamed("Task A"), aRow, "the row node survives the fold AND the re-selection");
+  });
+
+  it("keeps a folded archive subtree folded across a rebuild", async () => {
+    const app = loadDashboard({
+      rootsResult: { status: "ok", roots: ["/proj/one"] },
+      activeResult: { status: "ok", tasks: [] },
+      archiveResult: { status: "ok", tasks: [
+        archivedTask({ taskPath: ".trellis/tasks/archive/2026-09/root", title: "Arch root", cwd: "/proj/one" }),
+        archivedTask({ taskPath: ".trellis/tasks/archive/2026-09/root-kid", title: "Arch kid", parent: "root", cwd: "/proj/one" }),
+      ] },
+    });
+    await flush();
+    await switchToTrellis(app);
+    const archiveHead = byClass(app.view, "trellis-split-group-head")
+      .find((el) => el.classList.contains("is-collapsed"));
+    await groupHeadToggle(archiveHead).dispatch("click");
+    await flush();
+    const kidRow = () => byClass(app.view, "trellis-split-row")
+      .find((el) => textOf(el).includes("Arch kid"));
+    assert.ok(kidRow(), "the archive child renders under its root");
+
+    await byClass(app.view, "trellis-split-caret")[0].dispatch("click");
+    assert.ok(kidRow().classList.contains("is-subtree-folded"), "local archive fold hides the child");
+
+    // Any structural rebuild must re-derive the fold from collapsedPaths.
+    // The old code passed a constant `true` as ancestorsExpanded here, so
+    // the direct child leaked back into view while deeper rows stayed
+    // hidden (the "archive revival" bug).
+    await byClass(app.view, "trellis-filter-refresh")[0].dispatch("click");
+    await flush();
+    assert.ok(kidRow().classList.contains("is-subtree-folded"),
+      "a rebuild re-applies the archive subtree fold (ancestorsExpanded must read collapsedPaths)");
+  });
+
+  it("skips rows inside a folded archive month when navigating", async () => {
+    const app = loadDashboard({
+      rootsResult: { status: "ok", roots: ["/proj/one"] },
+      activeResult: { status: "ok", tasks: [
+        { taskPath: ".trellis/tasks/a", title: "Task A", cwd: "/proj/one" },
+      ] },
+      archiveResult: { status: "ok", tasks: [
+        archivedTask({ taskPath: ".trellis/tasks/archive/2026-09/done-thing", title: "Done thing", cwd: "/proj/one" }),
+      ] },
+    });
+    await flush();
+    await switchToTrellis(app);
+    const archiveHead = byClass(app.view, "trellis-split-group-head")
+      .find((el) => el.classList.contains("is-collapsed"));
+    await groupHeadToggle(archiveHead).dispatch("click");
+    await flush();
+    // Select the last active row, then fold the month: ↓ has nowhere
+    // visible to go, so the selection must stay put.
+    await byClass(app.view, "trellis-split-row")
+      .find((el) => textOf(el).includes("Task A")).dispatch("click");
+    await flush();
+    const archivedRow = () => byClass(app.view, "trellis-split-row")
+      .find((el) => el.classList.contains("is-archived"));
+    const keptRow = archivedRow();
+    await byClass(app.view, "trellis-split-month-toggle")[0].dispatch("click");
+    assert.equal(archivedRow(), keptRow, "the month fold reuses the row node");
+    assert.ok(keptRow.classList.contains("is-month-folded"));
+    // openMonths lives in the structural signature → the sync after the
+    // local fold is what keeps the next 1s tick from rebuilding.
+    app.tickRender();
+    assert.equal(archivedRow(), keptRow, "the 1s tick keeps the folded month mounted");
+    app.pressKey("ArrowDown");
+    await flush();
+    const selected = byClass(app.view, "trellis-split-row")
+      .find((el) => el.classList.contains("is-selected"));
+    assert.ok(textOf(selected).includes("Task A"),
+      "↓ must not select a row hidden inside the folded month");
   });
 
   it("shows an archived subtask under its still-active parent and keeps it out of the archive months", async () => {
@@ -1766,9 +2030,6 @@ describe("dashboard trellis project filter (rendering)", () => {
 
     await chips[2].dispatch("click");
     assert.equal(byClass(app.view, "trellis-task-row").length, 0);
-    // 09-25: empty hint texts retired in the split view.
-    assert.ok(!textOf(app.view).includes(i18n.en.dashboardTrellisActiveEmpty));
-    assert.ok(!textOf(app.view).includes(i18n.en.dashboardTrellisArchivedEmpty));
   });
 
   it("falls back to All when the selected root gets unregistered", async () => {
@@ -2188,5 +2449,44 @@ describe("dashboard.html CSS structural guards (09-25 lessons)", () => {
       "dashboard-renderer uses insertBefore — the vm sandbox DOM has no insertBefore; build order via appendChild instead");
     assert.ok(!/\.prepend\(/.test(src),
       "dashboard-renderer uses prepend — the vm sandbox DOM has no prepend; build order via appendChild instead");
+  });
+
+  it("keeps the fold classes wired on both sides (09-25 review)", () => {
+    // Two separate responsibilities, two separate classes: HIDING vs caret
+    // ROTATION. The first fix mixed them up and wrote classes nothing
+    // consumed (row.is-folded) while skipping the ones CSS actually
+    // anchored (row.is-collapsed on collapse-all).
+    const src = fs.readFileSync(path.join(__dirname, "..", "src", "dashboard-renderer.js"), "utf8");
+    assert.match(css, /\.trellis-split-row\.is-subtree-folded,\s*\n\.trellis-split-row\.is-month-folded\s*\{\s*display:\s*none;/,
+      "CSS must hide folded subtree + month rows");
+    assert.match(css, /\.trellis-split-phase-card\.is-folded > \.trellis-split-row\s*\{\s*display:\s*none;/,
+      "CSS must hide the rows of a folded phase card");
+    assert.match(css, /\.trellis-split-row\.is-collapsed \.trellis-split-caret\s*\{\s*transform:\s*rotate\(-90deg\);|\n\s*transform:\s*rotate\(-90deg\);/,
+      "CSS must rotate the caret off the ROW class");
+    // Every class in that contract needs a renderer writer, or it is dead CSS.
+    for (const cls of ["is-subtree-folded", "is-month-folded", "is-folded", "is-collapsed"]) {
+      assert.ok(src.includes(`"${cls}"`), `no renderer writer for .${cls} — dead CSS`);
+    }
+    // …and the retired dead classes must not come back: rotation never
+    // hangs off the caret button, and rows never carry a bare is-folded.
+    assert.ok(!/\.trellis-split-caret\.is-collapsed/.test(css),
+      "no CSS consumer exists for a caret-level is-collapsed — rotate via the ROW");
+    assert.ok(!src.includes('caret.classList.add("is-collapsed")'),
+      "the caret button must not carry the fold class (rotation anchors on the row)");
+    assert.ok(!src.includes('caret.classList.toggle("is-collapsed"'),
+      "the caret button must not carry the fold class (rotation anchors on the row)");
+    // The real-machine failure mode the first attempt shipped: in Electron
+    // `Element.children` is an HTMLCollection, so `Array.isArray()` is always
+    // false and the "local fold" branch silently fell through to a full-tree
+    // rebuild on every click. The vm sandbox cannot catch this — its
+    // FakeElement.children IS a real array, so both shapes look green there.
+    // Pin the shape statically instead of relying on anyone remembering to
+    // write the HTMLCollection stub.
+    assert.ok(!/Array\.isArray\([^)]*\.children\s*\)/.test(src),
+      "Element.children is an HTMLCollection — normalize with Array.from, never Array.isArray");
+    // Rows never carry a bare is-folded: that class means "this phase CARD is
+    // folded", so a row-level writer is dead code by definition.
+    assert.ok(!/(?:row|caret)\.classList\.(?:add|toggle)\("is-folded"/.test(src),
+      "is-folded belongs to the phase card only — a row/caret writer is dead code");
   });
 });

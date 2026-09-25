@@ -1221,14 +1221,11 @@ h1 {
    max-height:0 + margin-top:-6px trick mis-compensated the card gap
    (2px) and rows visually overlapped neighbors on expand. Caret rotation
    is the surviving motion; row reveal is instant (KISS, no layout tricks).
-   Keyboard nav still finds rows (they exist in the DOM). */
+   Mounted folded rows stay in the DOM, so keyboard nav / selection code
+   filters them with isTrellisRowVisible() instead of relying on absence. */
 .trellis-split-row.is-subtree-folded,
 .trellis-split-row.is-month-folded {
   display: none;
-}
-
-.trellis-split-row {
-  transition: background-color var(--dur-1) var(--ease-out-apple);
 }
 
 /* Phase card fold (09-25): hides the card's rows (not the head) so the

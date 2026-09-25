@@ -53,6 +53,11 @@ function renderTrellisPanel() {
 变更（mode/selection/fold/open）后，要么该状态进签名，要么变更处显式置空签名**；
 新增强相关的状态时优先包一个 invalidate+render 入口函数，禁止裸赋值后直接调 render。
 
+**反向陷阱（09-25 局部折叠）**：不经过 render 而**直接在 DOM 上落地**的状态变更
+（局部 class 翻转）必须反过来把签名**刷成当前值**（`syncTrellisViewSignature()`）。
+签名留在旧值 → 下一次 1s tick 把存储态当"新数据"整树重建，把则刚做完的局部更新和
+进行中的 transition 一起冲掉。两边对称：**重建生效 → 置空签名；就地生效 → 同步签名**。
+
 ## Overlay 状态对象模式
 
 模态浮层（task detail / spec map / network）统一形态：模块级 `const xxx = { open, loading,
@@ -191,20 +196,87 @@ lastTrellisPanelSignature = null;
 renderTrellisViewBody();
 
 // ✅ 折叠 = 找到已挂载的卡，翻 class；caret 旋转是可感知反馈
-card.classList.toggle("is-folded", folded);   // CSS: > .row { display:none }
-toggle.classList.toggle("is-collapsed", folded); // CSS: caret rotate 过渡
+card.classList.toggle("is-folded", folded);     // 行显隐（卡 class）
+head.classList.toggle("is-collapsed", folded);  // caret 旋转
+toggle.classList.toggle("is-collapsed", folded);
 ```
 
-配套：行常驻渲染（折叠行也 mount，靠 class 隐藏）+ `data-depth` 标层级
-（折叠时按深度扫兄弟行）；vm 沙箱无 parentNode 时回退重建（行为正确、
-无动画）。选中（renderTrellisSplitSelectionOnly）与折叠是同一模式，
-新增「状态翻转→视觉反馈」交互一律走此路径。
+### class 记账：显隐与旋转是两套类，四个写入点必须一致
+
+| 职责 | 元素 | 类 | CSS 锚点 |
+|---|---|---|---|
+| 行显隐 | 行 | `is-subtree-folded` / `is-month-folded` | `.trellis-split-row.<类> { display:none }` |
+| 行显隐 | phase 卡 | `is-folded` | `.trellis-split-phase-card.is-folded > .trellis-split-row` |
+| caret 旋转 | 行 | `is-collapsed` | `.trellis-split-row.is-collapsed .trellis-split-caret` |
+| caret 旋转 | group head / 其 toggle | `is-collapsed` | `.trellis-split-group-head.is-collapsed …` / `.trellis-split-group-toggle.is-collapsed …` |
+| caret 旋转 | month head | `is-collapsed` | `.trellis-split-month-head.is-collapsed …` |
+
+**不要合并成一个类**：显隐与旋转职责不同，合并必有一个失效。
+**四个写入点必须写同一套**：点击、整树重建、expand-all、collapse-all。
+死类教训（acb422fb）：行上写 `is-folded`、caret 上写 `is-collapsed` 都是
+零 CSS 消费者的裸类名 → 旋转锚点零命中；expand-all 只清 caret 的类、
+collapse-all 只给 caret 加类 → 展开后 caret 仍指折叠态。
+判据：每个写入的类都要能在 CSS 里 grep 到消费者，每个折叠 CSS 类都要有
+renderer 写入者（`test/dashboard-trellis-panel.test.js` 有静态守卫）。
+
+### 真机 DOM 陷阱：`parent.children` 是 HTMLCollection
+
+`Element.children` 是 `HTMLCollection`：**`Array.isArray()` 恒为 false，且没有
+`indexOf`**。写成 `Array.isArray(parent.children)` 会让局部路径在真机 100%
+落回整树重建——而不崩、只是动画没了。**探测一律用 `Array.from()`**
+（HTMLCollection 与普通数组都能归一化，之后 `indexOf` 可用）：
+
+```js
+function applySubtreeFold(childrenLike, row, folded) {
+  const siblings = Array.from(childrenLike || []); // ← 唯一正确形态
+  const start = siblings.indexOf(row) + 1;
+  if (start <= 0) return [];
+  const myDepth = Number(row.dataset.depth || "0");
+  for (let k = start; k < siblings.length; k++) {
+    const node = siblings[k];
+    if (!node.classList.contains("trellis-split-row")) break;
+    if (Number(node.dataset.depth || "0") <= myDepth) break;
+    node.classList.toggle("is-subtree-folded", folded);
+  }
+}
+```
+
+**配套要求**：
+1. 行常驻渲染（折叠行也 mount，靠 class 隐藏）+ `data-depth` 标层级
+   （折叠时按深度扫兄弟行）。无 `parentNode` 时（vm 沙箱 / 游离节点）回退
+   整树重建——行为正确、无动画；**这个回退分支不能删**。
+2. 行常驻 → **所有枚举都要过滤可见性**。`querySelectorAll` 不会跳过
+   `display:none` 的行：键盘导航（↑/↓）、Enter、选中行查找、滚动/聚焦目标
+   必须统一走一个 `isTrellisRowVisible()`（自身折叠类 + 祖先 phase 卡
+   `.is-folded`），否则会"选中不可见行"（界面看着像没反应）。
+   已知语义（有意，不是 bug）：**选中行被折叠后 ↑/↓ 不响应**（`findIndex`
+   落空即早退），而不是"跳到最近可见行"；全部行都折叠时同样早退、不崩。
+3. **局部翻转后要同步结构签名**（`syncTrellisViewSignature()`）：折叠状态
+   （collapsedPaths / openMonths）在结构签名里，不刷新的话下一次 1s tick
+   会把旧状态当"新数据"整树重建，把刚刚的局部成果和进行中的 transition
+   一起冲掉。
+4. 选中（`renderTrellisSplitSelectionOnly`）与折叠是同一模式：
+   新增「状态翻转→视觉反馈」交互一律走此路径。
+5. **stub 直测守不住探测条件本身**（09-25 二次复盘）：类 HTMLCollection 的
+   stub 直测只能覆盖 `applySubtreeFold()` 的**内部归一化**；把点击路径的
+   探测条件改回 `Array.isArray(parent.children)` 时，stub 测试与全套测试
+   **依然全绿**（真实失败形态是"真机不生效、测试看不出来"，不崩不报错）。
+   所以需要第二道防线：在 `test/dashboard-trellis-panel.test.js` 用**静态断言**
+   禁止 `Array.isArray(…children)` 形态，以及禁止 `row` / `caret` 上的
+   `is-folded` 写入（该类的唯一合法宿主是 phase 卡）。
+   规则：**任何“沙箱里两种形态表现一致”的真机陷阱，都必须有一条机器可判定的
+   静态断言兜底**；每条新断言都要逆向验证（注入错误形态即变红），否则等于没写。
 
 **布局补偿陷阱**（第一次修复失败原因）：用负 margin（-6px）吃掉折叠行
 占位时，补偿值必须与容器实际 gap 同源——本次 gap 是 2px，-6 失配导致
 展开时行与相邻卡重合。`max-height: 0→auto` 本身不可插值（auto 非动画值）。
 结论：**行显隐用 display:none，可感知反馈只留 caret 旋转**——零 layout
-残留，KISS。
+残留，KISS；大列表逐行 height 动画性能差且嘈杂，业界树形控件通行走
+"caret 旋转 + 瞬时显隐"。
+
+**reduced-motion**：`@media (prefers-reduced-motion: reduce)` 里给
+`.trellis-split-caret` / `.trellis-split-group-toggle` / `.trellis-split-row`
+写 `transition: none` 即可（旋转仍以最终态瞬时生效）。
 
 ## 设计 token 只收敛"同形异值"，不借机改值域（apple-design P1 教训）
 
@@ -218,6 +290,16 @@ border-radius/token 迁移时按**现状值域分档**（3/4/5→xs、6/7→s、
 dashboard 渲染层的 node:test 用 `vm.runInNewContext` + 极简 DOM stub，除了没有 timer，
 **也没有 `insertBefore` / `prepend`**。需要"插在最前"时，改用 append 顺序：
 先 append 首元素再 append 其余，或构建时就把顺序排好，别在事后前插。
+
+**09-25 补充（折叠可测性）**：`test/dashboard-trellis-panel.test.js` 的 FakeElement 已补上
+`parentNode`（appendChild/replaceChildren 时设置，非枚举属性防循环）与
+`querySelector`/`querySelectorAll`（仅支持 `.class` / `.class[attr]` /
+`.class[attr="v"]` + 后代组合器），这样折叠的局部路径与键盘导航才真正被测到
+（之前 `trellisViewEl.querySelectorAll` 不存在 → 静默走回退重建，测试与真机"一致地都错"）。
+仍然没有：`insertBefore` / `prepend` / `replaceWith`（所以 selected-only 快速路径在沙箱里
+依旧不可用）/ 真 timer / `matchMedia` / `CSS.escape` / `localStorage` —— 这些仍必须惰性探测。
+注意：沙箱的 `children` 是**数组**，所以 `Array.isArray(children)` 的写法在沙箱里也能通过；
+要守住 HTMLCollection 真机形态，必须用类 HTMLCollection 的 stub 直测纯函数，不能只靠沙箱。
 
 ```js
 // ❌ chipsRow.insertBefore(refreshBtn, chipsRow.firstChild); // vm DOM 无此方法
@@ -259,8 +341,13 @@ stale 语义不变（hashes 记录 ∧ 目录缺失）。
 
 ```js
 // ❌ wrap.hidden = collapsed; // 头也在 wrap 里 → 折叠后无法再展开；还踩 [hidden] 陷阱
-// ✅ 折叠时仍构建卡+头，只跳过行 append；键盘导航的 tasksByPath 照常填充
+// ✅ 卡与卡头始终构建；行也始终 append（行常驻 mount），折叠只翻行上的
+//    显隐 class —— 键盘导航的 tasksByPath 照常填充
 ```
+
+**行常驻是 09-25 的最终形态**（更早的"折叠时跳过行 append"已废弃）：行必须留在
+DOM 里，CSS transition 才有存活元素可插值。行不在 DOM 的旧形态只适用于
+整卡 `continue` 跳过（空组），不适用于折叠。
 
 空组（空 done/finish 归档）直接 `continue` 跳过整卡，不渲染空占位。
 
