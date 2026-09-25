@@ -90,6 +90,7 @@ const {
 } = require("./settings-size-preview-session");
 const { registerSettingsIpc } = require("./settings-ipc");
 const { registerTrellisIpc } = require("./trellis-ipc");
+const { augmentedCliPath } = require("./trellis-cli");
 const createSettingsEffectRouter = require("./settings-effect-router");
 const { createRecapRuntime } = require("./recap-runtime");
 const { computeTrellisDailyCounts } = require("./recap-trellis");
@@ -5344,6 +5345,12 @@ const settingsIpcRuntime = registerSettingsIpc({
 const trellisIpcRuntime = registerTrellisIpc({
   ipcMain,
   dialog,
+  // A Finder-launched app inherits launchd's default PATH, which contains none
+  // of the directories `trellis` is normally installed into — so the Settings →
+  // Trellis panel would report a missing CLI even though a terminal-launched
+  // run finds it. `trellis-cli.js` deliberately leaves the child PATH alone and
+  // expects the caller to supply the overlay (see augmentedCliPath).
+  env: { PATH: augmentedCliPath(process.env.PATH) },
   settingsController: _settingsController,
   getSettingsWindow,
   sendToSettings: (channel, payload) => broadcastSettingsWindow(channel, payload),
