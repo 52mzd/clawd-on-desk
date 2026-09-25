@@ -298,6 +298,12 @@
     return entries.find((entry) => entry && entry.agentId === agentId) || null;
   }
 
+  function getCustomAgentUnavailableLabelKey(hint) {
+    if (hint && hint.reason === "not-executable") return "customToolDetectionNotExecutable";
+    if (hint && hint.reason === "not-file") return "customToolDetectionNotFile";
+    return "customToolDetectionMissing";
+  }
+
   function buildAgentRows(agents) {
     return agents.map((agent) => buildAgentGroup(agent));
   }
@@ -1068,7 +1074,7 @@
           if (customHint && customHint.detectedInstalled === false) {
             const missingBadge = document.createElement("span");
             missingBadge.className = "agent-badge custom-missing";
-            missingBadge.textContent = t("customToolDetectionMissing");
+            missingBadge.textContent = t(getCustomAgentUnavailableLabelKey(customHint));
             badges.appendChild(missingBadge);
           }
         } else {
@@ -1091,6 +1097,14 @@
           const hint = document.createElement("div");
           hint.className = "row-desc agent-traecode-hint";
           hint.textContent = t("traecodeEnableHint");
+          text.appendChild(hint);
+        }
+        // MiniMax Code has the same manual-enable gap: the plugin directory
+        // is on disk but the app decides whether hooks fire.
+        if (!agent.custom && agent.id === "minimax" && readers.readAgentIntegrationInstalled(agent.id)) {
+          const hint = document.createElement("div");
+          hint.className = "row-desc agent-minimax-hint";
+          hint.textContent = t("minimaxEnableHint");
           text.appendChild(hint);
         }
       },

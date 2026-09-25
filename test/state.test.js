@@ -1419,14 +1419,15 @@ describe("cleanStaleSessions()", () => {
     assert.deepStrictEqual(changes[changes.length - 1], ["idle", "clawd-idle-reading.svg"]);
   });
 
-  it("agentPid alive + sourcePid dead + stale → delete", () => {
+  it("agentPid alive + sourcePid dead + stale idle → retain", () => {
     api = require("../src/state")(makeCtx({ processKill: makePidKill(new Set([1000])) }));
     api.sessions.set("s1", rawSession("idle", {
       agentPid: 1000, sourcePid: 2000, pidReachable: true,
       updatedAt: Date.now() - 700000,
     }));
     api.cleanStaleSessions();
-    assert.strictEqual(api.sessions.size, 0);
+    assert.strictEqual(api.sessions.size, 1);
+    assert.strictEqual(api.sessions.get("s1").state, "idle");
   });
 
   it("agentPid alive + sourcePid alive + working > WORKING_STALE_MS → downgrade to idle", () => {
@@ -3159,6 +3160,14 @@ describe("updateSession()", () => {
     // An empty candidate must never clear the sticky first title either.
     update(api, { id: "s1", state: "working", event: "PreToolUse", agentId: "traecode", sessionTitle: "" });
     assert.strictEqual(api.sessions.get("s1").sessionTitle, "第一个问题");
+  });
+
+  it("keeps the FIRST title for minimax sessions (same prompt-derived rule as traecode)", () => {
+    update(api, { id: "s3", state: "thinking", event: "UserPromptSubmit", agentId: "minimax", sessionTitle: "first prompt" });
+    assert.strictEqual(api.sessions.get("s3").sessionTitle, "first prompt");
+
+    update(api, { id: "s3", state: "thinking", event: "UserPromptSubmit", agentId: "minimax", sessionTitle: "second prompt" });
+    assert.strictEqual(api.sessions.get("s3").sessionTitle, "first prompt");
   });
 
   it("lets the latest title win for non-traecode agents (unchanged behaviour)", () => {
@@ -5656,15 +5665,52 @@ describe("Stop completion gate (#406)", () => {
     assert.ok(!soundsPlayed.includes("complete"));
   });
 
-  it("Claude transcript fallback documents raw transcript sessionId mismatch", () => {
+  it("Claude transcript fallback promotes on raw transcript sessionId (#908)", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "clawd-claude-stop-fallback-"));
     const transcript = path.join(dir, "transcript.jsonl");
     const rawSessionId = "claude-probe-raw-mismatch";
     const sessionId = resolveSessionIdentity(rawSessionId, "local").sessionId;
+    assert.notStrictEqual(sessionId, rawSessionId, "canonical key must differ from raw id for this guard");
     fs.writeFileSync(transcript, [
       JSON.stringify({ type: "assistant", sessionId: rawSessionId, message: { content: [{ type: "tool_use", name: "AskUserQuestion" }] } }),
       JSON.stringify({ type: "user", sessionId: rawSessionId, message: { content: [{ type: "tool_result", content: "Allow" }] } }),
       JSON.stringify({ type: "assistant", sessionId: rawSessionId, message: { content: "Final answer from raw transcript." } }),
+    ].join("\n") + "\n");
+
+    update(api, {
+      id: sessionId,
+      state: "working",
+      event: "PostToolUse",
+      rawSessionId,
+      toolName: "AskUserQuestion",
+      transcriptPath: transcript,
+    });
+    mock.timers.tick(10000);
+
+    const session = api.sessions.get(sessionId);
+    assert.strictEqual(session.state, "idle");
+    assert.strictEqual(session.assistantLastOutput, "Final answer from raw transcript.");
+    assert.strictEqual(api.getCurrentState(), "attention");
+    assert.ok(soundsPlayed.includes("complete"));
+    assert.strictEqual(api.deriveSessionBadge(session), "done");
+  });
+
+  it("Claude transcript probe does not complete on a text-plus-tool-use preamble (#908 review)", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "clawd-claude-stop-fallback-"));
+    const transcript = path.join(dir, "transcript.jsonl");
+    const rawSessionId = "claude-probe-tool-preamble";
+    const sessionId = resolveSessionIdentity(rawSessionId, "local").sessionId;
+    // Newest assistant entry narrates *and* calls a tool: the turn is still
+    // running and its PreToolUse has not reached state.js yet. The preamble
+    // text must not be mistaken for a finished turn — the probe must keep
+    // working, not synthesize a completion (and fire sound/notification/recap).
+    fs.writeFileSync(transcript, [
+      JSON.stringify({ type: "assistant", sessionId: rawSessionId, message: { content: [{ type: "tool_use", name: "AskUserQuestion" }] } }),
+      JSON.stringify({ type: "user", sessionId: rawSessionId, message: { content: [{ type: "tool_result", content: "Allow" }] } }),
+      JSON.stringify({ type: "assistant", sessionId: rawSessionId, message: { content: [
+        { type: "text", text: "Let me apply that edit." },
+        { type: "tool_use", name: "Edit" },
+      ] } }),
     ].join("\n") + "\n");
 
     update(api, {

@@ -209,6 +209,7 @@ const MANAGED_CLEANUP_AGENT_IDS = Object.freeze([
   "opencode",
   "mimocode",
   "pi",
+  "omp",
   "openclaw",
   "hermes",
   "qoder",
@@ -216,6 +217,7 @@ const MANAGED_CLEANUP_AGENT_IDS = Object.freeze([
   "qoderwork",
   "traecode",
   "qwenwork",
+  "minimax",
 ]);
 
 // ── updateRegistry ──
@@ -459,6 +461,7 @@ const updateRegistry = {
   sessionHudPinned: requireBoolean("sessionHudPinned"),
   hideBubbles: requireBoolean("hideBubbles"),
   permissionBubblesEnabled: requireBoolean("permissionBubblesEnabled"),
+  destructiveActionReminder: requireBoolean("destructiveActionReminder"),
   // Permission automation is safety-sensitive: the command path owns its
   // warning/confirmation gate and the coupled mode + dismissal commit. Keep
   // the validators available for defensive command validation, but reject

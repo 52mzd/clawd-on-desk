@@ -262,6 +262,12 @@ const SCHEMA = {
   // never suppress the stronger unattended warning.
   permissionAutomationAutoToolsWarningDismissed: { type: "boolean", default: false },
   permissionAutomationUnattendedWarningDismissed: { type: "boolean", default: false },
+  // Opt-in reminder that pauses an otherwise-automatic allow for recognized
+  // high-risk operations so a human sees the card. Off by default, and
+  // deliberately NOT command-gated like the keys above: those widen what runs
+  // without a human, this only narrows it, so there is no trust transition to
+  // confirm.
+  destructiveActionReminder: { type: "boolean", default: false },
   // One-release tombstone for old files/tests. It can never become the current
   // automation source: validation forces ephemeral fields to defaults, save()
   // drops them, and no product writer targets this key.
@@ -422,6 +428,12 @@ const SCHEMA = {
       // TraeCode is state-only: hook protocol is Claude Code-compatible but it
       // has no PermissionRequest event, so permission bubbles default off.
       "traecode": { integrationInstalled: false, enabled: false, permissionsEnabled: false, notificationHookEnabled: true },
+      // MiniMax Code is state-only via a Clawd-owned local plugin under
+      // ~/.minimax/plugins/clawd-state. PermissionRequest is not registered
+      // (the plugin-hook runner's 1–10s timeout budget makes blocking approval
+      // impossible) and there is no Notification event, so both flags default
+      // off.
+      "minimax": { integrationInstalled: false, enabled: false, permissionsEnabled: false, notificationHookEnabled: false },
       "kiro-cli": { integrationInstalled: false, enabled: false, permissionsEnabled: true, notificationHookEnabled: true },
       "kimi-cli": { integrationInstalled: false, enabled: false, permissionsEnabled: true, notificationHookEnabled: true },
       "qwen-code": { integrationInstalled: false, enabled: false, permissionsEnabled: true, notificationHookEnabled: true },
@@ -434,6 +446,7 @@ const SCHEMA = {
       "opencode": { integrationInstalled: false, enabled: false, permissionsEnabled: true, notificationHookEnabled: true },
       "mimocode": { integrationInstalled: false, enabled: false, permissionsEnabled: true, notificationHookEnabled: true },
       "pi": { integrationInstalled: false, enabled: false, permissionsEnabled: false, notificationHookEnabled: true },
+      "omp": { integrationInstalled: false, enabled: false, permissionsEnabled: false, notificationHookEnabled: true },
       "openclaw": { integrationInstalled: false, enabled: false, permissionsEnabled: false, notificationHookEnabled: true },
       "hermes": { integrationInstalled: false, enabled: false, permissionsEnabled: true, notificationHookEnabled: true },
       // Qoder is state-only (Phase 1) — permission bubbles default off.

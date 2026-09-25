@@ -1770,9 +1770,20 @@ function scheduleClaudeTranscriptCompletionProbe(sessionId, transcriptPath) {
       return;
     }
 
+    // Claude transcript entries carry the raw `session_id` (UUID) that Claude
+    // emitted, not Clawd's canonical session key (#908). The probe map is keyed
+    // by the canonical id, so filter the transcript by the session's raw id.
+    // Stored sessions always carry a rawSessionId (it falls back to the session
+    // key at construction, and a missing wire identity is represented as
+    // "default"), so this is the real underlying id, not a canonical key.
+    // rejectToolUse makes the extractor a completion predicate: a text-plus-
+    // tool-use preamble must not synthesize a completion while the turn's
+    // PreToolUse may still be in flight. Entries with no `sessionId` are still
+    // accepted, keeping the #904 deletion-cleanup mechanism fallback intact.
     const assistantOutput = extractLastClaudeAssistantTextFromEntries(
       readClaudeTranscriptTailEntries(safePath),
-      sessionId
+      session.rawSessionId || sessionId,
+      { rejectToolUse: true }
     );
     if (assistantOutput && assistantOutput.text) {
       claudeTranscriptCompletionProbes.delete(sessionId);
@@ -1930,7 +1941,9 @@ function mergeSessionProcessMetadata(existing, incoming = {}, options = {}) {
 // first prompt line. The first title that reaches the server wins — a title
 // whose POST fails is not permanently claimed, and follow-up prompts never
 // overwrite the first one (matching Trae's constant session title).
-const FIRST_WINS_TITLE_AGENT_IDS = new Set(["traecode"]);
+// MiniMax Code carries no session title in its hook payload either, so its
+// prompt-derived titles follow the same first-wins rule.
+const FIRST_WINS_TITLE_AGENT_IDS = new Set(["traecode", "minimax"]);
 
 function resolveIncomingSessionTitle(existing, agentId, incomingTitle) {
   const normalized = normalizeTitle(incomingTitle);
@@ -3230,13 +3243,21 @@ function detectRunningAgentProcesses(callback) {
     // cmdline token disambiguates the working process from the GUI shell.
     { agentId: "zcode", needle: "zcode.cjs", processName: "zcode.exe" },
   ].filter((entry) => isEnabled(entry.agentId));
-  const platformCommandLineNeedles = process.platform === "win32" || !isEnabled("pi")
+  // POSIX-only cmdline markers. A bare `omp`/`pi` process name is ambiguous on
+  // POSIX — the GUI shell and unrelated binaries share it — so the package path
+  // is what identifies a running CLI. OMP's marker is deliberately the scoped
+  // package path: the unscoped `pi-coding-agent/dist/cli.js` needle above also
+  // matches an OMP process, and OMP keeps helper processes on that path, so
+  // this stays a bounded launch-time keep-awake (STARTUP_RECOVERY_MAX_MS) and
+  // never a session or a task-level state.
+  const posixCommandLineNeedles = [
+    { agentId: "pi", needle: "@earendil-works/pi-coding-agent" },
+    { agentId: "pi", needle: "pi-coding-agent/dist/cli.js" },
+    { agentId: "omp", needle: "@oh-my-pi/pi-coding-agent" },
+  ].filter((entry) => isEnabled(entry.agentId));
+  const platformCommandLineNeedles = process.platform === "win32"
     ? commandLineNeedles
-    : [
-        ...commandLineNeedles,
-        { agentId: "pi", needle: "@earendil-works/pi-coding-agent" },
-        { agentId: "pi", needle: "pi-coding-agent/dist/cli.js" },
-      ];
+    : [...commandLineNeedles, ...posixCommandLineNeedles];
   if (processEntries.length === 0 && platformCommandLineNeedles.length === 0) {
     done(false);
     return;

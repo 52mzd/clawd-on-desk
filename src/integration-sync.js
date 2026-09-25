@@ -108,6 +108,12 @@ function createIntegrationSyncRuntime(options = {}) {
         registerClaudeStatusline,
         unregisterClaudeStatusline,
       } = require("../hooks/install.js");
+      // This branch is a best-effort fallback used only when no server-owned
+      // syncClawdHooksImpl is wired (production always wires the operation
+      // queue). It does NOT go through preflightClaudeRuntime, so it does not
+      // promise the queue's preflight-before-mutation atomicity: registerHooks
+      // can commit settings before a statusline failure is surfaced below.
+      // Keep the queue path for anything that needs atomic Settings Install.
       const { added, updated, removed } = registerHooks({
         silent: true,
         autoStart: ctx.autoStartWithClaude,
@@ -123,7 +129,15 @@ function createIntegrationSyncRuntime(options = {}) {
       try {
         if (ctx.claudeQuotaCollectionEnabled === true) {
           const statuslineResult = registerClaudeStatusline({ silent: true });
-          if (statuslineResult.changed) {
+          if (statuslineResult && statuslineResult.error) {
+            // Best-effort: a statusline failure must not fail the hooks-sync
+            // result, but it must be visible rather than silently reported as
+            // a successful install.
+            console.warn(
+              "Clawd: failed to sync Claude Code statusline:",
+              statuslineResult.error.message || statuslineResult.error.reason
+            );
+          } else if (statuslineResult.changed) {
             console.log("Clawd: registered Claude Code statusline (rate limit quota)");
           }
         } else {
@@ -249,6 +263,21 @@ function createIntegrationSyncRuntime(options = {}) {
     }
   }
 
+  function syncMinimaxHooks() {
+    try {
+      if (typeof ctx.syncMinimaxHooksImpl === "function") return ctx.syncMinimaxHooksImpl();
+      const { installMinimaxPlugin } = require("../hooks/minimax-install.js");
+      const result = installMinimaxPlugin({ silent: true });
+      if (hasPositiveCount(result.added) || hasPositiveCount(result.updated)) {
+        console.log(`Clawd: synced MiniMax Code plugin (added ${result.added}, updated ${result.updated})`);
+      }
+      return normalizeCountSyncResult(result, "MiniMax Code", "minimax-not-installed");
+    } catch (err) {
+      console.warn("Clawd: failed to sync MiniMax Code plugin:", err.message);
+      return { status: "error", message: err && err.message ? err.message : "Failed to sync MiniMax Code plugin" };
+    }
+  }
+
   function syncKiroHooks() {
     try {
       if (typeof ctx.syncKiroHooksImpl === "function") return ctx.syncKiroHooksImpl();
@@ -364,9 +393,9 @@ function createIntegrationSyncRuntime(options = {}) {
 
   function syncCursorHooks() {
     try {
-      if (typeof ctx.syncCursorHooksImpl === "function") return ctx.syncCursorHooksImpl();
-      const { registerCursorHooks } = require("../hooks/cursor-install.js");
-      const result = registerCursorHooks({ silent: true });
+      const result = typeof ctx.syncCursorHooksImpl === "function"
+        ? ctx.syncCursorHooksImpl()
+        : require("../hooks/cursor-install.js").registerCursorHooks({ silent: true });
       if (hasPositiveCount(result.added) || hasPositiveCount(result.updated)) {
         console.log(`Clawd: synced Cursor hooks (added ${result.added}, updated ${result.updated})`);
       }
@@ -473,6 +502,30 @@ function createIntegrationSyncRuntime(options = {}) {
     } catch (err) {
       console.warn("Clawd: failed to sync Pi extension:", err.message);
       return { status: "error", message: err && err.message ? err.message : "Failed to sync Pi extension" };
+    }
+  }
+
+  function syncOmpExtension() {
+    try {
+      if (typeof ctx.syncOmpExtensionImpl === "function") return ctx.syncOmpExtensionImpl();
+      const { registerOmpExtension } = require("../hooks/omp-install.js");
+      const result = registerOmpExtension({ silent: true });
+      if (result.installed && result.updated) {
+        console.log("Clawd: synced OMP extension");
+      }
+      // The community bridge owns the same events; leaving it in place is a
+      // deliberate skip, not a failure.
+      if (result && result.reason === "standalone-bridge-present") {
+        return asSkipped(
+          result,
+          "standalone-bridge-present",
+          "clawd-on-desk-omp.ts already bridges OMP; skipped extension sync"
+        );
+      }
+      return normalizeInstalledFlagResult(result, "OMP", "omp-not-found");
+    } catch (err) {
+      console.warn("Clawd: failed to sync OMP extension:", err.message);
+      return { status: "error", message: err && err.message ? err.message : "Failed to sync OMP extension" };
     }
   }
 
@@ -631,6 +684,7 @@ function createIntegrationSyncRuntime(options = {}) {
     opencode: syncOpencodePlugin,
     mimocode: syncMimocodePlugin,
     pi: syncPiExtension,
+    omp: syncOmpExtension,
     openclaw: syncOpenClawPlugin,
     hermes: syncHermesPlugin,
     qoder: syncQoderHooks,
@@ -638,6 +692,7 @@ function createIntegrationSyncRuntime(options = {}) {
     qoderwork: syncQoderWorkHooks,
     traecode: syncTraeCodeHooks,
     qwenwork: syncQwenWorkHooks,
+    minimax: syncMinimaxHooks,
   });
 
   const AGENT_INTEGRATION_REPAIRERS = Object.freeze({
@@ -782,12 +837,14 @@ function createIntegrationSyncRuntime(options = {}) {
     syncOpencodePlugin,
     syncMimocodePlugin,
     syncPiExtension,
+    syncOmpExtension,
     syncOpenClawPlugin,
     syncHermesPlugin,
     syncQoderHooks,
     syncReasonixHooks,
     syncQoderWorkHooks,
     syncTraeCodeHooks,
+    syncMinimaxHooks,
     repairCodexHooks,
     repairOpenClawPlugin,
     syncIntegrationForAgent,

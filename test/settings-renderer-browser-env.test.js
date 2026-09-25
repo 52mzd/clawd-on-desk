@@ -62,6 +62,18 @@ const VERIFIED_GITHUB_CONTRIBUTORS = [
   "CheeseAgent",
   "RS-Nocsi",
   "Cobb04",
+  "TalexDreamSoul",
+  "FuZoe",
+  "undefined-moe",
+  "pu-1205",
+  "Free-LZJ",
+  "easyhak",
+  "jlimcode",
+  "xfurqan0",
+  "brantshin",
+  "mantertius",
+  "VonSdite",
+  "sunnyswag",
 ];
 
 function createDeferred() {
@@ -1584,6 +1596,8 @@ function loadAgentsTabForTest({
           customToolManualAdd: "Choose AI installation folder",
           customToolNotRecognized: "No launchable application found",
           customToolDetectionMissing: "Path missing",
+          customToolDetectionNotExecutable: "Not executable",
+          customToolDetectionNotFile: "Not a file",
           agentInstanceScanWsl: "Scan WSL",
           agentInstanceScanWslDesc: "Rescan WSL distros",
           customToolRescan: "Rescan",
@@ -1607,6 +1621,7 @@ function loadAgentsTabForTest({
           rowCodexNativeNotificationSoundDesc: "Native sound desc",
           badgePermissionBubble: "Permission bubble",
           traecodeEnableHint: "Enable hooks in Trae before they fire.",
+          minimaxEnableHint: "Enable the Clawd plugin in MiniMax Code before hooks fire.",
           eventSourceHook: "Hook",
           eventSourceLogPoll: "Log poll",
           eventSourcePlugin: "Plugin",
@@ -11836,6 +11851,38 @@ describe("settings renderer browser environment", () => {
     assert.strictEqual(harness.content.querySelector(".agent-traecode-hint"), null);
   });
 
+  it("shows the MiniMax enable hint on the card when the integration is installed", () => {
+    const harness = loadAgentsTabForTest({
+      snapshot: {
+        agents: { minimax: { integrationInstalled: true, enabled: true } },
+      },
+      agentMetadata: [
+        { id: "minimax", name: "MiniMax Code", eventSource: "hook", capabilities: {} },
+      ],
+    });
+
+    harness.core.ops.requestRender({ content: true });
+
+    const hint = harness.content.querySelector(".agent-minimax-hint");
+    assert.ok(hint, "MiniMax hint should render on the installed card");
+    assert.match(collectText(hint), /MiniMax Code/);
+  });
+
+  it("omits the MiniMax enable hint until the integration is installed", () => {
+    const harness = loadAgentsTabForTest({
+      snapshot: {
+        agents: { minimax: { integrationInstalled: false, enabled: false } },
+      },
+      agentMetadata: [
+        { id: "minimax", name: "MiniMax Code", eventSource: "hook", capabilities: {} },
+      ],
+    });
+
+    harness.core.ops.requestRender({ content: true });
+
+    assert.strictEqual(harness.content.querySelector(".agent-minimax-hint"), null);
+  });
+
   it("keeps Start with Codex independent and commits through the preference API", async () => {
     const updates = [];
     const harness = loadAgentsTabForTest({
@@ -13673,15 +13720,20 @@ describe("settings renderer browser environment", () => {
 
     // Losing the executable no longer moves the agent out of Connected, so the
     // row itself has to report it.
-    harness.core.runtime.agentInstallationHints = {
-      checkedAt: 2,
-      agents: [],
-      customAgents: [{ agentId: id, detectedInstalled: false, confidence: "high" }],
-      customTools: [],
-      skippedAgentIds: [],
+    const showUnavailableReason = (reason, checkedAt) => {
+      harness.core.runtime.agentInstallationHints = {
+        checkedAt,
+        agents: [],
+        customAgents: [{ agentId: id, detectedInstalled: false, confidence: "low", reason }],
+        customTools: [],
+        skippedAgentIds: [],
+      };
+      harness.core.ops.requestRender({ content: true });
+      harness.raf.flush();
+      return harness.content.querySelector(".agent-section-connected .custom-missing");
     };
-    harness.core.ops.requestRender({ content: true });
-    harness.raf.flush();
+
+    const missing = showUnavailableReason("not-found", 2);
 
     const stillConnected = harness.content.querySelector(".agent-section-connected");
     assert.deepStrictEqual(
@@ -13689,9 +13741,10 @@ describe("settings renderer browser environment", () => {
       ["Nova AI", "QoderWork"],
       "a vanished executable must not evict the agent from Connected"
     );
-    const missing = stillConnected.querySelector(".custom-missing");
     assert.ok(missing, "the row reports the missing executable");
     assert.strictEqual(missing.textContent, "Path missing");
+    assert.strictEqual(showUnavailableReason("not-executable", 3).textContent, "Not executable");
+    assert.strictEqual(showUnavailableReason("not-file", 4).textContent, "Not a file");
   });
 
   it("renders Custom AI detection under one manual folder picker", () => {
