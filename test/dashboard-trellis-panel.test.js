@@ -2146,3 +2146,26 @@ describe("dashboard trellis v7 R8 project drawers", () => {
       "a task selection replaces the spec doc in the pane");
   });
 });
+
+describe("trellis doc fold static guards (R4 lessons)", () => {
+  // R4 bug class: author `display` (e.g. fold-card display:flex) beats the
+  // UA rule for [hidden], so collapsed parents left nested cards visible.
+  // This bit three separate times (quota feedback, quick banner, fold
+  // cards) before the global guard existed — do not let it be "cleaned up".
+  it("dashboard.html keeps the global [hidden] display:none override", () => {
+    const html = fs.readFileSync(path.join(__dirname, "..", "src", "dashboard.html"), "utf8");
+    assert.match(html, /\[hidden\]\s*\{[^}]*display:\s*none\s*!important/s,
+      "global [hidden]{display:none!important} guard missing — author display "
+      + "(fold cards, quick banner, quota summary are display:flex) would "
+      + "beat the [hidden] attribute again");
+  });
+
+  it("both right-pane doc render paths wire collapse handlers", () => {
+    const src = fs.readFileSync(path.join(__dirname, "..", "src", "dashboard-renderer.js"), "utf8");
+    const calls = src.match(/wireTrellisDocCollapse\(/g) || [];
+    // 1 definition + >=2 call sites (task doc path + spec doc pane path).
+    // A new render path that forgets to wire = headings not clickable.
+    assert.ok(calls.length >= 3,
+      `wireTrellisDocCollapse expected >=3 occurrences (def + 2 paths), got ${calls.length}`);
+  });
+});
