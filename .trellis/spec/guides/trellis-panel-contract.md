@@ -1162,6 +1162,8 @@ fade-out（`animateTrellisOverlayClose`：setTimeout 140ms 守卫，重开
 
 **8b. UI 设计基线（emil-design-eng 重设计，2026-09）**：trellis CSS 块顶部维护局部 token `--trellis-font-title: 600 13px/1.45` / `--trellis-font-sub: 400 12px/1.5` / `--trellis-font-meta: 500 11px/1.4` / `--trellis-radius` / `--trellis-press`；字号硬下限 11px（时间/计数用 `tabular-nums`）。交互元素必须有 hover/active（`scale(0.97)` via `--trellis-press`）/focus-visible（2px accent outline）三态；div 不承接 click——折叠头（group/month）由内部 button toggle 接管（stopPropagation 防双触发）。图标统一走 `iconSvg(name, size)` 内联 SVG（`currentColor` + `aria-hidden`），禁止新增 unicode 字符图标；caret 为 12px SVG 居中 15px button，折叠态用 CSS rotate。对比度：文本 ≥4.5:1，状态指示（dot/tick/空 progress-tick ≥3:1）；`is-archived`/`is-missing` 只对装饰元素（dot/badge）降透明，不整体降灰文本。
 
+**8c. Doc 折叠卡片与 [hidden] 级联陷阱（R3/R4 教训）**：右栏文档的可折叠标题（`.md-heading-collapsible.md-h2/h3`）是折叠 CARD 形态（border + radius + `display:flex`）；行级 hover 禁止 translateX 位移（只许背景 tint）；sticky 分组/月份头的背景必须 mix `--bg` 不透明（透明背景会透出滚动行）。**级联陷阱**：一旦给这些标题设了 `display:flex`，它会在层叠中打败 `[hidden]` 属性——折叠父级后嵌套子卡片仍可见。全局守卫 `[hidden]{display:none!important}` 必须保留。**接线陷阱**：右栏两条文档渲染路径（task doc 与 spec doc pane）都必须调 `wireTrellisDocCollapse()`（它用 `querySelectorAll` 深度绑定，列表/引用内嵌套标题也要可点）；新增渲染路径忘记接线 = 标题不可折叠。
+
 **9. 红线**：
 - 键盘导航序列必须从 DOM querySelectorAll 派生，不得从内存任务数组推导
 - 尺寸继续遵守 §4.6e zoom-safe 红线（percent 链接父级 + px cap，不用 `vw`）
