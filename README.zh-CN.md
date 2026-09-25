@@ -26,6 +26,16 @@
   <img src="assets/hero.gif" alt="Clawd 桌宠动画演示：像素螃蟹会随 AI 编程助手状态实时切换，在睡觉、思考、工具运行时打字、单个子代理时戴耳机律动、多个子代理并行时三球杂耍、权限请求弹出时提醒、任务完成后庆祝。支持 Claude Code、Codex、Cursor、Copilot、Gemini、Antigravity、Qwen、CodeWhale、Pi、OMP、OpenClaw 等。">
 </p>
 
+> **这是 fork。** 基于 [rullerzhou-afk/clawd-on-desk](https://github.com/rullerzhou-afk/clawd-on-desk) 上游最新版。
+>
+> **本 fork 新增 —— Trellis 工作流集成：**
+> - **Dashboard 任务视图** —— 跨已注册项目浏览任务：阶段分组、进度与 checklist、任务树、规范地图、归档
+> - **设置 → Trellis** —— 注册项目根目录、安装／升级向导（含 `trellis update` 的真实 dry-run 预览）
+> - **桌宠状态联动** —— 并行任务杂耍、规划期巫师帽、相位切换气泡、完成庆祝
+> - **HUD 任务徽标** —— 每个活跃会话绑定的 Trellis 任务，点击可展开内联详情行
+>
+> 功能权威说明见 `docs/project/trellis-settings-panel.md`。许可沿用上游 AGPL-3.0。
+
 Clawd 住在你的桌面上，实时感知 AI 编程助手正在做什么。发起一个长任务，起身去做点别的，等螃蟹告诉你任务完成了再回来。
 
 你提问时它思考，工具运行时它打字，子代理工作时它会戴耳机律动或三球杂耍，审批权限时它弹卡片，任务完成时它庆祝，你离开时它睡觉。内置三套主题：**Clawd**（像素螃蟹）、**Calico**（三花猫）和 **Cloudling**（云宝），支持自定义主题，也支持导入 Codex Pet 动画包；另外可从 设置 → 主题 下载可选官方主题 **Hash Sage**（哈希仙人）。

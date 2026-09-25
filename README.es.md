@@ -29,6 +29,16 @@
   <img src="assets/hero.gif" alt="Clawd on Desk: una mascota de escritorio pixelada que reacciona en tiempo real a tu agente de programación con IA. La demostración animada muestra al cangrejo durmiendo, pensando mientras el modelo lee el código, escribiendo cuando se ejecutan herramientas, moviéndose con un subagente, haciendo malabares con varios subagentes, mostrando un globo de permisos y celebrando al completar 14 archivos y 312 pruebas. Funciona con Claude Code, Codex, Cursor, Copilot, Gemini, Antigravity, Qwen, CodeWhale, Pi, OMP, OpenClaw y más.">
 </p>
 
+> **Este es un fork.** Basado en la última versión del repositorio original [rullerzhou-afk/clawd-on-desk](https://github.com/rullerzhou-afk/clawd-on-desk).
+>
+> **Lo que añade este fork — integración con el flujo de trabajo Trellis:**
+> - **Vista de tareas en el Dashboard** — explora tareas de todos los proyectos registrados: agrupación por fase, progreso y lista de comprobación, árbol de tareas, mapa de especificaciones y archivo
+> - **Ajustes → Trellis** — registra raíces de proyecto, asistente de instalación/actualización con vista previa real (`dry-run`) de `trellis update`
+> - **Retroalimentación de estado de la mascota** — malabares con tareas paralelas, sombrero de mago en la fase de planificación, globos de cambio de fase y celebración al completar
+> - **Insignia de tarea en el HUD** — la tarea Trellis vinculada a cada sesión activa; haz clic para expandir una fila de detalle en línea
+>
+> La documentación autorizada está en `docs/project/trellis-settings-panel.md`. La licencia sigue siendo AGPL-3.0, igual que el proyecto original.
+
 Clawd vive en tu escritorio y reacciona en tiempo real a lo que hace tu agente de programación con IA. Inicia una tarea larga, aléjate y vuelve cuando el cangrejo te avise de que terminó.
 
 Piensa cuando envías un prompt, escribe cuando se ejecutan herramientas, se mueve o hace malabares con los subagentes, revisa permisos, celebra al terminar las tareas y duerme cuando te alejas. Incluye tres temas: **Clawd** (cangrejo pixelado), **Calico** (三花猫) y **Cloudling** (云宝), además de compatibilidad completa con temas personalizados y paquetes de animaciones Codex Pet importados. También puedes descargar el tema oficial opcional **Hash Sage** (哈希仙人) desde Ajustes → Tema.

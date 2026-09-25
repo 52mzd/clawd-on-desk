@@ -30,11 +30,20 @@
 </p>
 
 > **This is a fork.** Based on the latest upstream
-> [rullerzhou-afk/clawd-on-desk](https://github.com/rullerzhou-afk/clawd-on-desk), it adds
-> **Trellis workflow integration**: a Dashboard task view, a Settings install/upgrade wizard,
-> and pet state feedback (parallel-task juggling, a planning wizard hat, phase bubbles, and
-> a completion celebration). Authoritative documentation lives in
-> `docs/project/trellis-settings-panel.md`. The license remains the upstream AGPL-3.0.
+> [rullerzhou-afk/clawd-on-desk](https://github.com/rullerzhou-afk/clawd-on-desk).
+>
+> **What this fork adds — Trellis workflow integration:**
+> - **Dashboard task view** — browse tasks across registered projects: phase grouping,
+>   progress and checklist, task tree, spec map, and archive
+> - **Settings → Trellis** — register project roots, install/upgrade wizard with a real
+>   dry-run preview of `trellis update`
+> - **Pet state feedback** — parallel-task juggling, a planning wizard hat, phase-transition
+>   bubbles, and a completion celebration
+> - **HUD task badge** — the Trellis task bound to each live session, clickable to expand
+>   an inline detail row
+>
+> Authoritative documentation lives in `docs/project/trellis-settings-panel.md`.
+> The license remains the upstream AGPL-3.0.
 
 Clawd lives on your desktop and reacts to what your AI coding agent is doing — in real time. Start a long task, walk away, come back when the crab tells you it's done.
 
