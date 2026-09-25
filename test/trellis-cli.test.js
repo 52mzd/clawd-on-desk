@@ -8,6 +8,7 @@ const path = require("node:path");
 
 const {
   createTrellisCli,
+  augmentedCliPath,
   UPDATE_ARGS,
   INIT_ARGS_SUFFIX,
   REMOTE_PACKAGE,
@@ -408,5 +409,33 @@ describe("pure helpers", () => {
     assert.strictEqual(classifyFailure(Object.assign(new Error("x"), { killed: true })), "timeout");
     assert.strictEqual(classifyFailure(Object.assign(new Error("x"), { name: "AbortError" })), "aborted");
     assert.strictEqual(classifyFailure(Object.assign(new Error("x"), { code: 1 })), "error");
+  });
+});
+
+describe("augmentedCliPath", () => {
+  it("appends the GUI-launch lookup dirs on macOS", () => {
+    const out = augmentedCliPath("/usr/bin:/bin", { platform: "darwin", home: "/Users/tester" });
+    const parts = out.split(":");
+    assert.strictEqual(parts[0], "/usr/bin");
+    assert.ok(parts.includes("/opt/homebrew/bin"));
+    assert.ok(parts.includes("/usr/local/bin"));
+    assert.ok(parts.includes("/Users/tester/.local/bin"));
+  });
+
+  it("does not duplicate a directory that is already on PATH", () => {
+    const out = augmentedCliPath("/usr/bin:/usr/local/bin", { platform: "darwin", home: "/h" });
+    assert.strictEqual(out.split(":").filter((dir) => dir === "/usr/local/bin").length, 1);
+  });
+
+  it("leaves a Windows PATH untouched", () => {
+    const win = "C:\\Windows\\System32;C:\\Program Files\\nodejs";
+    assert.strictEqual(augmentedCliPath(win, { platform: "win32", home: "C:\\Users\\t" }), win);
+  });
+
+  it("still yields the lookup dirs for an empty base PATH", () => {
+    const out = augmentedCliPath("", { platform: "linux", home: "/h" });
+    assert.ok(out.includes("/usr/local/bin"));
+    assert.ok(out.includes("/h/.local/bin"));
+    assert.ok(!out.startsWith(":"));
   });
 });

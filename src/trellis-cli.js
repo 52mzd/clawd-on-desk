@@ -121,6 +121,42 @@ function parseVersionOutput(text) {
   return match ? match[0] : null;
 }
 
+// A GUI-launched app inherits launchd's default PATH
+// (/usr/bin:/bin:/usr/sbin:/sbin), which contains none of the locations
+// `trellis` is normally installed into. `createTrellisCli` deliberately does
+// not repair the child's PATH on its own — callers pass the extra lookup paths
+// in `env` — so they build that overlay with this helper. Mirrors the explicit
+// candidates focus.js already uses for the orca CLI. Windows resolves the npm
+// `.cmd` shim through the shell and needs no augmentation.
+const GUI_PATH_EXTRA_DIRS = Object.freeze([
+  "/opt/homebrew/bin", // Homebrew, Apple Silicon
+  "/usr/local/bin", // Homebrew Intel and manual installs
+]);
+
+function augmentedCliPath(basePath, options = {}) {
+  const platform = options.platform || process.platform;
+  const delimiter = platform === "win32" ? ";" : ":";
+  const parts = String(basePath || "").split(delimiter).filter(Boolean);
+  if (platform !== "win32") {
+    for (const dir of GUI_PATH_EXTRA_DIRS) {
+      if (!parts.includes(dir)) parts.push(dir);
+    }
+    let home = typeof options.home === "string" ? options.home : "";
+    if (!home) {
+      try {
+        home = require("os").homedir();
+      } catch {
+        home = "";
+      }
+    }
+    if (home) {
+      const localBin = path.posix.join(home.replace(/\\/g, "/"), ".local", "bin");
+      if (!parts.includes(localBin)) parts.push(localBin);
+    }
+  }
+  return parts.join(delimiter);
+}
+
 function createTrellisCli(options = {}) {
   const {
     execFileImpl = defaultExecFile,
@@ -337,6 +373,7 @@ function createTrellisCli(options = {}) {
 
 module.exports = {
   createTrellisCli,
+  augmentedCliPath,
   TRELLIS_BIN,
   NPM_BIN,
   REMOTE_PACKAGE,
