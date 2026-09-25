@@ -22,7 +22,7 @@
 
 - [x] 3.1 新增 `test/settings-tab-trellis-wizard-static.test.js`：escapeHtml 强制、无 insertBefore/顶层 setTimeout、IPC 仅经 window.settingsAPI、close() 清理存在
 - [x] 3.2 macOS 手动 QA 全流程（含取消路径、重复开关）
-- [ ] 3.3 spec 沉淀（若出现新教训）+ commit
+- [x] 3.3 spec 沉淀（renderer-guidelines 三条 CLI 契约 + trellis-panel-contract 状态文件版本化契约）+ commit
 
 ## 回滚点
 

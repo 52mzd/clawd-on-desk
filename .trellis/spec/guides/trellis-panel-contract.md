@@ -1169,3 +1169,19 @@ fade-out（`animateTrellisOverlayClose`：setTimeout 140ms 守卫，重开
 - 尺寸继续遵守 §4.6e zoom-safe 红线（percent 链接父级 + px cap，不用 `vw`）
 - 两栏不得各自设固定 `max-height`；高度由共享卡片框 + flex 撑满决定
 - 详情卡组件单一来源：split 嵌入与 overlay 复用同一 `buildTrellisDetailCard`，不得复制第二套
+
+## Scenario: 解析外部工具的状态文件（版本化契约）（09-25 break-loop）
+
+**Bug 复盘**：12345 项目装了多个平台，Settings 一律显示为零。CLI 0.7.0-beta.4 起
+不再把平台文件写进 `.template-hashes.json`，而 Clawd 的 `readPlatforms` 只解析该文件——
+上游契约悄变更，下游全盲。
+
+**教训**：外部工具落盘的状态文件是**版本化契约**，不是永久真相。解析任何状态文件前问：
+
+1. 这个文件格式随上游版本变过吗？（查上游 changelog / 实测两个版本 diff）
+2. 有没有第二证据源可以交叉验证？（本例：配置目录存在性 = 独立证据）
+3. 判据要多源并集还是交集？安装态 = ∪（任一证据即装过）；失配/残留态 = ∧（记录在但目录丢）。
+
+**修法已固化**：`platformsOfUnion(hashes, path)` 是唯一读路径，禁止直用 `parsePlatforms`；
+stale 语义 `staleIdsOf` 不变。同类风险：`.version`、`config.yaml`、`runtime.json` 都按
+版本化契约对待——解析失败/空集时先怀疑上游改契约，再查自己的代码。
