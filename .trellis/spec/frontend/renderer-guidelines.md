@@ -202,3 +202,34 @@ dashboard 渲染层的 node:test 用 `vm.runInNewContext` + 极简 DOM stub，�
 各有一个 bootstrap-guidelines）会同时命中。凡是「选中高亮 / 键盘导航 /
 map 缓存」，键一律用 `trellisTaskKey(path, cwd)`；只按 path 匹配会全高亮、
 跳错行。新增同类列表时先问：这个 id 跨项目唯一吗？不唯一就带 scope。
+
+## Trellis 列表卡片族契约（09-25 R7 定型）
+
+左栏 split view 与会话内 trellis 面板共用**同一卡片族**，改其中一处 UI
+必须同步核对另一处：
+
+| 层级 | 左栏 | 会话内 |
+|---|---|---|
+| 卡（border+surface+shadow-1+radius-m+6px 内边距） | `.trellis-split-phase-card` | `.trellis-phase-rows` |
+| 卡头（13px/600 muted + 裸 caret + 右侧 count pill，hover tint） | `.trellis-split-group-head` | `.trellis-phase-section` |
+| 行（**无自边框**、hover tint、accent 选中条、radius-s） | `.trellis-split-row` | `.trellis-task-row` |
+
+### 折叠只藏行，不藏卡
+
+```js
+// ❌ wrap.hidden = collapsed; // 头也在 wrap 里 → 折叠后无法再展开；还踩 [hidden] 陷阱
+// ✅ 折叠时仍构建卡+头，只跳过行 append；键盘导航的 tasksByPath 照常填充
+```
+
+空组（空 done/finish 归档）直接 `continue` 跳过整卡，不渲染空占位。
+
+### sticky 头进卡后背景必须换成卡面色
+
+月份/分组头从「贴列表流」搬进卡片后，旧的列表混色背景
+（`color-mix(surface, bg)`）会在卡内透出一条异色带——改用 `var(--surface)`。
+同理，点击目标要 flex-fill 整行（`flex: 1 1 auto`），不能只命中文字。
+
+### localStorage 同样要 typeof 守卫
+
+与 timer 同理，vm 沙箱无 `localStorage`：持久化宽度等偏好前先
+`typeof localStorage !== "undefined"`，读回时验证范围，非法值回退 CSS 默认。
