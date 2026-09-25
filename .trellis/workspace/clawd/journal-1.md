@@ -579,3 +579,25 @@ Trellis 折叠动画两轮修复。acb422fb 首版改局部 class 翻转，但�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 20: 二开整合上游并开源（fork）+ 本地 merge 上游 + 导出陷阱沉淀
+
+**Date**: 2026-09-26
+**Task**: 二开整合上游并开源（fork）+ 本地 merge 上游 + 导出陷阱沉淀
+**Branch**: `main`
+
+### Summary
+
+二开 Trellis 集成整合上游最新版并开源。以独立 worktree 从 origin/main（0533435b）拉分支，用 merge-tree + read-tree 做无历史三方合并叠加二开公开面（93 文件 +24950），单提交 5ebefd3e；排除 .trellis/.pi/.gitattributes/skills-lock.json，commit author 改写为 noreply 邮箱避免本机身份入历史。fork 到 52mzd/clawd-on-desk 并公开（PUBLIC，GitHub compare 自证「上游多 0 / fork 多 1」），随后 caf23628 为六个语言版本 README 补齐 fork 声明与新增功能清单。关键修正：规划方案用 git checkout main -- <paths> 构建导出树会把上游 163 个非重叠文件整体回退、并丢弃重叠文件中上游新增的 580 行，而 merge-base --is-ancestor 检查仍然通过（历史在、内容已回退）——实现者改用 merge-tree 纠正；教训沉淀为 .trellis/spec/guides/repository-sync-guide.md（含基线对照态与阈值双态）。本地 main 随后 merge 上游 84 提交（零冲突，落后 0），tracked tree 涨至 61,736,291 故本地阈值调至 65011712（导出态仍 60817408）；全量测试失败 9 条 vs 上游纯态基线 10 条（零新增且少 1 条，上游已修复）。另建立 focus-recovered-hint 待办任务：startupRecovered 会话点击 HUD 显示「未提供终端窗口信息」的兜底文案不具可操作性，根因已定位（session-focus-unavailable.js 缺 startupRecovered 分支，remote 应优先于它），待修并回贡上游。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `503b6994` | (see git log) |
+| `5796122c` | (see git log) |
+
+### Status
+
+[OK] **Completed**
