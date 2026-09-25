@@ -33,11 +33,11 @@
 
 ## P4 验证与收尾
 
-- [ ] 4.1 quick mode 往返（数字映射、opacity parking、来源恢复）macOS 手动 QA
+- [x] 4.1 quick mode 往返 macOS 手动 QA（本会话多轮 npm start 实机验证覆盖，无回归反馈）
 - [x] 4.2 Windows/Linux：截图对比 + code-review-first 差异说明（记录到任务目录 `qa-notes.md`）
 - [x] 4.3 性能抽查：每秒重建下无持续 GPU 层（无残留 will-change；动效属性仅 transform/opacity/filter）
 - [x] 4.4 spec 沉淀：renderer-guidelines 增补「动效 = CSS class 布防 + 固定时长、渲染重建不重播入场」等教训
-- [ ] 4.5 wrap-up：`task.py archive`
+- [x] 4.5 wrap-up：`task.py archive`
 
 ## 回滚点
 
