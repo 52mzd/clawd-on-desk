@@ -2134,3 +2134,54 @@ describe("trellis doc fold static guards (R4 lessons)", () => {
       `wireTrellisDocCollapse expected >=3 occurrences (def + 2 paths), got ${calls.length}`);
   });
 });
+
+describe("dashboard.html CSS structural guards (09-25 lessons)", () => {
+  // 09-25 bug class: anchored edits to the big inline <style> block left
+  // behind stray selector lines / orphan declarations when the oldText
+  // anchor only covered a rule's head. Braces went unbalanced, rules got
+  // swallowed by their neighbors, and the WHOLE UI misrendered. Run this
+  // after ANY bulk CSS edit to dashboard.html.
+  const html = fs.readFileSync(path.join(__dirname, "..", "src", "dashboard.html"), "utf8");
+  const styleStart = html.indexOf("<style>") + "<style>".length;
+  const styleEnd = html.indexOf("</style>");
+  const css = html.slice(styleStart, styleEnd);
+
+  it("<style> block braces stay balanced (depth 0 at end)", () => {
+    let depth = 0;
+    let min = 0;
+    for (const line of css.split("\n")) {
+      depth += (line.match(/{/g) || []).length - (line.match(/}/g) || []).length;
+      min = Math.min(min, depth);
+    }
+    assert.equal(depth, 0, `<style> braces unbalanced: final depth ${depth}`);
+    assert.equal(min, 0, `<style> braces close before opening (min depth ${min}) — a stray } is eating selectors`);
+  });
+
+  it("<style> block has no orphan top-level declarations", () => {
+    // A top-level `prop: value;` line at brace depth 0 means a selector
+    // head was deleted while its body survived — the signature of the
+    // 09-25 mis-edit class. (Custom props in :root are fine; those live at
+    // depth 1 inside the :root block.)
+    let depth = 0;
+    const orphans = [];
+    css.split("\n").forEach((line, i) => {
+      if (depth === 0 && /^[-a-zA-Z]+\s*:\s*[^;{]+;\s*$/.test(line)) {
+        orphans.push(`css line ${i + 1}: ${line.trim()}`);
+      }
+      depth += (line.match(/{/g) || []).length - (line.match(/}/g) || []).length;
+    });
+    assert.deepEqual(orphans, [],
+      "orphan top-level declarations in <style> — a selector head was lost in an edit; rules are merging");
+  });
+
+  it("renderer avoids DOM methods missing from the vm test sandbox", () => {
+    // node:test runs the renderer via vm.runInNewContext with a minimal
+    // DOM stub: no insertBefore/prepend (and timers only behind typeof
+    // guards). If a future change needs them, extend the stub first.
+    const src = fs.readFileSync(path.join(__dirname, "..", "src", "dashboard-renderer.js"), "utf8");
+    assert.ok(!/\.insertBefore\(/.test(src),
+      "dashboard-renderer uses insertBefore — the vm sandbox DOM has no insertBefore; build order via appendChild instead");
+    assert.ok(!/\.prepend\(/.test(src),
+      "dashboard-renderer uses prepend — the vm sandbox DOM has no prepend; build order via appendChild instead");
+  });
+});
