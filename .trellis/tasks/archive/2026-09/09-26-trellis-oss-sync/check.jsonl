@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "验证导出树未破坏本仓硬线（死代码 / console.log / CSS 类双向引用），并核对清理动作没有留下半残状态"}
+{"file": "docs/project/release-process.md", "reason": "验证发布动作完整性：许可保持、资产策略、公开可见性复核口径"}
+{"file": ".trellis/spec/guides/trellis-panel-contract.md", "reason": "二开功能最硬的写入约束契约（argv 冻结、预览零写盘、信任门禁）；导出后必须仍自洽，不可因清理引用而丢失约束描述"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "验证 19 个重叠文件的三方叠加（上游最新 + 二开公开面）未在上游 84 提交的 hook 点周边产生语义裂缝"}

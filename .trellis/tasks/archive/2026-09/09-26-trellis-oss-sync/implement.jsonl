@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "导出清理必须满足本仓硬线：无死代码、无 console.log 残留、CSS 类双向引用；清理 .gitignore / AGENTS.md 时对照执行"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "二开 hook 点横跨 main.js / state.js / settings-* / session-*，导出覆盖时需按跨层契约核对，避免只覆盖一层造成半残"}
+{"file": "docs/project/release-process.md", "reason": "本任务是发布动作（fork + 公开），遵循仓库既有发版 checklist 的许可/资产/公开性确认口径"}
+{"file": "docs/project/agent-runtime-architecture.md", "reason": "二开 Trellis 集成的架构事实来源（含本轮新增的 Trellis Binding And Pet Feedback 一节），用于判断哪些 .trellis 引用属功能路径构造、哪些属悬空引用"}
