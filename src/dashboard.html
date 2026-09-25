@@ -307,25 +307,106 @@ h1 {
   color: var(--text);
 }
 
+/* Session-embedded Trellis tasks are CARDS like session cards themselves
+   (09-25 apple-design): surface + border + shadow-1, hover lifts. The old
+   rule lost its selector in a historical edit and degraded to a bare row. */
+/* Session-embedded Trellis rows mirror the LEFT-RAIL grouped-list anatomy
+   (R7 consistency): the phase wrap (.trellis-phase-rows) is the CARD —
+   border + surface + shadow — and rows inside are borderless grouped
+   rows with hover tint, exactly like .trellis-split-row inside
+   .trellis-split-phase-card. One card family everywhere. */
 .trellis-task-row {
-  border-radius: var(--radius-m);
-  transition: background-color var(--dur-1) var(--ease-out-apple);
-}
-.trellis-task-row:hover, .trellis-archive-row:hover {
-  background: color-mix(in srgb, #7aa2f7 8%, transparent);
-}
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 6px 8px;
-  border: 1px solid var(--row-border);
-  border-radius: var(--radius-m);
-  background: var(--surface);
+  padding: 7px 10px;
+  border-radius: var(--radius-s);
   cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-out-apple);
 }
 
 .trellis-task-row:hover {
-  background: var(--surface-alt);
+  background: var(--hover, rgba(127, 127, 127, 0.12));
+}
+
+.trellis-task-row:hover, .trellis-archive-row:hover {
+  background: color-mix(in srgb, #7aa2f7 8%, transparent);
+}
+
+/* Phase section header (计划/执行/检查…) inside the session trellis panel:
+   a light collapsible divider, same layer as rows — not a boxed control. */
+/* The phase GROUP is the card (mirrors .trellis-split-phase-card exactly):
+   same border, radius, surface, shadow, 6px padding, 2px inner gap. */
+.trellis-phase-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+/* Card header INSIDE .trellis-phase-rows (R7): mirrors the left-rail
+   .trellis-split-group-head anatomy — 13px/600 muted label, bare caret,
+   auto-right count pill, hover tint. The card itself carries the border. */
+.trellis-phase-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 6px 4px;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  transition: background-color var(--dur-1) var(--ease-out-apple), color var(--dur-1) var(--ease-out-apple), transform var(--dur-1) var(--ease-out-apple);
+}
+
+.trellis-phase-section:hover {
+  background: var(--hover, rgba(127, 127, 127, 0.12));
+  color: var(--text);
+}
+
+.trellis-phase-section:active {
+  transform: scale(0.99);
+}
+
+.trellis-phase-section-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--muted);
+  transition: transform var(--dur-2) var(--ease-out-apple);
+}
+
+.trellis-phase-section.is-collapsed .trellis-phase-section-caret {
+  transform: rotate(-90deg);
+}
+
+/* Label span inside the phase-section header — deliberately no own
+   styles: typography inherits from .trellis-phase-section. Kept as a
+   class so label-only tweaks have a stable hook. */
+.trellis-phase-section-label {
+  /* inherit */
+}
+
+.trellis-phase-section-count {
+  margin-left: auto;
+  font: var(--trellis-font-meta);
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--hover, rgba(127, 127, 127, 0.15));
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .trellis-task-main {
@@ -333,16 +414,6 @@ h1 {
   align-items: center;
   gap: 8px;
   min-width: 0;
-}
-
-.trellis-task-title {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  font-weight: 600;
 }
 
 .trellis-phase-badge {
@@ -565,18 +636,9 @@ h1 {
   letter-spacing: 0.04em;
 }
 
-/* Root rows: path + tail remove button; quiet like the archive rows. */
-.trellis-root-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 6px 10px;
-  border: 1px solid var(--row-border);
-  border-radius: var(--radius-m);
-  background: var(--surface);
-}
-
+/* Root management lives in Settings → Trellis (09-25); the old in-view
+   add/remove rows are gone — only the path label style remains for the
+   empty-hint text. */
 .trellis-root-path {
   flex: 1 1 auto;
   min-width: 0;
@@ -587,34 +649,10 @@ h1 {
   font-size: 12px;
 }
 
-.trellis-root-remove {
-  min-width: 0;
-  height: 22px;
-  padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-s);
-  background: var(--surface-alt);
-  color: var(--muted);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.trellis-root-remove:hover:not(:disabled) {
-  color: var(--text);
-}
-
 .trellis-view-empty {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.45;
-}
-
-.trellis-view-add-root {
-  align-self: flex-start;
-  min-width: 0;
-  height: 26px;
-  padding: 0 10px;
-  font-size: 11px;
 }
 
 .trellis-view-error {
@@ -645,29 +683,42 @@ h1 {
   margin: 0 0 14px;
 }
 
-.trellis-filter-manage {
+.trellis-filter-refresh {
   flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
   padding: 0;
-  border: none;
+  border: 1px solid var(--border);
   border-radius: var(--radius-s);
   background: transparent;
   color: var(--muted);
-  font-size: 12px;
   line-height: 1;
   cursor: pointer;
   transition: var(--trellis-press);
 }
 
-.trellis-filter-manage:hover,
-.trellis-filter-manage.is-active {
-  background: var(--hover, rgba(127, 127, 127, 0.14));
+.trellis-filter-refresh:hover {
   color: var(--text);
+  border-color: color-mix(in srgb, var(--accent, #7aa2f7) 40%, var(--border));
 }
 
-.trellis-filter-manage:active {
-  transform: scale(0.97);
+/* Click feedback: one quick spin, then the icon settles (no looping). */
+.trellis-filter-refresh.is-spinning svg {
+  animation: trellis-refresh-spin 600ms var(--ease-out-apple);
+}
+
+@keyframes trellis-refresh-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trellis-filter-refresh.is-spinning svg {
+    animation: none;
+  }
 }
 
 .trellis-filter-chips {
@@ -805,9 +856,8 @@ h1 {
 .trellis-archive-title {
   flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
   font-size: 12px;
   color: var(--muted);
 }
@@ -1168,9 +1218,34 @@ h1 {
   padding: 8px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 6px;
   background: color-mix(in srgb, var(--surface, rgba(127, 127, 127, 0.06)) 55%, var(--bg, #16161e));
-  border-right: 1px solid var(--border);
+}
+
+/* Draggable left-rail resizer (09-25): 6px hit area hugging the list's
+   right edge, col-resize cursor, subtle hover accent. JS drives the width
+   via flex-basis (clamped 240–480px) and persists to localStorage. */
+.trellis-split-resizer {
+  flex: 0 0 6px;
+  align-self: stretch;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  z-index: 2;
+}
+
+.trellis-split-resizer::after {
+  content: "";
+  position: absolute;
+  inset: 0 2px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background-color var(--dur-1) var(--ease-out-apple);
+}
+
+.trellis-split-resizer:hover::after,
+.trellis-split-resizer:active::after {
+  background: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 35%, transparent);
 }
 
 .trellis-split-group-head {
@@ -1277,25 +1352,75 @@ h1 {
 .trellis-split-caret:focus-visible,
 .trellis-split-refresh:focus-visible,
 .trellis-split-foot-btn:focus-visible,
-.trellis-filter-manage:focus-visible,
 .trellis-split-group-toggle:focus-visible,
-.trellis-split-row:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.trellis-split-row:focus-visible
+
+
+/* Rows are CARDS mirroring the session list (09-25 apple-design): surface +
+   border + shadow-1, hover lifts to shadow-2. Keyboard-first selection keeps
+   its zero-lag contract (Batch D): background and border flip INSTANTLY, so
+   border-color never joins a transition. */
+/* Phase section = CARD (R7): the head and every task row live inside one
+   bordered surface — same family as session cards, one visual layer.
+   Rows inside are GROUPED-LIST rows (macOS Settings style): no own border,
+   hover tint + accent bar on selection. Hierarchy inherits down: section
+   card → root row → child row (indent + muted). */
+.trellis-split-phase-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+.trellis-split-phase-card .trellis-split-group-head {
+  padding: 6px 6px 4px;
+  border-radius: var(--radius-s);
+  /* Inside a phase CARD the sticky backdrop must be the card surface
+     itself — the old list-mix tint reads as a foreign band (R7). */
+  background: var(--surface);
+}
+
+.trellis-split-phase-card .trellis-split-group-head:hover:not(:disabled) {
+  background: var(--hover, rgba(127, 127, 127, 0.12));
+  border-radius: var(--radius-s);
+}
+
+.trellis-split-month-head {
+  display: flex;
+  align-items: center;
+  padding: 6px 6px 4px;
+  user-select: none;
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+
+.trellis-split-month-head .trellis-split-month-toggle {
+  /* SAME anatomy as phase toggles (R7): flex-fill the row so the ENTIRE
+     card-width strip is the click target — not just the date glyphs. */
+  flex: 1 1 auto;
+  padding: 6px 6px;
+  border-radius: var(--radius-s);
+}
+
+.trellis-split-month-head .trellis-split-month-toggle:hover {
+  background: var(--hover, rgba(127, 127, 127, 0.12));
 }
 
 .trellis-split-row {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 7px 8px;
-  border-radius: var(--radius-m);
+  padding: 7px 10px;
+  border-radius: var(--radius-s);
   cursor: pointer;
+  border: 1px solid transparent;
   border-left: 3px solid transparent;
-  /* Keyboard-first selection (UI redesign 09-24 Batch D): background and
-     border-left flip INSTANTLY so ↑/↓ navigation has zero transition lag.
-     Hover uses a background tint only — translateX nudges shift content
-     under the cursor and feel laggy (09-25 R2). */
   transition: background-color var(--dur-1) var(--ease-out-apple);
 }
 
@@ -1305,6 +1430,7 @@ h1 {
 
 .trellis-split-row.is-selected {
   background: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent, rgba(90, 160, 255, 0.85)) 45%, transparent);
   border-left-color: var(--accent, rgba(90, 160, 255, 0.85));
 }
 
@@ -1370,9 +1496,10 @@ h1 {
 .trellis-split-row-title {
   font: var(--trellis-font-title);
   color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* Titles wrap freely — the left rail scrolls, so a clipped title hides
+     identity (wayfinding); sub rows stay single-line ellipsis. */
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .trellis-split-row-sub {
@@ -1383,6 +1510,15 @@ h1 {
   text-overflow: ellipsis;
 }
 
+.trellis-task-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .trellis-split-row-side {
   flex: 0 0 auto;
   font: var(--trellis-font-meta);
@@ -1391,6 +1527,9 @@ h1 {
   background: var(--hover, rgba(127, 127, 127, 0.12));
   padding: 1px 6px;
   border-radius: 999px;
+}
+.trellis-split-group-toggle.is-collapsed .trellis-split-group-caret {
+  transform: rotate(-90deg);
 }
 
 /* Hierarchy cues (09-25 split polish): children indent 16px per level,
@@ -1519,35 +1658,37 @@ h1 {
    heads (UI redesign 09-24 Batch C) — the head is a plain container, the
    inner button carries the fold handler, hover/active/focus states and
    aria-expanded; `is-collapsed` stays on the head for CSS + tests. */
+/* Month dividers inherit the SAME anatomy as phase group heads (09-25 R7
+   alignment): 13px/600 label, identical padding, card-surface sticky bg.
+   They live inside the archive phase-card now, so the sticky background
+   must be the card surface itself — the old list-mix tint bleeds through. */
 .trellis-split-month-head {
   display: flex;
   align-items: center;
-  padding: 6px 6px 4px 14px;
+  padding: 6px 6px 4px;
   user-select: none;
-  /* Same sticky treatment as group headers: month dividers stay visible
-     while archive rows scroll; opaque over --bg. */
   position: sticky;
   top: 0;
-  background: color-mix(in srgb, var(--surface, rgba(127, 127, 127, 0.06)) 55%, var(--bg, #16161e));
+  background: var(--surface);
   z-index: 1;
 }
 
 .trellis-split-month-toggle {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
   height: auto;
-  padding: 4px 8px;
+  padding: 0;
   border: none;
   border-radius: var(--radius-s);
   background: transparent;
   font-family: inherit;
-  /* R3: 11px/400 was too small for a date divider label; 12px/500 with a
-     pill hover/active background gives a clear click target highlight
-     (old :active scale(0.97) on a bare transparent row looked broken). */
-  font-size: 12px;
-  font-weight: 500;
+  /* Matches .trellis-split-group-head typography exactly (R7): same
+     13px/600 + muted as phase labels — dates are siblings of phases,
+     not second-class captions. */
+  font-size: 13px;
+  font-weight: 600;
   color: var(--muted);
   text-align: left;
   cursor: pointer;
@@ -1556,11 +1697,10 @@ h1 {
 
 .trellis-split-month-toggle:hover {
   color: var(--text);
-  background: var(--surface-alt, rgba(127, 127, 127, 0.14));
 }
 
 .trellis-split-month-toggle:active {
-  background: color-mix(in srgb, var(--accent, #7aa2f7) 12%, transparent);
+  transform: scale(0.97);
 }
 
 .trellis-split-month-toggle:focus-visible {
@@ -1575,7 +1715,7 @@ h1 {
   color: inherit;
 }
 
-.trellis-split-month-head.is-collapsed .trellis-split-caret {
+.trellis-split-month-head.is-collapsed .trellis-split-group-caret {
   transform: rotate(-90deg);
 }
 
@@ -1829,7 +1969,6 @@ h1 {
   .trellis-split-caret,
   .trellis-split-refresh,
   .trellis-split-foot-btn,
-  .trellis-filter-manage,
   .trellis-split-group-toggle,
   .trellis-split-month-toggle {
     transition: none;
@@ -1839,7 +1978,6 @@ h1 {
   .trellis-split-caret:active,
   .trellis-split-refresh:active,
   .trellis-split-foot-btn:active,
-  .trellis-filter-manage:active,
   .trellis-split-group-toggle:active,
   .trellis-split-month-toggle:active {
     transform: none;
@@ -2396,7 +2534,7 @@ h1 {
 .md-h3 { font-size: 13px; margin: 10px 0 4px; }
 .md-h4 { font-size: 12px; margin: 8px 0 4px; }
 
-.md-bold { font-weight: 700; }
+.md-bold { font-weight: 700; color: var(--text); }
 
 /* Reading aids: inline code / checked tasks get accent tints. */
 .md-code-inline {
@@ -2434,34 +2572,30 @@ h1 {
   user-select: none;
 }
 
-/* Collapsible headings render as fold CARDS (R3): bordered surface row,
-   hover lifts the border, collapsed state tints accent — the old accent
-   text + gray-on-hover + hanging caret looked broken. */
+/* Collapsible headings stay in the SAME visual layer as plain headings
+   (R5: fold cards read as a separate plane — "不是同一层"). Chevron inline,
+   no card box; collapsed state dims the text instead of tinting a surface. */
 .md-heading-collapsible.md-h2,
 .md-heading-collapsible.md-h3 {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-m);
-  background: var(--surface, rgba(127, 127, 127, 0.06));
-  transition: border-color var(--dur-1) var(--ease-out-apple), background-color var(--dur-1) var(--ease-out-apple);
+  gap: 4px;
+  margin-left: -18px; /* compensate chevron + gap so title text aligns with body text */
+  padding-left: 4px;
+  border-radius: var(--radius-s);
+  transition: background-color var(--dur-1) var(--ease-out-apple), color var(--dur-2) var(--ease-out-apple);
 }
 
-.md-heading-collapsible.md-h2:hover,
-.md-heading-collapsible.md-h3:hover {
-  border-color: var(--accent, #7aa2f7);
+.md-heading-collapsible.md-h3 {
+  padding: 2px 4px;
 }
 
-.md-heading-collapsible.md-h2:active,
-.md-heading-collapsible.md-h3:active {
-  background: color-mix(in srgb, var(--accent, #7aa2f7) 10%, transparent);
+.md-heading-collapsible:hover {
+  background: color-mix(in srgb, var(--accent, #7aa2f7) 6%, transparent);
 }
 
 .md-heading-collapsible.md-collapsed {
-  background: color-mix(in srgb, var(--accent, #7aa2f7) 8%, transparent);
-  border-color: color-mix(in srgb, var(--accent, #7aa2f7) 35%, var(--border));
+  color: var(--muted);
 }
 
 .md-heading-toggle {
@@ -2496,16 +2630,14 @@ h1 {
   border-radius: var(--radius-m);
   background: var(--surface-alt);
   border: 1px solid var(--border);
+  border-left: 2px solid color-mix(in srgb, var(--accent, #7aa2f7) 45%, transparent);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.md-code-inline {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11px;
-  padding: 1px 4px;
-  border-radius: var(--radius-xs);
-  background: var(--surface-alt);
+.md-bold {
+  font-weight: 700;
+  color: var(--text);
 }
 
 .md-italic { font-style: italic; }

@@ -18,6 +18,7 @@ Dashboard（Sessions 列表 + Trellis 面板 + quick mode）当前 CSS 约 71K �
 - R4 **光学排版**：标题负 tracking、正文近 0；行高按字号反比；保持系统字体栈不变；状态色体系保留（Claude 橙 accent / running 绿 / done 蓝）但收敛到材质友好的半透明底色应用（badge/tint 层）
 - R5 **可达性**：`prefers-reduced-motion` 全套 cross-fade 降级；focus-visible 焦点环；`prefers-reduced-transparency` 提供更实底材质
 - R6 **平台兼容**：三平台（macOS/Windows/Linux）Chromium 渲染层一致；Dashboard 为不透明普通窗口（非透明 pet 窗口），`backdrop-filter` 不受 Windows DWM 透明窗口陷阱影响；quick mode 宿主（WebContentsView opacity parking）行为不受 CSS 改动干扰
+- R7 **左栏分类卡片化 + 层级继承统一（09-25 追加）**：计划/执行/检查/收尾/归档五个分类头从「轻量分隔条」升级为卡片形态；分类→根任务→子任务→孙任务的每一级有统一的 UI 逻辑对齐与视觉继承（同族语言、逐级弱化），不再出现「分类头与任务卡不同层」的割裂感。注：左栏无「规范/关联」分组（仅右栏文档树有），待用户确认是否需要新增
 
 ## 非目标（Out of Scope）
 

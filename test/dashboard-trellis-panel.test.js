@@ -1199,13 +1199,10 @@ describe("dashboard trellis independent view", () => {
     assert.equal(app.titleEl.textContent, i18n.en.dashboardViewTrellis);
 
     assert.equal(app.rootsCalls.length, 1);
-    // v7 R5: the project bar is the primary control; the root list (full
-    // paths + remove) lives behind the ⚙ drawer toggle.
-    assert.equal(byClass(app.view, "trellis-root-row").length, 0, "the manage drawer starts closed");
-    await byClass(app.view, "trellis-filter-manage")[0].dispatch("click");
-    const rows = byClass(app.view, "trellis-root-row");
-    assert.equal(rows.length, 1);
-    assert.ok(textOf(rows[0]).includes("/proj/s1"));
+    // Root management moved to Settings → Trellis (09-25): no manage
+    // drawer, no root rows in the view — chips are the primary UI.
+    assert.equal(byClass(app.view, "trellis-root-row").length, 0);
+    assert.equal(byClass(app.view, "trellis-filter-manage").length, 0);
 
     const activeRows = byClass(app.view, "trellis-split-row");
     assert.equal(activeRows.length, 1);
@@ -1289,34 +1286,8 @@ describe("dashboard trellis independent view", () => {
     assert.ok(textOf(app.view).includes(i18n.en.dashboardTrellisRootsEmptyHint));
     assert.ok(textOf(app.view).includes(i18n.en.dashboardTrellisActiveEmpty));
     assert.ok(textOf(app.view).includes(i18n.en.dashboardTrellisArchivedEmpty));
-    assert.ok(byClass(app.view, "trellis-view-add-root").length,
-      "the add-root button stays reachable in the empty state");
-  });
-
-  it("add uses the picker channel and remove passes the exact registered root", async () => {
-    let registered = ["/proj/s1"];
-    const app = loadDashboard({
-      sessions: [],
-      rootsResult: () => ({ status: "ok", roots: registered }),
-      activeResult: { status: "ok", tasks: [] },
-      archiveResult: { status: "ok", tasks: [] },
-      addResult: { status: "ok", roots: ["/proj/s1", "/proj/two"] },
-      removeResult: { status: "ok", roots: [] },
-    });
-    await flush();
-    await switchToTrellis(app);
-
-    await byClass(app.view, "trellis-filter-manage")[0].dispatch("click");
-    await byClass(app.view, "trellis-view-add-root")[0].dispatch("click");
-    registered = ["/proj/s1", "/proj/two"];
-    await flush();
-    assert.equal(app.addRootCalls.length, 1, "add never carries a path from the renderer");
-    assert.equal(app.rootsCalls.length, 2, "a successful add refreshes the roots list");
-
-    await byClass(app.view, "trellis-root-remove")[0].dispatch("click");
-    await flush();
-    assert.deepEqual(app.removeRootCalls, ["/proj/s1"],
-      "remove passes the row's exact registered root string");
+    assert.ok(byClass(app.view, "trellis-view-add-root").length === 0,
+      "no add-root button in the view — Settings owns add/remove");
   });
 
   it("opens the shared detail overlay from an archived row", async () => {
@@ -1450,8 +1421,11 @@ describe("dashboard trellis independent view", () => {
     assert.equal(byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-archived")).length, 1);
 
     // The archive group head carries its own ↻ refresh button.
-    const archiveRefresh = byClass(app.view, "trellis-split-refresh")[0];
-    await archiveRefresh.dispatch("click");
+    // Global refresh lives in the chip bar (09-25): one ↻ refreshes
+    // roots + active + archive at once — archive head no longer owns it.
+    const refresh = byClass(app.view, "trellis-filter-refresh")[0];
+    assert.ok(refresh, "global refresh button in chip bar");
+    await refresh.dispatch("click");
     await flush();
     assert.equal(app.archiveCalls.length, 2);
     assert.equal(byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-archived")).length, 1,
@@ -1574,7 +1548,9 @@ describe("dashboard trellis independent view", () => {
       "a collapsed archived group renders no rows",
     );
     // ↻ refresh is a sibling of the fold toggle, never nested inside it.
-    assert.equal(byClass(doneHead(), "trellis-split-refresh").length, 1);
+    // Global refresh moved to the chip bar (09-25) — the archive head
+    // keeps only its fold toggle.
+    assert.equal(byClass(doneHead(), "trellis-split-refresh").length, 0);
 
     // The foot bar owns the bulk tools; they drive the same collapsedPaths
     // set the per-row carets write to.
@@ -1622,7 +1598,10 @@ describe("dashboard trellis independent view", () => {
     );
 
     // Only the orphan owns a month sub-group: the adopted task left its own.
-    assert.deepEqual(byClass(app.view, "trellis-split-month-label").map(textOf), ["2026-08 · 1"]);
+    // Month heads share the phase-head anatomy (R7): bare label + separate
+    // auto-right count pill instead of the old "month · count" merged text.
+    assert.deepEqual(byClass(app.view, "trellis-split-month-label").map(textOf), ["2026-08"]);
+    assert.ok(byClass(app.view, "trellis-split-group-count").map(textOf).includes("1"));
     assert.equal(byClass(app.view, "trellis-split-month-head").length, 1);
   });
 });
@@ -1804,14 +1783,11 @@ describe("dashboard trellis project filter (rendering)", () => {
     await byClass(app.view, "trellis-filter-chip")[2].dispatch("click");
     assert.equal(byClass(app.view, "trellis-split-row").length, 1);
 
-    // Removing the selected root refreshes the roots list; the stale
-    // selection must not silently filter everything out. Removal lives in
-    // the ⚙ manage drawer (v7 R5).
+    // Removing the selected root (now done in Settings) refreshes the roots
+    // list; the stale selection must not silently filter everything out.
     registered = ["/proj/one"];
-    await byClass(app.view, "trellis-filter-manage")[0].dispatch("click");
-    await byClass(app.view, "trellis-root-remove")[1].dispatch("click");
+    await byClass(app.view, "trellis-filter-refresh")[0].dispatch("click");
     await flush();
-    assert.deepEqual(app.removeRootCalls, ["/proj/two"]);
     assert.equal(
       byClass(app.view, "trellis-split-row").length,
       2,
@@ -1918,28 +1894,17 @@ describe("dashboard trellis v7 single view (R5–R7)", () => {
     await flush();
     await switchToTrellis(app);
 
-    // The bar is primary: title + chips + spec entry + ⚙.
-    assert.equal(textOf(byClass(app.view, "trellis-filter-title")[0]), i18n.en.dashboardTrellisFilterAll);
+    // The bar is primary: chips + spec entry + gear icon (09-25 polish: no
+    // redundant "全部项目" title when nothing is selected — chips already
+    // list every root).
+    assert.equal(byClass(app.view, "trellis-filter-title").length, 0);
     assert.equal(byClass(app.view, "trellis-filter-chip").length, 3);
     // v7 R10: no 📐 button anymore — spec docs live in a left-column group.
     assert.equal(byClass(app.view, "trellis-spec-open").length, 0);
-    const manage = byClass(app.view, "trellis-filter-manage");
-    assert.equal(manage.length, 1);
-    assert.equal(manage[0].attributes["aria-expanded"], "false");
-
-    // The full-path list (and its remove buttons) stays out of the way.
+    // Root management lives in Settings → Trellis (09-25): no ⚙ button,
+    // no root rows — chips are the only root UI in the view.
+    assert.equal(byClass(app.view, "trellis-filter-manage").length, 0);
     assert.equal(byClass(app.view, "trellis-root-row").length, 0);
-    assert.equal(byClass(app.view, "trellis-roots-section").length, 0);
-
-    await manage[0].dispatch("click");
-    const rows = byClass(app.view, "trellis-root-row");
-    assert.equal(rows.length, 2, "⚙ reveals the manage drawer");
-    assert.ok(textOf(rows[0]).includes("/proj/one"));
-    assert.equal(byClass(app.view, "trellis-root-remove").length, 2);
-    assert.equal(byClass(app.view, "trellis-filter-manage")[0].attributes["aria-expanded"], "true");
-
-    await byClass(app.view, "trellis-filter-manage")[0].dispatch("click");
-    assert.equal(byClass(app.view, "trellis-root-row").length, 0, "⚙ folds it away again");
   });
 
       it("resets spec and relations content when the project chip switches", async () => {

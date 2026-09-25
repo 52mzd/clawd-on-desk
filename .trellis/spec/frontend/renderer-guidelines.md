@@ -184,3 +184,21 @@ border-radius/token 迁移时按**现状值域分档**（3/4/5→xs、6/7→s、
 而不是按理想值重新设计（初稿 -s=6/-m=10/-l=14 会一次性改变全应用观感）。
 机械替换保留特例：`50%`/`999px`（圆）、复合值（多角）、`var()` 引用不碰。
 每次批量替换后用 Counter 验证分布，防止误伤。
+
+## vm 测试沙箱还有：没有 insertBefore / prepend（09-25 追加）
+
+dashboard 渲染层的 node:test 用 `vm.runInNewContext` + 极简 DOM stub，除了没有 timer，
+**也没有 `insertBefore` / `prepend`**。需要"插在最前"时，改用 append 顺序：
+先 append 首元素再 append 其余，或构建时就把顺序排好，别在事后前插。
+
+```js
+// ❌ chipsRow.insertBefore(refreshBtn, chipsRow.firstChild); // vm DOM 无此方法
+// ✅ 构建 chips 时先 appendChild(refreshBtn) 再 append 其余 chip
+```
+
+## 合并多 root 的列表，选中身份必须是 (id, cwd) 二元组（09-25 bug）
+
+「全部项目」模式把多个 root 的任务合进一个列表，同名 taskPath（如两个仓库
+各有一个 bootstrap-guidelines）会同时命中。凡是「选中高亮 / 键盘导航 /
+map 缓存」，键一律用 `trellisTaskKey(path, cwd)`；只按 path 匹配会全高亮、
+跳错行。新增同类列表时先问：这个 id 跨项目唯一吗？不唯一就带 scope。
