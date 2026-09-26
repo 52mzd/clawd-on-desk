@@ -645,3 +645,24 @@ Trellis 折叠动画两轮修复。acb422fb 首版改局部 class 翻转，但�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 23: Trellis 向导 -u 开发者身份（含 shell 注入防护）
+
+**Date**: 2026-09-27
+**Task**: Trellis 向导 -u 开发者身份（含 shell 注入防护）
+**Branch**: `main`
+
+### Summary
+
+Settings → Trellis 安装向导支持 trellis init -u <name> 开发者身份，取代 3 处硬编码的项目目录名（trellis-cli.js / trellis-ipc.js / trellis-runtime.js）。背景：-u 的语义是开发者身份（落在 .trellis/workspace/<name>/，.developer 是 gitignored 的 per-checkout 身份文件），而向导用 basename(projectPath) 会让个人工作区落在项目名下。实现：CLI 层新增 normalizeUserName（Unicode 白名单）+ resolveUserName（唯一回退链 输入值→目录名→clawd，永不返回空）+ readGitUserName（git config user.name，3s 超时）；IPC 层给 trellis-preview / trellis-add-platform 的 payload 加可选 userName 并新增 settings:trellis-user-suggestion（同一信任门禁 + 进程内缓存）；UI 层在向导选平台屏加「开发者名」输入框，仅 project.installed === false（首次 init）时渲染，默认值异步取 git user.name，state.userName 跨阶段保持，无 insertBefore/timer；i18n 按方案 C 补 22 键 × 7 语言（19 个向导旧键 + 3 个新键，整行锚定、零删除），顺带清掉「向导 key 只在英文 FALLBACK」的现状债。独立验证发现并修复一个阻塞缺陷：win32 的 execFile 走 shell:true 而 Node 只拼接不转义，自由文本 userName 可命令注入（验证者实测 ; & | $() 反引号五种 payload 全部注入成功）——改用白名单后全部被拒，并把同一注入面的目录名兜底一并收紧；该缺陷同时影响 Windows 上含 & % | 的合法名字的正确性。验证：定向 138/138；全量 npm test 与基线逐行相同（零新增）；注入回归真跑含反证；白名单不误伤中文/日文/emoji；真机用真实 trellis 0.6.17 验证 init -u 建身份、加平台不覆盖身份。已知取舍：含空格或 ASCII 标点的名字（Tom & Jerry / 100% / -alice）会静默回退到目录名，UI 暂无 inline 校验提示。契约同步进 guides/trellis-panel-contract.md（7 段式 Scenario）与 docs/project/trellis-settings-panel.md。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4b3bbfaa` | (see git log) |
+
+### Status
+
+[OK] **Completed**
