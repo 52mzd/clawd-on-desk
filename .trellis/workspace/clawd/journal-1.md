@@ -601,3 +601,24 @@ Trellis 折叠动画两轮修复。acb422fb 首版改局部 class 翻转，但�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 21: fork release 发布（含 PATH 修复重构建）
+
+**Date**: 2026-09-26
+**Task**: fork release 发布（含 PATH 修复重构建）
+**Branch**: `main`
+
+### Summary
+
+在 fork 52mzd/clawd-on-desk 发布 v1.1.0-trellis.1.0：走上游 Build & Release 的 workflow_dispatch 路径（ad-hoc，绕过 tag 触发的 fail-closed）产出 Windows/macOS/Linux 全套安装包，上传为 GitHub Release（13 assets，含 latest*.yml 与 blockmap）。过程中修复四类阻塞：① release notes 未过 .gitignore 的 docs/** 白名单导致 verify:release 找不到文件；② commit author 泄漏本机身份 Dae@Mac-Studio.local（filter-branch 重写为 noreply）；③ 贡献者契约（verify-release-contributors 映射表 + settings-i18n CONTRIBUTORS + 6 个 README 一致性，readme-contributors.test.js 断言三者完全相等）；④ semver previousTag 陷阱：1.1.0-trellis.1.0 使 v1.1.0 被过滤、previousTag 回退到 v1.0.0 而把上游未发布提交的贡献者纳入检查——最终决定不改版本号（契约测试全部回归原状，verify:release 亦通过）。首版发布后用户实测发现打包版报「PATH 中未找到 trellis CLI」：Finder 启动的 App 继承 launchd 默认 PATH（/usr/bin:/bin:/usr/sbin:/sbin），不含 /usr/local/bin 等 trellis 安装位置，而终端 npm start 正常。修复：trellis-cli.js 新增并导出 augmentedCliPath()（追加 /opt/homebrew/bin、/usr/local/bin、~/.local/bin，去重；Windows 原样），main.js 的 registerTrellisIpc 按该模块注释要求的 caller 契约传入 env.PATH；参照 focus.js 对 orca CLI 的同类处理。重构建后以 gh release upload --clobber 替换 assets，并用 sha256 digest 逐字节确认 release 上的包即新构建。最后把 release 从 pre-release 改为正式：GitHub 的 pre-release 不计入 latest，导致 /releases 页面顶部只显示 Create a new release；改为正式后 latest API 解析成功、页面文本确认该提示消失。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `25ef2a7e` | (see git log) |
+
+### Status
+
+[OK] **Completed**

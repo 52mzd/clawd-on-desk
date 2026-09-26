@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 20
+- **Total Sessions**: 21
 - **Last Active**: 2026-09-26
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~603 | Active |
+| `journal-1.md` | ~624 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 21 | 2026-09-26 | fork release 发布（含 PATH 修复重构建） | `25ef2a7e` | `main` |
 | 20 | 2026-09-26 | 二开整合上游并开源（fork）+ 本地 merge 上游 + 导出陷阱沉淀 | `503b6994`, `5796122c` | `main` |
 | 19 | 2026-09-26 | Trellis 折叠动画真机修复 + 宠物行为关联图谱 | `acb422fb`, `d8559a6f`, `0f1a6a22` | `main` |
 | 18 | 2026-09-25 | Settings Trellis 安装向导 + dry-run 升级预览 + 平台证据并集 | `4c7ddcc4`, `e9d1ee5d`, `737f9bb2` | `main` |
