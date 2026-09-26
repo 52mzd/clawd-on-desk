@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 23
+- **Total Sessions**: 24
 - **Last Active**: 2026-09-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~668 | Active |
+| `journal-1.md` | ~689 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 24 | 2026-09-27 | 向导 -u 作用域修正：加平台不带 -u | `5a2d8268` | `main` |
 | 23 | 2026-09-27 | Trellis 向导 -u 开发者身份（含 shell 注入防护） | `4b3bbfaa` | `main` |
 | 22 | 2026-09-27 | fork release 发布 + GUI PATH 修复 + spec 分层沉淀 | `05a74c66`, `f7c98dd6`, `b2820052` | `main` |
 | 21 | 2026-09-26 | fork release 发布（含 PATH 修复重构建） | `25ef2a7e` | `main` |

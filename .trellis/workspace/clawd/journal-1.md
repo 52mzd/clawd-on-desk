@@ -666,3 +666,24 @@ Settings → Trellis 安装向导支持 trellis init -u <name> 开发者身份�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 24: 向导 -u 作用域修正：加平台不带 -u
+
+**Date**: 2026-09-27
+**Task**: 向导 -u 作用域修正：加平台不带 -u
+**Branch**: `main`
+
+### Summary
+
+用户实测反馈：对已 init 项目点 Add platform 时预览命令显示 -u <目录名>。诊断确认这是设计行为（不是 bug）——输入框只在首次 init 出现，加平台时 -u 走回退链；但加平台时 CLI 会忽略 -u（.developer 已存在，实测不覆盖身份、不新建 workspace），所以显示目录名是纯噪音，会让用户以为身份被改成了目录名；官方文档给加平台的命令本就不带 -u（trellis init --cursor）。修法：trellis-cli.js 新增并导出 buildInitArgs(projectPath, flags, options)，options.userName === undefined 时完全不加 -u，否则走 resolveUserName 回退链；addPlatforms / previewAddPlatforms / staleFixes 三处改用它（DRY，作用域语义唯一实现）；向导的 preview 与 install 只在 isFirstInstall() 时带 userName。8 个受影响的测试断言同步为区分场景的期望（不是删掉期望），并新增 5 处「加平台 argv 不含 -u」断言 + buildInitArgs 直测 + wizard 行为用例（installed:true 时 payload 完全不含该键）。spec（trellis-panel-contract 的 -u 契约 Scenario）与 docs（trellis-settings-panel 的 IPC 表）同步作用域描述。行为：加平台 [init,--gemini,-y]；首次(alice) [init,-u,alice,--gemini,-y]；首次(空回退) [init,-u,alpha,--gemini,-y]。定向 123/123；全量 npm test 与基线逐行相同（零新增）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5a2d8268` | (see git log) |
+
+### Status
+
+[OK] **Completed**
