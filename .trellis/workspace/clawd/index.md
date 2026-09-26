@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 21
-- **Last Active**: 2026-09-26
+- **Total Sessions**: 22
+- **Last Active**: 2026-09-27
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~624 | Active |
+| `journal-1.md` | ~647 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 22 | 2026-09-27 | fork release 发布 + GUI PATH 修复 + spec 分层沉淀 | `05a74c66`, `f7c98dd6`, `b2820052` | `main` |
 | 21 | 2026-09-26 | fork release 发布（含 PATH 修复重构建） | `25ef2a7e` | `main` |
 | 20 | 2026-09-26 | 二开整合上游并开源（fork）+ 本地 merge 上游 + 导出陷阱沉淀 | `503b6994`, `5796122c` | `main` |
 | 19 | 2026-09-26 | Trellis 折叠动画真机修复 + 宠物行为关联图谱 | `acb422fb`, `d8559a6f`, `0f1a6a22` | `main` |

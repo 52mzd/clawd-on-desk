@@ -622,3 +622,26 @@ Trellis 折叠动画两轮修复。acb422fb 首版改局部 class 翻转，但�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 22: fork release 发布 + GUI PATH 修复 + spec 分层沉淀
+
+**Date**: 2026-09-27
+**Task**: fork release 发布 + GUI PATH 修复 + spec 分层沉淀
+**Branch**: `main`
+
+### Summary
+
+承接上一 session 的 fork 发布：在 52mzd/clawd-on-desk 发布 v1.1.0-trellis.1.0（Windows/macOS/Linux 全套 13 assets），并在修复打包版 PATH 缺陷后重构建替换。① 用户实测打包版报「PATH 中未找到 trellis CLI」而本地 npm start 正常——根因是 Finder 启动的 App 继承 launchd 默认 PATH（/usr/bin:/bin:/usr/sbin:/sbin），不含 /usr/local/bin 等；修复为 trellis-cli.js 新增并导出 augmentedCliPath() + main.js 的 registerTrellisIpc 传入 env.PATH（该模块注释本就要求 caller 提供），重构建后以 gh release upload --clobber 替换 assets，并用 sha256 digest 逐字节确认 release 上的包即新构建。② 发布过程连踩 6 个坑：release notes 未过 .gitignore 的 docs/** 逐文件白名单、commit author 泄漏本机身份（filter-branch 重写）、贡献者契约三处一致（映射表 + settings-i18n CONTRIBUTORS + 6 个 README）、semver previousTag 回退（预发布版本号使 v1.1.0 被过滤、检查范围扩到上游未发布提交）、GUI PATH、pre-release 不计入 latest 导致 /releases 页面只显示 Create a new release（改为正式 release 后解决）。③ 用 break-loop 深度复盘：发布契约部分的根因是「拿 CI 当发现工具」的串行循环（每轮 20+ 分钟、共 6 轮），正确做法是动手前本地一次跑完三个 contract 测试；PATH 部分做了贝叶斯复盘——初始先验压在 extension/环境上，而用户首句「正式编译好的版本 vs 本地测试的版本」的差异才是决定性线索；并全仓排查同类 spawn 点（focus.js 6 处 / agent-installation-detector.js 3 处 / codex-queue-delivery.js 1 处均已采用显式候选路径模式，trellis 是唯一遗漏）。④ 用 update-spec 按 Code-Spec vs Guide 判据分层沉淀：6 个坑 + 操作要点 + 检查清单进 guides/fork-release-guide.md（Guide），augmentedCliPath 的签名与调用点契约进 guides/trellis-panel-contract.md 的新 Scenario（7 段式 + 第 8 段同类解法照抄表，paths 纳入 src/main.js）；repository-sync-guide.md 与 guides/index.md 同步交叉引用。待办保留 09-26-focus-recovered-hint。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `05a74c66` | (see git log) |
+| `f7c98dd6` | (see git log) |
+| `b2820052` | (see git log) |
+
+### Status
+
+[OK] **Completed**
