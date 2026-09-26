@@ -59,6 +59,30 @@ describe('settings trellis wizard static guards (09-25)', () => {
     assert.ok(/escapeHtml\(text\)/.test(cb), 'command text escaped before <code>');
   });
 
+  it('shows the developer-name field only for a first install (09-27)', () => {
+    assert.ok(/function isFirstInstall\(/.test(wizardSrc), 'first-install gate exists');
+    assert.ok(/state\.project\.installed === false/.test(wizardSrc), 'strict installed===false check');
+    assert.ok(/isFirstInstall\(\) \? userFieldHtml\(bridge\) : ""/.test(wizardSrc),
+      'field HTML is rendered only behind the gate');
+    assert.ok(/data-user/.test(wizardSrc), 'input carries data-user');
+    // 128 UTF-16 code units is the widest a 64-code-point name can be; the
+    // wizard then applies the real code-point cap in captureUserName (M2).
+    assert.ok(/maxlength="128"/.test(wizardSrc), 'input caps the raw paste at the code-point ceiling');
+    assert.ok(/USER_NAME_MAX_CODE_POINTS/.test(wizardSrc), 'wizard applies the code-point cap itself');
+    assert.ok(/api\.trellisUserSuggestion\(\)/.test(wizardSrc), 'default probe goes through the bridge api');
+  });
+
+  it('threads the developer name through preview, back and install (09-27)', () => {
+    assert.ok(/userName: state\.userName/.test(wizardSrc), 'preview payload carries userName');
+    assert.ok(/api\.trellisAddPlatform\(state\.project\.path, added, state\.userName\)/.test(wizardSrc),
+      'install forwards userName');
+    assert.ok(/input\.value = state\.userName/.test(wizardSrc), 'a re-render re-applies the stored value');
+    assert.ok(/function captureUserName\(/.test(wizardSrc), 'value is read back before stage changes');
+    // M5: the stored value is trimmed (and code-point capped) so the name
+    // re-applied on `back` equals the one in the previewed command.
+    assert.ok(/input\.value\.trim\(\)/.test(wizardSrc), 'capture trims the typed value');
+  });
+
   it('tab wires the wizard and dropped the inline add-platform panel', () => {
     assert.ok(/ClawdTrellisWizard\.openAddPlatform/.test(tabSrc), 'tab opens add wizard');
     assert.ok(/ClawdTrellisWizard\.openUpgradePreview/.test(tabSrc), 'tab opens upgrade wizard');

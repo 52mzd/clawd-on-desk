@@ -65,8 +65,15 @@ class FakeIpcMain {
 
 function makeFakeCli(overrides = {}) {
   const calls = { fetchRemoteChannels: 0, readGlobalVersion: 0, updateProject: 0, upgradeGlobal: 0, addPlatforms: 0 };
+  const addPlatformOptions = [];
   const cli = {
     calls,
+    addPlatformOptions,
+    gitUserNameCalls: 0,
+    async readGitUserName() {
+      cli.gitUserNameCalls += 1;
+      return { name: "alice" };
+    },
     async fetchRemoteChannels() {
       calls.fetchRemoteChannels += 1;
       return { channels: { latest: "0.6.17", beta: "0.7.0-beta.4" }, error: null };
@@ -83,8 +90,9 @@ function makeFakeCli(overrides = {}) {
       calls.upgradeGlobal += 1;
       return { ok: true, reason: null, from: "0.6.17", to: "0.6.18", output: "upgraded", error: null };
     },
-    async addPlatforms(projectPath, platformIds) {
+    async addPlatforms(projectPath, platformIds, options) {
       calls.addPlatforms += 1;
+      addPlatformOptions.push(options);
       return { ok: true, reason: null, added: platformIds.slice(), output: "added", error: null };
     },
   };
@@ -129,6 +137,7 @@ const CHANNELS = [
   "settings:trellis-pick-root",
   "settings:trellis-set-roots",
   "settings:trellis-preview",
+  "settings:trellis-user-suggestion",
   "settings:trellis-upgrade-project",
   "settings:trellis-upgrade-all",
   "settings:trellis-cancel-batch",
@@ -389,6 +398,7 @@ describe("trellis IPC write boundaries", () => {
       assert.deepStrictEqual(result.added, []);
     }
     assert.strictEqual(h.cli.calls.addPlatforms, 0, "renderer input must never reach the CLI layer");
+    assert.deepStrictEqual(h.cli.addPlatformOptions, [], "rejected payloads never reach the cli options either");
   });
 
   it("add-platform passes known ids through for a real project", async () => {
@@ -402,6 +412,48 @@ describe("trellis IPC write boundaries", () => {
     assert.strictEqual(result.status, "ok");
     assert.deepStrictEqual(result.added, ["gemini", "pi"]);
     assert.strictEqual(h.cli.calls.addPlatforms, 1);
+    assert.deepStrictEqual(h.cli.addPlatformOptions, [{ userName: undefined }]);
+  });
+
+  it("add-platform forwards the wizard's developer name (09-27)", async () => {
+    const root = makeTmpDir();
+    const projectPath = makeProject(root, "alpha");
+    const h = createHarness();
+    const result = await h.ipcMain.invoke("settings:trellis-add-platform", {
+      path: projectPath,
+      platforms: ["gemini"],
+      userName: "alice",
+    });
+    assert.strictEqual(result.status, "ok");
+    assert.deepStrictEqual(h.cli.addPlatformOptions, [{ userName: "alice" }]);
+  });
+});
+
+describe("trellis developer-name suggestion (09-27)", () => {
+  it("reads git user.name once and serves it from the cache", async () => {
+    const h = createHarness();
+    const first = await h.ipcMain.invoke("settings:trellis-user-suggestion");
+    assert.deepStrictEqual(first, { status: "ok", name: "alice" });
+    const second = await h.ipcMain.invoke("settings:trellis-user-suggestion");
+    assert.deepStrictEqual(second, { status: "ok", name: "alice" });
+    assert.strictEqual(h.cli.gitUserNameCalls, 1, "one probe per Settings window lifetime");
+  });
+
+  it("settles on an empty name when the probe throws, and caches that too", async () => {
+    const cli = makeFakeCli({
+      async readGitUserName() { throw new Error("git exploded: /secret/path"); },
+    });
+    const h = createHarness({ cli });
+    assert.deepStrictEqual(await h.ipcMain.invoke("settings:trellis-user-suggestion"), { status: "ok", name: "" });
+    assert.deepStrictEqual(await h.ipcMain.invoke("settings:trellis-user-suggestion"), { status: "ok", name: "" });
+  });
+
+  it("keeps the folder-name fallback when the probe has nothing", async () => {
+    const cli = makeFakeCli({
+      async readGitUserName() { return { name: "" }; },
+    });
+    const h = createHarness({ cli });
+    assert.deepStrictEqual(await h.ipcMain.invoke("settings:trellis-user-suggestion"), { status: "ok", name: "" });
   });
 });
 
@@ -462,6 +514,55 @@ describe("trellis IPC preview and global upgrade", () => {
       assert.deepStrictEqual(entry.command.args, ["init", "-u", path.basename(entry.path), "--gemini", "-y"]);
     }
     assert.deepStrictEqual(Object.values(h.cli.calls), [0, 0, 0, 0, 0]);
+  });
+
+  it("preview carries the developer name into the init command (09-27)", async () => {
+    const root = makeTmpDir();
+    const projectPath = makeProject(root, "alpha");
+    const h = createHarness();
+    const result = await h.ipcMain.invoke("settings:trellis-preview", {
+      paths: [projectPath],
+      platforms: ["gemini"],
+      userName: "  alice  ",
+    });
+    assert.strictEqual(result.status, "ok");
+    // Sanitized by resolveUserName (trim), so the previewed command is exactly
+    // what the install will run.
+    assert.deepStrictEqual(result.addPlan[0].command.args, ["init", "-u", "alice", "--gemini", "-y"]);
+    assert.deepStrictEqual(Object.values(h.cli.calls), [0, 0, 0, 0, 0], "preview never spawns");
+
+    // Blank or missing keeps the folder-name fallback, byte for byte.
+    const blank = await h.ipcMain.invoke("settings:trellis-preview", {
+      paths: [projectPath],
+      platforms: ["gemini"],
+      userName: "   ",
+    });
+    assert.deepStrictEqual(blank.addPlan[0].command.args, [
+      "init", "-u", path.basename(projectPath), "--gemini", "-y",
+    ]);
+  });
+
+  it("keeps a hostile developer name out of the previewed command (H1)", async () => {
+    const root = makeTmpDir();
+    const projectPath = makeProject(root, "alpha");
+    const h = createHarness();
+    const result = await h.ipcMain.invoke("settings:trellis-preview", {
+      paths: [projectPath],
+      platforms: ["gemini"],
+      userName: "x; touch pwned; #",
+    });
+    assert.strictEqual(result.status, "ok");
+    // The win32 runner concatenates argv into a shell command, so the
+    // sanitizer (shared with addPlatforms) is what keeps this inert.
+    assert.deepStrictEqual(result.addPlan[0].command.args, [
+      "init", "-u", path.basename(projectPath), "--gemini", "-y",
+    ]);
+    assert.strictEqual(
+      result.addPlan[0].command.args.some((arg) => /[;&|$`\s()]/.test(arg)),
+      false,
+      "no metacharacter survives into the command"
+    );
+    assert.deepStrictEqual(Object.values(h.cli.calls), [0, 0, 0, 0, 0], "preview never spawns");
   });
 
   it("preview rejects unknown platform ids without spawning", async () => {

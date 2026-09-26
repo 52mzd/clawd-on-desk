@@ -5543,6 +5543,38 @@ button.trellis-platform-chip.is-unregistered:active {
   color: var(--text-secondary, inherit);
 }
 
+/* Developer-name field (09-27, first-install only). */
+.trellis-wizard-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.trellis-wizard-field-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary, inherit);
+}
+
+.trellis-wizard-input {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.35));
+  border-radius: var(--radius-s, 6px);
+  background: var(--surface-alt, rgba(127, 127, 127, 0.08));
+  color: inherit;
+  font-size: 12.5px;
+  font-family: inherit;
+}
+
+.trellis-wizard-input:focus {
+  outline: 2px solid var(--accent, #d97757);
+  outline-offset: 1px;
+  border-color: var(--accent, #d97757);
+}
+
 .trellis-wizard-platforms {
   display: flex;
   flex-wrap: wrap;

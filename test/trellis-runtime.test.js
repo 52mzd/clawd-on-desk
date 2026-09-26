@@ -60,6 +60,7 @@ function makeFakeCli(options = {}) {
   const started = [];
   const aborted = [];
   const globalChannels = [];
+  const addPlatformOptions = [];
   let inflight = 0;
   let peak = 0;
 
@@ -68,6 +69,7 @@ function makeFakeCli(options = {}) {
     started,
     aborted,
     globalChannels,
+    addPlatformOptions,
     get peak() { return peak; },
     get inflight() { return inflight; },
     async fetchRemoteChannels() {
@@ -121,8 +123,9 @@ function makeFakeCli(options = {}) {
       globalChannels.push(channel);
       return { ok: true, from: "0.6.17", to: "0.7.0-beta.4", output: "ok", error: null };
     },
-    async addPlatforms(projectPath, platformIds) {
+    async addPlatforms(projectPath, platformIds, options) {
       calls.addPlatforms += 1;
+      addPlatformOptions.push(options);
       return { ok: true, added: platformIds, output: "ok", error: null };
     },
   };
@@ -369,6 +372,30 @@ describe("preview", () => {
     assert.strictEqual(rejected.command, null);
     assert.deepStrictEqual(rejected.added, []);
     assert.strictEqual(cli.calls.addPlatforms, 0);
+  });
+
+  it("carries the wizard's developer name into preview and install (09-27)", async () => {
+    const root = makeTmpDir();
+    const projectPath = makeProject(root, "one");
+    const cli = makeFakeCli();
+    const { runtime } = makeRuntime(cli);
+
+    const plan = runtime.previewAddPlatforms(projectPath, ["gemini"], { userName: "alice" });
+    assert.deepStrictEqual(plan.command.args, ["init", "-u", "alice", "--gemini", "-y"]);
+
+    // Blank or missing keeps the folder-name fallback byte for byte.
+    assert.deepStrictEqual(
+      runtime.previewAddPlatforms(projectPath, ["gemini"], { userName: "  " }).command.args,
+      ["init", "-u", "one", "--gemini", "-y"]
+    );
+    assert.deepStrictEqual(
+      runtime.previewAddPlatforms(projectPath, ["gemini"]).command.args,
+      ["init", "-u", "one", "--gemini", "-y"]
+    );
+
+    await runtime.addPlatforms(projectPath, ["gemini"], { userName: "alice" });
+    assert.deepStrictEqual(cli.addPlatformOptions, [{ userName: "alice" }]);
+    assert.strictEqual(cli.calls.addPlatforms, 1);
   });
 });
 
