@@ -25,7 +25,7 @@
 
 const defaultPrefs = require("./prefs");
 const defaultScanner = require("./trellis-scanner");
-const { createTrellisCli, TRELLIS_BIN, INIT_ARGS, INIT_ARGS_SUFFIX, REMOTE_CHANNELS, resolveUserName } = require("./trellis-cli");
+const { createTrellisCli, TRELLIS_BIN, REMOTE_CHANNELS, buildInitArgs } = require("./trellis-cli");
 const { createTrellisRuntime, normalizeChannel } = require("./trellis-runtime");
 const { PLATFORMS, isKnownPlatformId, flagsFor, platformLabel } = require("./trellis-platforms");
 
@@ -80,7 +80,8 @@ function withStaleFixes(projects) {
         id,
         label: platformLabel(id),
         command: flags && flags.length > 0
-          ? { bin: TRELLIS_BIN, args: [...INIT_ARGS, "-u", resolveUserName(project.path), ...flags, ...INIT_ARGS_SUFFIX], cwd: project.path }
+          // 已 init 项目的 stale 修复就是加平台 → 不带 `-u`（见 buildInitArgs）
+          ? { bin: TRELLIS_BIN, args: buildInitArgs(project.path, flags), cwd: project.path }
           : null,
       };
     });

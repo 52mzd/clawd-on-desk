@@ -190,7 +190,9 @@ function parseVersionOutput(text) {
 - 修改 `src/settings-tab-trellis-wizard.js` 的首装输入框
 
 `-u` 是**开发者身份**（落在 `.trellis/workspace/<name>/`，记在 gitignored 的 `.trellis/.developer`），
-不是项目名。已 init 的项目再传 `-u` 时 CLI 不会覆盖已有身份，所以加平台路径的传参保留、不属于数据风险。
+不是项目名。**它的作用域是首次 init**：加平台（`installed === true`）时 CLI 会忽略 `-u`
+（`.developer` 已存在），把目录名显示在预览命令里只会让用户以为身份被改成了目录名 ——
+所以加平台路径**完全不带 `-u`**，与官方文档的 `trellis init --cursor` 一致。
 
 不适用：`trellis update` 路径（不涉及 `-u`）。
 
@@ -200,6 +202,7 @@ function parseVersionOutput(text) {
 // src/trellis-cli.js
 resolveUserName(projectPath, candidate) -> string   // 永不返回 ""
 normalizeUserName(value) -> string                  // 不合法/空 -> ""
+buildInitArgs(projectPath, flags, { userName? }) -> string[]   // userName === undefined -> 无 `-u`
 USER_NAME_MAX_LENGTH                                 // 64 code points
 createTrellisCli().readGitUserName() -> { name: string }   // 失败/超时 -> ""
 
@@ -235,13 +238,18 @@ normalize：trim；lone surrogate（含超长粘贴被切一半的代理对）�
 > 所以它也过同一个 normalize。代价：含空格或 `&` 等元字符的合法名字（`Tom & Jerry`）会被
 > 回退成目录名/`clawd` —— 这是明知的取舍。
 
-- `-u` **永不为空**：0.6.17 实测缺 `-u` 时 `trellis init --gemini -y`
+- `-u` **只在首次 init 出现**（09-27 修订）：`buildInitArgs` 以 `options.userName === undefined`
+  为判据，`undefined` → argv 完全不带 `-u`（加平台场景）；显式提供（含空串/空白）→ 走
+  `resolveUserName` 回退链后带上 `-u`。
+- `-u` 的值**永不为空**：0.6.17 实测**首次 init** 缺 `-u` 时 `trellis init --gemini -y`
   （stdin=ignore）`exit=0`、**不**挂起，但既不写 `.trellis/.developer` 也不建个人 workspace，
-  用户会看到「成功」而身份静默缺失。所以非空的理由是「拿得到 workspace」，不是「CLI 会 abort」。
-- `userName` 是**可选**字段：缺省时命令形态与 09-27 前逐字节一致（目录名兜底）。
+  用户会看到「成功」而身份静默缺失。所以非空的理由是「拿得到 workspace」，不是「CLI 会 abort」，
+  也正因如此加平台带不带 `-u` 都无法改写已存在的身份。
+- `userName` 是**可选**字段，但语义严格：**缺省 = 加平台 = 不加 `-u`**；空串/纯空白 =
+  首次 init 但用户没填 = 目录名兜底。二者不可混为一谈。
 - 该值只会成为**单个 argv token**：不经 shell 字符串、不进 `cwd`。
-- 预览与执行同源：`previewAddPlatforms` 与 `addPlatforms` 共用同一 `resolveUserName`，
-  所以预览块显示的 `-u` 就是实际执行的 `-u`。
+- 预览与执行同源：`previewAddPlatforms` 与 `addPlatforms` 共用同一 `buildInitArgs`，
+  所以预览块显示的 `-u` 就是实际执行的 `-u`（或同样不带）。
 - `readGitUserName` 在 **home 目录**下跑 `git config user.name`（3s 超时）：避免 cwd 处在
   另一个仓库时把那个仓库的 local `user.name` 借走。`git` 位于 `/usr/bin`，不需 GUI PATH 增强。
 - 结果在 `trellis-ipc.js` 的闭包内**缓存一次**（同 Settings 窗口生命周期），失败也缓存空值。
@@ -251,8 +259,9 @@ normalize：trim；lone surrogate（含超长粘贴被切一半的代理对）�
 
 | 条件 | 行为 |
 | --- | --- |
+| `userName` 为 `undefined`（加平台 / stale repair） | argv **完全不带** `-u`（CLI 会忽略它，显示目录名只会误导） |
 | `userName` 合法非空 | 直接作为 `-u` 值 |
-| `userName` 空串 / 纯空白 / 非字符串 | 回退目录名 |
+| `userName` 空串 / 纯空白 / 非字符串（**显式提供**时） | 回退目录名（仍带 `-u`） |
 | `userName` 含空格或任一 ASCII shell 元字符（`; & \| < > ^ % " ' \` $ ( ) !` 及控制字符） | 白名单判不可用，回退目录名（**H1**） |
 | `userName` 含 `/`、`\`、整值 `..`，或以 `.` 开头 | 判不可用，回退目录名 |
 | `userName` 含 lone surrogate（`"a".repeat(63) + "\uD83C"`） | 判不可用，回退目录名（**M2**：不想在 argv 里出现 `\uFFFD`） |
@@ -264,16 +273,18 @@ normalize：trim；lone surrogate（含超长粘贴被切一半的代理对）�
 | `cli.readGitUserName` 抛错 | `{ status:"ok", name:"" }`（错误不外泄、不阻塞） |
 | 同一 Settings 窗口内重复调用 `-user-suggestion` | 返回缓存，不重复 spawn |
 | `isTrustedEvent` 缺失/抛错 | 三通道均为 `{status:"error", message:"untrusted-sender"}`，不 spawn |
-| `project.installed !== false` | 向导不渲染输入框，payload 可不带 `userName` |
+| `project.installed !== false` | 向导不渲染输入框，且 preview / install payload **完全不带 `userName` 字段** |
 
 ### 5. Good/Base/Bad Cases
 
 - **Good**：首装向导输入 `alice` → preview 块显示 `trellis init -u alice --gemini -y`，执行同一条
-- **Base**：旧调用点（不传 `userName`）→ 命令仍是 `init -u <目录名> --gemini -y`，与 09-27 前一致
+- **Base**：加平台（不传 `userName`）→ 命令是 `trellis init --gemini -y`，**不带 `-u`**；
+  显式传空串/空白则是首装未填，仍带 `-u <目录名>`
 - **Bad**：
   - 三处各自写 `path.basename(...) || "clawd"` → 回退语义漂移（本次收敛为单一 helper）
   - 把 `git config` 塞进 `scanRoots` 批量扫描 → 每个项目一次 spawn
-  - 让 `-u` 为空或省略 → CLI 静默不建 `.developer` / workspace，安装假成功
+  - **首次 init** 让 `-u` 为空或省略 → CLI 静默不建 `.developer` / workspace，安装假成功
+  - **加平台**却带上目录名 `-u` → CLI 忽略它，预览命令误导用户以为身份被改名
 
 ### 6. Tests Required
 
@@ -282,14 +293,15 @@ normalize：trim；lone surrogate（含超长粘贴被切一半的代理对）�
 | 显式值优先 / 空串回退目录名 / 目录名也空回退 `clawd` | `test/trellis-cli.test.js` |
 | `/`、`\`、整值 `..`、以 `.` 开头被拒；`my..project` 接受；截断 64 且不切代理对 | `test/trellis-cli.test.js` |
 | 空格与逐个 ASCII shell 元字符（`; & \| < > ^ % " ' \` $ ( )`、`\r\n\t`）→ `""` | `test/trellis-cli.test.js` |
-| `addPlatforms` 第三参 `{userName}` 进 argv；缺省仍是目录名 | `test/trellis-cli.test.js` |
+| `buildInitArgs`：无 `userName` → 无 `-u`；显式空串 → 目录名兜底；`addPlatforms` 透传 | `test/trellis-cli.test.js` |
 | 中文/日文/韩文/emoji 名字仍被接受；lone surrogate → `""` | `test/trellis-cli.test.js` |
 | **注入回归**：真实 `execFile(..., {shell:true})` 下 `x; touch <file>; #` 不产生文件 | `test/trellis-cli.test.js` |
 | 目录名含元字符时 `-u` 兜底到 `clawd`（H1b） | `test/trellis-cli.test.js` |
 | `readGitUserName` trim + 失败/超时/含元字符 → `""` | `test/trellis-cli.test.js` |
-| `previewAddPlatforms` / `addPlatforms` 透传 `userName`；缺省回退 | `test/trellis-runtime.test.js` |
-| preview 带 `userName` 的 command 形态；空值走回退；零 spawn | `test/trellis-ipc.test.js` |
+| `previewAddPlatforms` / `addPlatforms` 透传 `userName`；无 `userName` 的加平台计划无 `-u` | `test/trellis-runtime.test.js` |
+| preview 带 `userName` 的 command 形态；空值走回退；无 `userName` 无 `-u`；零 spawn | `test/trellis-ipc.test.js` |
 | `-user-suggestion` 只探测一次（缓存）；probe 抛错 → 空名 | `test/trellis-ipc.test.js` |
+| 加平台（`installed:true`）的 preview / install payload 不带 `userName` | `test/settings-tab-trellis-wizard.test.js` |
 | 新通道进 `CHANNELS`：无 guard / guard 抛错 / 不可信 sender 全拒 | `test/trellis-ipc.test.js` |
 | 输入框仅在 `installed === false` 分支；`data-user` 取值与传参存在 | `test/settings-tab-trellis-wizard-static.test.js` |
 
@@ -300,11 +312,13 @@ Wrong   三处各写 path.basename(String(p)) || "clawd"
         git config user.name 放进项目批量扫描（每项目一 spawn）
         让 UI 直接把用户串拼进命令文本
         只拉黑 `/` `\` `..` —— Windows `shell:true` 下 `a; touch x; #` 仍会执行
+        加平台时也带 `-u <目录名>`（CLI 忽略它，预览命令却假装身份被设置）
 
 Correct resolveUserName(projectPath, candidate) 单一回退链，三处 import 复用
+        buildInitArgs 以 `userName === undefined` 区分加平台 / 首装，加平台不带 `-u`
         normalizeUserName 用 Unicode 白名单，含元字符/空格/Lone surrogate 一律判不可用
         IPC 层缓存一次 readGitUserName()，仅首装输入框触发
-        UI 只传 userName 字段，argv 由 trellis-runtime/cli 构造
+        UI 只传 userName 字段（且仅首装），argv 由 trellis-runtime/cli 构造
 ```
 
 **为什么是白名单而不是黑名单**：黑名单要穷举 cmd.exe 与 `/bin/sh` 的全部分隔符、

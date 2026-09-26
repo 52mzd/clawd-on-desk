@@ -287,11 +287,11 @@
         var api = bridge.api || {};
         Promise.resolve()
           .then(function () {
-            return api.trellisPreview({
-              paths: [state.project.path],
-              platforms: picked,
-              userName: state.userName,
-            });
+            var payload = { paths: [state.project.path], platforms: picked };
+            // 只有首次 init 才带 `-u`：加平台时 CLI 会忽略它，把目录名显示在
+            // 预览命令里只会让用户以为身份被改成了目录名。
+            if (isFirstInstall()) payload.userName = state.userName;
+            return api.trellisPreview(payload);
           })
           .then(function (res) {
             var addPlan = res && Array.isArray(res.addPlan) ? res.addPlan[0] : null;
@@ -367,7 +367,12 @@
     var api = bridge.api || {};
     Promise.resolve()
       .then(function () {
-        return api.trellisAddPlatform(state.project.path, added, state.userName);
+        // 与 preview 同源：只有首次 init 才带身份，加平台传 undefined
+        return api.trellisAddPlatform(
+          state.project.path,
+          added,
+          isFirstInstall() ? state.userName : undefined,
+        );
       })
       .then(function (res) {
         finishFlow(res && res.status === "ok", res && res.output);

@@ -217,6 +217,23 @@ describe('trellis wizard developer name (09-27)', () => {
     assert.strictEqual(alreadyInstalled.api.calls.suggestion, 0, 'no probe for an installed project');
   });
 
+  it('sends no developer name at all when adding a platform (09-27)', async () => {
+    const { root, api } = openWizard({ installed: true });
+    await flush();
+    root.querySelectorAll('[data-platform]').forEach((input) => { input.checked = true; });
+
+    button(root, 'preview').dispatch('click');
+    await flush();
+    // `installed: true` == add-platform: the payload must not even carry the
+    // key, so the IPC layer cannot fall back to the folder name.
+    assert.strictEqual('userName' in api.calls.preview[0], false, 'add-platform preview carries no userName');
+
+    button(root, 'install').dispatch('click');
+    await flush();
+    assert.strictEqual(api.calls.add.length, 1);
+    assert.strictEqual(api.calls.add[0].userName, undefined, 'add-platform install forwards no userName');
+  });
+
   it('keeps the typed name across preview and back, and forwards it on install', async () => {
     const { root, api } = openWizard({ installed: false });
     await flush();

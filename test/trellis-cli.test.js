@@ -11,6 +11,7 @@ const {
   createTrellisCli,
   augmentedCliPath,
   resolveUserName,
+  buildInitArgs,
   normalizeUserName,
   USER_NAME_MAX_LENGTH,
   UPDATE_ARGS,
@@ -118,7 +119,7 @@ describe("argv contract", () => {
       ".version must be restored after a mutating dry-run");
   });
 
-  it("adds a platform with exactly [init, -u <name>, --gemini, -y]", async () => {
+  it("adds a platform with exactly [init, --gemini, -y] (no -u)", async () => {
     const projectPath = makeProject("0.6.17", { ".claude/x": "h" });
     const stub = makeExecFileStub({
       trellis: (call) => {
@@ -133,8 +134,11 @@ describe("argv contract", () => {
     });
 
     const result = await cliWith(stub).addPlatforms(projectPath, ["gemini"]);
-    // 09-25: -u <folder-name> rides init (fresh projects abort without it).
-    assert.deepStrictEqual(stub.calls[0].args, ["init", "-u", path.basename(projectPath), "--gemini", "-y"]);
+    // 09-27: adding a platform to an already-init project carries NO `-u` —
+    // the CLI ignores it (`.developer` exists) and showing the folder name in
+    // the preview command only makes the user think the identity was renamed.
+    assert.deepStrictEqual(stub.calls[0].args, ["init", "--gemini", "-y"]);
+    assert.ok(!stub.calls[0].args.includes("-u"), "add-platform argv must not carry -u");
     assert.deepStrictEqual(Array.from(INIT_ARGS_SUFFIX), ["-y"]);
     assert.ok(!stub.calls[0].args.includes("-s"), "-s must never be passed to init");
     assert.ok(!stub.calls[0].args.includes("--skip-all"));
@@ -143,6 +147,22 @@ describe("argv contract", () => {
     assert.strictEqual(stub.calls[0].options.cwd, projectPath);
     assert.strictEqual(result.ok, true);
     assert.deepStrictEqual(result.added, ["gemini"]);
+  });
+
+  it("buildInitArgs omits -u only when no userName was supplied (09-27)", () => {
+    // undefined (or an options object without userName) == add-platform.
+    assert.deepStrictEqual(buildInitArgs("/projects/alpha", ["--gemini"]), ["init", "--gemini", "-y"]);
+    assert.deepStrictEqual(buildInitArgs("/projects/alpha", ["--gemini"], {}), ["init", "--gemini", "-y"]);
+    // A supplied name (even the empty string) == first init, so `-u` rides along
+    // and an empty value falls back to the folder name.
+    assert.deepStrictEqual(
+      buildInitArgs("/projects/alpha", ["--gemini"], { userName: "alice" }),
+      ["init", "-u", "alice", "--gemini", "-y"]
+    );
+    assert.deepStrictEqual(
+      buildInitArgs("/projects/alpha", ["--gemini"], { userName: "" }),
+      ["init", "-u", "alpha", "--gemini", "-y"]
+    );
   });
 
   it("keeps the update and init argv constants separate", () => {
@@ -276,18 +296,26 @@ describe("resolveUserName fallback chain (09-27)", () => {
     const stub = makeExecFileStub({ trellis: { stdout: "ok" } });
     const cli = cliWith(stub);
 
-    await cli.addPlatforms(projectPath, ["gemini"], { userName: "alice" });
-    assert.deepStrictEqual(stub.calls[0].args, ["init", "-u", "alice", "--gemini", "-y"]);
-
+    // Add-platform (no userName): `-u` is absent on purpose.
     await cli.addPlatforms(projectPath, ["gemini"]);
-    assert.deepStrictEqual(stub.calls[1].args, ["init", "-u", path.basename(projectPath), "--gemini", "-y"]);
+    assert.deepStrictEqual(stub.calls[0].args, ["init", "--gemini", "-y"]);
+    assert.ok(!stub.calls[0].args.includes("-u"), "add-platform argv must not carry -u");
 
+    // First init (explicit name): `-u <name>` rides init.
+    await cli.addPlatforms(projectPath, ["gemini"], { userName: "alice" });
+    assert.deepStrictEqual(stub.calls[1].args, ["init", "-u", "alice", "--gemini", "-y"]);
+
+    // First init with a blank name: still `-u`, falling back to the folder name.
     await cli.addPlatforms(projectPath, ["gemini"], { userName: "   " });
     assert.deepStrictEqual(stub.calls[2].args, ["init", "-u", path.basename(projectPath), "--gemini", "-y"]);
 
+    // First init with an empty string is NOT the add-platform case: `-u` stays.
+    await cli.addPlatforms(projectPath, ["gemini"], { userName: "" });
+    assert.deepStrictEqual(stub.calls[3].args, ["init", "-u", path.basename(projectPath), "--gemini", "-y"]);
+
     // H1: a hostile value never reaches argv, even through addPlatforms.
     await cli.addPlatforms(projectPath, ["gemini"], { userName: "x; touch pwned; #" });
-    assert.deepStrictEqual(stub.calls[3].args, ["init", "-u", path.basename(projectPath), "--gemini", "-y"]);
+    assert.deepStrictEqual(stub.calls[4].args, ["init", "-u", path.basename(projectPath), "--gemini", "-y"]);
   });
 
   it("keeps a hostile value out of the real win32 shell concatenation (H1 regression)", async () => {

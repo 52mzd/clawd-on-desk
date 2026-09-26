@@ -21,7 +21,7 @@ const path = require("path");
 
 const { evaluate, inferChannel } = require("./trellis-version");
 const { flagsFor, platformById } = require("./trellis-platforms");
-const { TRELLIS_BIN, UPDATE_ARGS, INIT_ARGS, INIT_ARGS_SUFFIX, resolveUserName } = require("./trellis-cli");
+const { TRELLIS_BIN, UPDATE_ARGS, buildInitArgs } = require("./trellis-cli");
 
 const MAX_CONCURRENCY = 3;
 const REMOTE_CACHE_TTL_MS = 60_000;
@@ -204,7 +204,7 @@ function createTrellisRuntime(options = {}) {
       error: null,
       command: {
         bin: TRELLIS_BIN,
-        args: [...INIT_ARGS, "-u", resolveUserName(projectPath, options && options.userName), ...flags, ...INIT_ARGS_SUFFIX],
+        args: buildInitArgs(projectPath, flags, options || {}),
         cwd: projectPath,
       },
     };

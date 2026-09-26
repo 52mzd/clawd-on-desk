@@ -175,6 +175,17 @@ function resolveUserName(projectPath, candidate) {
   return "clawd";
 }
 
+// `trellis init` 的 argv 构造。`-u` **只在调用方显式提供 userName 时**才加入：
+// 加平台场景 CLI 会忽略它（`.developer` 已存在），而把目录名显示在预览命令里
+// 会让用户以为「身份被设成了目录名」；官方文档给加平台的命令本就不带 `-u`。
+// `undefined` → 完全不加；`""` → 首次 init 但用户没填，走回退链。
+function buildInitArgs(projectPath, flags, options = {}) {
+  if (options.userName === undefined) {
+    return [...INIT_ARGS, ...flags, ...INIT_ARGS_SUFFIX];
+  }
+  return [...INIT_ARGS, "-u", resolveUserName(projectPath, options.userName), ...flags, ...INIT_ARGS_SUFFIX];
+}
+
 function parseVersionOutput(text) {
   const lines = String(text || "").split(/\r?\n/);
   // Last match wins. The banner is a prefix and its lines never consist of a
@@ -397,15 +408,13 @@ function createTrellisCli(options = {}) {
     if (!flags) return { ok: false, reason: "unknown-platform", added: [], output: "", error: "unknown-platform" };
     if (flags.length === 0) return { ok: false, reason: "no-platforms", added: [], output: "", error: "no-platforms" };
 
-    // `trellis init -u <name> --<platform> -y` (09-25): -u is the developer
-    // identity trellis records in `.trellis/.developer`; it defaults to the
-    // folder name. Measured on 0.6.17: without `-u` the CLI still exits 0 on a
-    // fresh project, but creates no `.developer` and no personal workspace.
-    // The wizard started passing an explicit value in 09-27; a missing one
-    // keeps the folder-name fallback.
-    const userName = resolveUserName(projectPath, options && options.userName);
+    // `-u` is the developer identity trellis records in `.trellis/.developer`;
+    // it defaults to the folder name. Measured on 0.6.17: without `-u` the CLI
+    // still exits 0 on a fresh project, but creates no `.developer` and no
+    // personal workspace — so a first install must send one. Platform-only adds
+    // pass no userName at all, and then the argv carries no `-u` (buildInitArgs).
     const before = readPlatforms(projectPath);
-    const result = await run(TRELLIS_BIN, [...INIT_ARGS, "-u", userName, ...flags, ...INIT_ARGS_SUFFIX], { cwd: projectPath });
+    const result = await run(TRELLIS_BIN, buildInitArgs(projectPath, flags, options || {}), { cwd: projectPath });
     const after = readPlatforms(projectPath);
     const added = after.filter((id) => !before.includes(id));
     return {
@@ -466,6 +475,7 @@ module.exports = {
   createTrellisCli,
   augmentedCliPath,
   resolveUserName,
+  buildInitArgs,
   normalizeUserName,
   USER_NAME_MAX_LENGTH,
   GIT_USER_ARGS,

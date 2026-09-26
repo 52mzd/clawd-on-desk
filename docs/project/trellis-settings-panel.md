@@ -46,21 +46,24 @@ the envelope `{ status: "ok" | "cancel" | "error", ... }`.
 | `settings:trellis-scan` | `{ channel? }` | `{ status, roots, channels, remote, scans, projects, global, platformCatalog, channelCatalog }` |
 | `settings:trellis-pick-root` | — | `{ status:"ok", path }` / `{ status:"cancel" }` |
 | `settings:trellis-set-roots` | `{ roots }` | `{ status }` (written through `settings-controller`) |
-| `settings:trellis-preview` | `{ paths, platforms?, channel?, userName? }` | `{ status, plan[], addPlan? }` — pure computation; `userName` (09-27) is the wizard's developer identity for the init plan |
+| `settings:trellis-preview` | `{ paths, platforms?, channel?, userName? }` | `{ status, plan[], addPlan? }` — pure computation; `userName` (09-27) is the wizard's developer identity for a **first install**, absent when adding a platform |
 | `settings:trellis-user-suggestion` | — | `{ status, name }` — `git config user.name` default, probed once per Settings window; `""` when unavailable |
 | `settings:trellis-upgrade-project` | `{ path }` | `{ status, from, to }` |
 | `settings:trellis-upgrade-all` | `{ paths }` | `{ status, batchId }` |
 | `settings:trellis-cancel-batch` | — | `{ status }` |
 | `settings:trellis-dry-run` | `{ path }` | `{ status, result }` — real `trellis update --dry-run` output, `.version` restored afterwards |
-| `settings:trellis-add-platform` | `{ path, platforms:[id], userName? }` | `{ status, added }` — `userName` (09-27) is the developer identity for `init -u` |
+| `settings:trellis-add-platform` | `{ path, platforms:[id], userName? }` | `{ status, added }` — `userName` (09-27) is the developer identity for a **first install**; omit it when adding a platform |
 
 `userName` (09-27) is the Trellis **developer identity** (`trellis init -u <name>`), not a
 project name. It is sanitized in exactly one place — `resolveUserName` in `src/trellis-cli.js`,
 whose `normalizeUserName` is a Unicode **whitelist** (`[\p{L}\p{N}\p{M}\p{So}_.\-]`, no leading
 `.`/`-`) with a 64-code-point cap. That whitelist is the injection boundary, not the args-array
 shape: on win32 the runner sets `shell: true` and Node concatenates argv without escaping it
-(`DEP0190`). Absent or unusable → folder name → `"clawd"`; the same sanitizer also covers the
-folder-name fallback, so a directory called `a & b` cannot inject either.
+(`DEP0190`). The value's scope is **a first install only**: `undefined` means add-platform, so the
+command carries no `-u` at all (the CLI ignores it there; printing the folder name only
+misleads). A supplied value — even a blank one — means first install and falls back folder
+name → `"clawd"`. The same sanitizer also covers the folder-name fallback, so a directory
+called `a & b` cannot inject either.
 | `settings:trellis-upgrade-global` | `{ channel? }` | `{ status, from, to }` |
 
 Progress flows the other way over `settings:trellis-progress`:

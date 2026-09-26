@@ -73,9 +73,12 @@ describe('settings trellis wizard static guards (09-25)', () => {
   });
 
   it('threads the developer name through preview, back and install (09-27)', () => {
-    assert.ok(/userName: state\.userName/.test(wizardSrc), 'preview payload carries userName');
-    assert.ok(/api\.trellisAddPlatform\(state\.project\.path, added, state\.userName\)/.test(wizardSrc),
-      'install forwards userName');
+    // 09-27: `-u` is scoped to a first install. Adding a platform must not send
+    // a userName at all, so the previewed/executed command carries no `-u`.
+    assert.ok(/if \(isFirstInstall\(\)\) payload\.userName = state\.userName;/.test(wizardSrc),
+      'preview payload carries userName only on a first install');
+    assert.ok(/isFirstInstall\(\) \? state\.userName : undefined/.test(wizardSrc),
+      'install forwards userName only on a first install');
     assert.ok(/input\.value = state\.userName/.test(wizardSrc), 'a re-render re-applies the stored value');
     assert.ok(/function captureUserName\(/.test(wizardSrc), 'value is read back before stage changes');
     // M5: the stored value is trimmed (and code-point capped) so the name

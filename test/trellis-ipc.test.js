@@ -313,10 +313,11 @@ describe("trellis IPC registration", () => {
     assert.deepStrictEqual(project.staleFixes.map((fix) => fix.id), ["claude-code"]);
     assert.deepStrictEqual(project.staleFixes[0].command, {
       bin: "trellis",
-      // 09-25: -u <folder-name> rides init (fresh repairs abort without it).
-      args: ["init", "-u", "alpha", "--claude", "-y"],
+      // 09-27: a stale repair is an add-platform, so it never carries `-u`.
+      args: ["init", "--claude", "-y"],
       cwd: projectPath,
     });
+    assert.ok(!project.staleFixes[0].command.args.includes("-u"), "stale repair must not carry -u");
     assert.strictEqual(h.cli.calls.addPlatforms, 0, "the repair command is displayed, never executed");
   });
 
@@ -334,7 +335,8 @@ describe("trellis IPC registration", () => {
     assert.deepStrictEqual(project.platforms, ["claude-code", "gemini"]);
     assert.deepStrictEqual(project.staleIds, ["gemini"]);
     assert.deepStrictEqual(project.staleFixes.map((fix) => fix.id), ["gemini"]);
-    assert.deepStrictEqual(project.staleFixes[0].command.args, ["init", "-u", "alpha", "--gemini", "-y"]);
+    assert.deepStrictEqual(project.staleFixes[0].command.args, ["init", "--gemini", "-y"]);
+    assert.ok(!project.staleFixes[0].command.args.includes("-u"), "stale repair must not carry -u");
   });
 });
 
@@ -511,7 +513,8 @@ describe("trellis IPC preview and global upgrade", () => {
     assert.strictEqual(result.addPlan.length, 2);
     for (const entry of result.addPlan) {
       assert.deepStrictEqual(entry.added, ["gemini"]);
-      assert.deepStrictEqual(entry.command.args, ["init", "-u", path.basename(entry.path), "--gemini", "-y"]);
+      assert.deepStrictEqual(entry.command.args, ["init", "--gemini", "-y"]);
+      assert.ok(!entry.command.args.includes("-u"), "add-platform preview must not carry -u");
     }
     assert.deepStrictEqual(Object.values(h.cli.calls), [0, 0, 0, 0, 0]);
   });
