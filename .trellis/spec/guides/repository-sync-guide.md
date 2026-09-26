@@ -110,3 +110,13 @@ rm -rf <要排除的路径>
 - [ ] 测试失败集合与**上游纯态基线**一致
 - [ ] 排除路径在树内与**导出分支历史**中都零命中
 - [ ] 本机身份（用户名/邮箱/绝对路径）在树内容与 commit author 中都零命中
+
+---
+
+## 下一步：发布
+
+导出/同步完成后，要把结果发布成可下载的 GitHub Release 时，
+读 [Fork Release Guide](./fork-release-guide.md)。
+上游的发布契约测试与 GitHub 的 release 行为另有 6 个坑：`docs/**` 逐文件白名单、
+commit author 泄漏本机身份、贡献者三处一致、semver `previousTag` 回退、
+GUI 启动拿不到 shell PATH、pre-release 不计入 `latest`。

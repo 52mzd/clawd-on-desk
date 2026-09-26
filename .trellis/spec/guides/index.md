@@ -25,6 +25,7 @@ These guides help you **ask the right questions before coding**.
 | [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md) | Think through data flow across layers | Features spanning multiple layers |
 | [Trellis Panel Contract](./trellis-panel-contract.md) | External-process contract: frozen argv, IPC trust gate, output-parsing identity | When spawning a CLI or parsing its output |
 | [Repository Export & Sync Guide](./repository-sync-guide.md) | Silent upstream rollback (`checkout <branch> -- <paths>`), check blind spots, baseline choice, dual-form policy values | When exporting a branch, syncing with upstream, or building a fork/release tree |
+| [Fork Release Guide](./fork-release-guide.md) | Upstream release-contract tests, `docs/**` whitelist, contributor triple-consistency, semver `previousTag`, GUI PATH, pre-release visibility | When publishing a fork release, building installers, or touching release notes / contributor lists |
 
 ---
 
@@ -90,6 +91,19 @@ These guides help you **ask the right questions before coding**.
 - [ ] You're about to claim "zero new failures" or "upstream fully included"
 
 → Read [Repository Export & Sync Guide](./repository-sync-guide.md)
+
+---
+
+### When Publishing A Fork Release
+
+- [ ] You're creating or updating a GitHub Release
+- [ ] You're adding a `docs/releases/release-v*.md`
+- [ ] You're touching `src/settings-i18n.js` CONTRIBUTORS or any README contributor list
+- [ ] You're changing `package.json` version
+- [ ] A packaged build reports a CLI missing that a terminal run finds
+- [ ] The Releases page shows "Create a new release" despite a created release
+
+→ Read [Fork Release Guide](./fork-release-guide.md)
 
 ---
 
