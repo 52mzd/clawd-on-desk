@@ -2,6 +2,7 @@
 name: trellis-panel-contract
 description: Trellis 集成契约——外部进程 argv 冻结/信任门禁/输出解析身份，以及只读流程感知的会话绑定契约
 paths:
+  - src/main.js
   - src/trellis-*.js
   - src/settings-tab-trellis.js
   - src/session-key.js
@@ -1185,3 +1186,111 @@ fade-out（`animateTrellisOverlayClose`：setTimeout 140ms 守卫，重开
 **修法已固化**：`platformsOfUnion(hashes, path)` 是唯一读路径，禁止直用 `parsePlatforms`；
 stale 语义 `staleIdsOf` 不变。同类风险：`.version`、`config.yaml`、`runtime.json` 都按
 版本化契约对待——解析失败/空集时先怀疑上游改契约，再查自己的代码。
+
+## Scenario: spawn 外部 CLI 时的 GUI PATH 契约（09-26 fork-release）
+
+**Bug 复盘**：打包版（Finder 双击启动）报「PATH 中未找到 trellis CLI」，
+而 `npm start` 完全正常。根因是 macOS 从 Finder 启动的 App 继承 launchd 默认
+PATH（`/usr/bin:/bin:/usr/sbin:/sbin`），不含 `/usr/local/bin`、`/opt/homebrew/bin`、
+`~/.local/bin` —— 而 `trellis` 通常装在那里。
+
+### 1. Scope / Trigger
+
+**新增或修改任何 spawn 外部 CLI 的调用点时，必须核对本节。**
+
+`src/trellis-cli.js` 的设计是**显式契约**（文件内注释：*It does not repair a GUI app's
+PATH — callers that need extra lookup paths must pass them in `env` themselves*），
+所以 PATH 补齐是**调用点的责任**，不是模块的责任。忘记传 = 打包版静默失效。
+
+### 2. Signatures
+
+```js
+// src/trellis-cli.js
+function augmentedCliPath(basePath, options = {}) -> string
+//   options: { platform?: NodeJS.Platform, home?: string }
+
+// src/trellis-ipc.js —— env 经 mergedExecutionEnv 叠加到 process.env 之上
+function createTrellisCli(options = {})   // options.env?: object
+
+// src/main.js —— 调用点
+registerTrellisIpc({ ..., env: { PATH: augmentedCliPath(process.env.PATH) } })
+```
+
+### 3. Contracts
+
+| 项 | 约束 |
+|---|---|
+| `basePath` | 原始 PATH 字符串；空串 / `undefined` 也接受 |
+| `options.platform` | 默认 `process.platform`；**`win32` 时原样返回**（不增强） |
+| `options.home` | 默认 `os.homedir()`；用于拼 `<home>/.local/bin` |
+| 返回值 | 去重后的 PATH 字符串；分隔符按 platform（`;` / `:`） |
+| 增强目录 | `/opt/homebrew/bin`（Apple Silicon Homebrew）、`/usr/local/bin`（Intel Homebrew / 手工安装）、`<home>/.local/bin` |
+| 顺序 | 原 PATH **保持原序**，增强目录**追加在尾部** |
+| Windows | 走 `shell: true` + `PATHEXT` 解析 `.cmd` shim，无需增强 |
+
+### 4. Validation & Error Matrix
+
+| 条件 | 行为 |
+|---|---|
+| `basePath` 为空 / null | 返回仅含增强目录的 PATH（不以分隔符开头） |
+| 增强目录已在 PATH 中 | 不重复追加 |
+| `os.homedir()` 抛错 | 捕获后跳过 `~/.local/bin`，其余照常 |
+| `platform === "win32"` | 原样返回 `basePath` |
+| **调用点忘记传 `env`** | 打包版 CLI ENOENT（本节要防的失败模式） |
+
+### 5. Good/Base/Bad Cases
+
+- **Good**：`augmentedCliPath("/usr/bin:/bin", { platform: "darwin", home: "/Users/x" })`
+  → `"/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin:/Users/x/.local/bin"`
+- **Base**：开发模式 `npm start` —— 继承 shell PATH，**即使不传 `env` 也能找到**（掩盖问题）
+- **Bad**：打包版 + 调用点不传 `env`
+  → PATH 仅 `/usr/bin:/bin:/usr/sbin:/sbin` → `execFile("trellis")` ENOENT
+  → Settings → Trellis 报「PATH 中未找到 trellis CLI」
+
+### 6. Tests Required
+
+| 测试 | 断言点 |
+|---|---|
+| `test/trellis-cli.test.js` → `describe("augmentedCliPath")` | macOS 追加三个目录且原序保持 |
+| 同上 | 已在 PATH 中的目录不重复 |
+| 同上 | `platform: "win32"` 原样返回 |
+| 同上 | 空 `basePath` 仍产出增强目录、不以 `:` 开头 |
+| **缺失（TODO）** | `main.js` 调用点是否传了 `env` —— 目前无自动化守卫 |
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```js
+// main.js —— 调用点不传 env
+registerTrellisIpc({ ipcMain, dialog, ... });
+// → env = undefined → mergedExecutionEnv(undefined) = process.env
+// → Finder 启动时 PATH 不含 /usr/local/bin → ENOENT
+```
+
+#### Correct
+
+```js
+const { augmentedCliPath } = require("./trellis-cli");
+registerTrellisIpc({
+  ipcMain, dialog, ...,
+  env: { PATH: augmentedCliPath(process.env.PATH) },
+});
+```
+
+### 8. 同类问题的既有解法（照抄，别重新发明）
+
+本仓 spawn 外部 CLI 的模块**都**采用「显式候选路径」模式：
+
+| 模块 | 候选路径 | 状态 |
+|---|---|---|
+| `src/focus.js` | `resolveTmuxBin()` / `orcaCliCandidates()` / `buildCmuxBinPath()` 共 6 处 | ✅ |
+| `src/agent-installation-detector.js` | 3 处 | ✅ |
+| `src/codex-queue-delivery.js` | `resolveCodexQueueExecutableCandidates()` | ✅ |
+| `src/trellis-cli.js` | `augmentedCliPath()`（本节新增） | ✅ |
+
+**天然安全的一类**：调用系统绝对路径（`/usr/bin/open`、`ps`、`osascript`、`mdfind`、`sqlite3`）
+—— launchd 默认 PATH 含 `/usr/bin:/bin`，不需要候选路径。
+
+**预防**：`npm start` 从终端启动、继承 shell PATH，**永远测不出这类问题**。
+改动「启动外部 CLI」的代码后，发布前必须**从 Finder 双击打包版**验证一次。

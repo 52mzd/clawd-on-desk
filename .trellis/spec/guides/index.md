@@ -23,7 +23,7 @@ These guides help you **ask the right questions before coding**.
 |-------|---------|-------------|
 | [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md) | Identify patterns and reduce duplication | When you notice repeated patterns |
 | [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md) | Think through data flow across layers | Features spanning multiple layers |
-| [Trellis Panel Contract](./trellis-panel-contract.md) | External-process contract: frozen argv, IPC trust gate, output-parsing identity | When spawning a CLI or parsing its output |
+| [Trellis Panel Contract](./trellis-panel-contract.md) | External-process contract: frozen argv, IPC trust gate, output-parsing identity, GUI-launch PATH overlay | When spawning a CLI, parsing its output, or wiring a spawn call site |
 | [Repository Export & Sync Guide](./repository-sync-guide.md) | Silent upstream rollback (`checkout <branch> -- <paths>`), check blind spots, baseline choice, dual-form policy values | When exporting a branch, syncing with upstream, or building a fork/release tree |
 | [Fork Release Guide](./fork-release-guide.md) | Upstream release-contract tests, `docs/**` whitelist, contributor triple-consistency, semver `previousTag`, GUI PATH, pre-release visibility | When publishing a fork release, building installers, or touching release notes / contributor lists |
 
