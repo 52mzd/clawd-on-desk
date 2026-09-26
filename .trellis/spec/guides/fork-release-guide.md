@@ -19,6 +19,22 @@
 
 **结论**：**fork 改版本号 = 连锁触发这些断言**。除非打算把整套发布契约适配到 fork，否则**保持版本号与上游一致**最省事，只用 **release tag** 区分（见坑 4、坑 6）。
 
+### 实操建议：先一次跑完全部契约，不要靠 CI 逐个发现
+
+2026-09-26 首次发版时连跑了 **6 轮 CI**（每轮 20+ 分钟）才收敛，每一轮只暴露一个契约失败。
+根因是“改版本号 → 推 → 等 CI 报错 → 修一个 → 再推”的串行循环。
+
+**正确做法**：动手前先在**完整历史**的 clone 上本地跑一次
+
+```bash
+node --test test/release-version-contract.test.js \
+            test/release-contributor-contract.test.js \
+            test/readme-contributors.test.js
+npm run verify:release
+```
+
+一次性看到全部契约要求，而不是让 CI 一个接一个地告诉你。
+
 ---
 
 ## 坑 1：`docs/**` 是逐文件白名单，新增 release note 会被静默忽略
@@ -112,6 +128,28 @@ git log refs/heads/main --format='%ae' | sort -u | grep -i '<local-domain>'
 
 **判据**：`trellis-cli.js` 注释写着「It does not repair a GUI app's PATH — callers that need extra lookup paths must pass them in `env` themselves」。
 **凡是 `execFile` spawn 外部 CLI 的地方，都要检查调用点有没有传 PATH 覆盖。**
+
+### 系统性扫查结论（2026-09-26 实测）
+
+对全仓 spawn 点做了一遍排查，**同类问题的既有解法是「显式候选路径」**，各模块的采用情况：
+
+| 模块 | 候选路径 | 状态 |
+|---|---|---|
+| `src/focus.js` | 6 处（`resolveTmuxBin`、`orcaCliCandidates`、`buildCmuxBinPath`…） | ✅ 早已处理 |
+| `src/agent-installation-detector.js` | 3 处 | ✅ 早已处理 |
+| `src/codex-queue-delivery.js` | 1 处（`resolveCodexQueueExecutableCandidates`） | ✅ 早已处理 |
+| `src/trellis-cli.js` | 2 处（本次新增） | ⚠️ **曾是唯一遗漏** |
+
+**结论**：trellis 是唯一遗漏点，已修。新增 spawn 外部 CLI 的模块时，**先 grep 这四个模块的写法，别重新发明**。
+
+**另一类天然安全**：调用系统内置绝对路径（`/usr/bin/open`、`ps`、`osascript`、`mdfind`、`sqlite3`）——
+launchd 默认 PATH 包含 `/usr/bin:/bin`，不需要候选路径。
+
+### 预防：打包版冒烟
+
+开发模式（`npm start`）从终端启动、继承 shell PATH，**永远测不出这类问题**。
+凡是改动“启动外部 CLI”的代码，发布前必须**从 Finder 双击打包后的 App** 验证一次，
+或者至少确认调用点传了 PATH 覆盖。
 
 ---
 
