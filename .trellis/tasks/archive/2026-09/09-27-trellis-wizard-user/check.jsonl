@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/i18n-guidelines.md", "reason": "验证 22 个键在 7 个 locale 块各出现一次，且插入未损坏文件结构（node --check 通过）"}
+{"file": ".trellis/spec/guides/trellis-panel-contract.md", "reason": "验证 IPC payload 契约、-u 回退链、信任门禁与新增的 7 段式 Scenario 一致，无契约漂移"}
+{"file": ".trellis/spec/frontend/ipc-guidelines.md", "reason": "验证新通道的 payload 校验与 Settings 窗口信任判定符合既有 IPC 形态，且缺省 userName 时行为不变"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "验证全量测试与存量基线一致、新增 CSS 类双向存在、无 console.log 残留"}

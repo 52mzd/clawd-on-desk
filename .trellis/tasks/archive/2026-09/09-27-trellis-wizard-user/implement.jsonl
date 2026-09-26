@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/i18n-guidelines.md", "reason": "本次要补 22 键 × 7 语言，必须遵守加键流程：整行锚定、七块全加、插完 node --check 与按语言块计数"}
+{"file": ".trellis/spec/frontend/ipc-guidelines.md", "reason": "新增 IPC 通道（trellis-user-suggestion）并扩展 payload 字段，需对照 preload 暴露、严格 payload、信任帧的既有形态"}
+{"file": ".trellis/spec/guides/trellis-panel-contract.md", "reason": "本任务改的正是该文件管辖的 Trellis 外部进程契约（argv 冻结/信任门禁/输出解析），并需在其中补一条 7 段式 Scenario"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "提交前检查线：语法检查、定向测试、全量基线 diff、CSS 类定义与引用双向存在"}
