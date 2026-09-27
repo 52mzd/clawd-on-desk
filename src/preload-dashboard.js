@@ -67,6 +67,10 @@ contextBridge.exposeInMainWorld("dashboardAPI", {
   // 09-27 hud-task-panel-jump: main asks the page to reveal a trellis task
   // (HUD panel click). Listener-based like the quick-mode events above.
   onNavigateTrellis: (cb) => ipcRenderer.on("dashboard:navigate-trellis", (_e, payload) => cb(payload)),
+  // 09-28 dashboard-trellis-sync: main pushes this after the registered-root
+  // set actually changed (manual add/remove or session-driven discovery), so
+  // the one-shot reads can stay one-shot and still see fresh chips.
+  onTrellisRootsChanged: (cb) => ipcRenderer.on("dashboard:trellis-roots-changed", () => cb()),
   getI18n: () => ipcRenderer.invoke("dashboard:get-i18n"),
   getKimiQuotaStatus: () => ipcRenderer.invoke("dashboard:get-kimi-quota-status"),
   refreshKimiQuota: () => ipcRenderer.invoke("dashboard:refresh-kimi-quota"),

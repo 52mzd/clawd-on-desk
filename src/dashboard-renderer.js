@@ -3318,9 +3318,18 @@ async function fetchTrellisNetworkOverview() {
 // need the DONE group open, then select — the detail pane follows.
 function jumpToTrellisNetworkTask(taskPath, taskCwd) {
   if (typeof taskPath !== "string" || !taskPath) return;
-  const overviewRoot = trellisNetwork.root;
-  if (overviewRoot && trellisView.selectedRoot !== null && trellisView.selectedRoot !== overviewRoot) {
-    trellisView.selectedRoot = overviewRoot;
+  // 09-28 dashboard-trellis-sync: resolve the project chip from the task's
+  // own cwd first — a cwd deeper inside the project still resolves its
+  // owning root. A cwd that resolves to no registered root keeps the merged
+  // "all" view (unregistered project — the overview root would be stale
+  // there, HUD jumps carry a cwd the overview never fetched); only a
+  // cwd-less overview click falls back to trellisNetwork.root.
+  const jumpRoot = (typeof taskCwd === "string" && taskCwd)
+    ? trellisTaskOwningRoot(taskCwd, trellisView.roots)
+    : null;
+  const targetRoot = jumpRoot || (typeof taskCwd === "string" && taskCwd ? null : trellisNetwork.root) || null;
+  if (targetRoot && trellisView.selectedRoot !== targetRoot) {
+    trellisView.selectedRoot = targetRoot;
   }
   if (taskPath.includes("/archive/") && !trellisSplit.archiveOpen) {
     trellisSplit.archiveOpen = true;
@@ -3329,7 +3338,7 @@ function jumpToTrellisNetworkTask(taskPath, taskCwd) {
   // Composite key partner (09-25): overview nodes don't carry cwd — the
   // overview was fetched FOR trellisNetwork.root, so that root IS the
   // missing cwd scope in multi-root lists.
-  const resolvedCwd = typeof taskCwd === "string" && taskCwd ? taskCwd : overviewRoot || null;
+  const resolvedCwd = typeof taskCwd === "string" && taskCwd ? taskCwd : trellisNetwork.root || null;
   selectTrellisSplitTask(taskPath, resolvedCwd);
 }
 
@@ -5204,12 +5213,25 @@ async function init() {
   // task. Selection triggers its own detail fetch (independent IPC), so a
   // list still loading only delays the left-rail highlight, not the pane.
   if (window.dashboardAPI && typeof window.dashboardAPI.onNavigateTrellis === "function") {
-    window.dashboardAPI.onNavigateTrellis((payload) => {
+    window.dashboardAPI.onNavigateTrellis(async (payload) => {
       if (!payload || typeof payload.taskPath !== "string") return;
       switchDashboardView("trellis");
+      // 09-28 dashboard-trellis-sync: cold-open jumps need the root set in
+      // hand before the chip can be resolved — the view switch above fired
+      // the fetch; await our own read so the jump never lands unfiltered.
+      if (!trellisView.rootsLoaded) await refreshTrellisViewRoots();
       if (payload.taskPath) {
         jumpToTrellisNetworkTask(payload.taskPath, typeof payload.cwd === "string" ? payload.cwd : undefined);
       }
+    });
+  }
+  // 09-28 dashboard-trellis-sync: roots changed upstream (manual add/remove
+  // or session-driven auto-registration) — re-read the chips and the active
+  // list, whose aggregate root set follows the registrations.
+  if (window.dashboardAPI && typeof window.dashboardAPI.onTrellisRootsChanged === "function") {
+    window.dashboardAPI.onTrellisRootsChanged(() => {
+      void refreshTrellisViewRoots();
+      void refreshTrellisActive();
     });
   }
 

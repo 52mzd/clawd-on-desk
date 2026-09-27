@@ -2493,6 +2493,11 @@ _trellisActivity = createTrellisActivity({
   onTrellisUpdate: (changedKeys) => {
     _state.emitSessionSnapshot();
   },
+  // 09-28 dashboard-trellis-sync: a cwd that positively resolved a .trellis
+  // root means a session is working that project — auto-register it so the
+  // Dashboard's project chips appear without a manual add (the Settings tab
+  // discovers projects by scanning; the chips were registration-only).
+  onRootDiscovered: (trellisDir) => autoRegisterDiscoveredRoot(trellisDir),
 });
 _trellisActivity.start();
 
@@ -2508,6 +2513,36 @@ function syncTrellisPersistedRoots() {
   }
 }
 syncTrellisPersistedRoots();
+
+// 09-28 dashboard-trellis-sync: event-driven push after the registered-root
+// set actually changed — the Dashboard's one-shot reads stay one-shot (no
+// polling), it just re-reads when told the set moved. Cold or closed pages
+// simply miss the event and read fresh on their next open.
+function broadcastTrellisRootsChanged() {
+  const wc = _dashboard && typeof _dashboard.getWebContents === "function"
+    ? _dashboard.getWebContents()
+    : null;
+  if (!wc || wc.isDestroyed()) return;
+  try { wc.send("dashboard:trellis-roots-changed"); } catch {}
+}
+
+// Auto-registration from session-driven discovery: `trellisDir` is the
+// resolved .trellis directory, the store keeps project roots. Only a real
+// addition broadcasts (duplicates are the common case — every fresh cwd
+// under an already-registered project resolves the same root).
+function autoRegisterDiscoveredRoot(trellisDir) {
+  if (typeof trellisDir !== "string" || !trellisDir.trim()) return;
+  let projectRoot;
+  try {
+    projectRoot = path.dirname(path.normalize(trellisDir));
+  } catch {
+    return;
+  }
+  const outcome = _trellisRootsStore.add(projectRoot);
+  if (outcome.status !== "ok") return;
+  syncTrellisPersistedRoots();
+  broadcastTrellisRootsChanged();
+}
 
 // Expand the picker's "picked" folder into the project roots that would
 // actually be registered: the pick itself when it is a project, else its
@@ -2573,6 +2608,7 @@ async function pickAndRegisterTrellisRoot() {
       return { status: outcome.status };
     }
     syncTrellisPersistedRoots();
+    broadcastTrellisRootsChanged();
     recordTrellisPick(picked, [picked]);
     return { status: "ok", roots: _trellisRootsStore.list() };
   }
@@ -2585,6 +2621,7 @@ async function pickAndRegisterTrellisRoot() {
     }
     if (registered.length > 0) {
       syncTrellisPersistedRoots();
+      broadcastTrellisRootsChanged();
       recordTrellisPick(picked, registered);
       return { status: "ok", roots: _trellisRootsStore.list() };
     }
@@ -2598,13 +2635,17 @@ function removeRegisteredTrellisRoot(root) {
   const outcome = _trellisRootsStore.remove(root);
   if (outcome.status !== "ok") return { status: outcome.status };
   syncTrellisPersistedRoots();
+  broadcastTrellisRootsChanged();
   return { status: "ok", roots: _trellisRootsStore.list() };
 }
 
 // Remove one bookkeeping pick and every still-registered root it produced.
 function removeTrellisPick(picked) {
   const result = _trellisRootsStore.removePick(picked);
-  if (result.status === "ok") syncTrellisPersistedRoots();
+  if (result.status === "ok") {
+    syncTrellisPersistedRoots();
+    broadcastTrellisRootsChanged();
+  }
   return result;
 }
 
