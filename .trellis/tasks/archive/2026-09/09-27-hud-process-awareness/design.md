@@ -72,7 +72,7 @@ readTail(path, 512KB)：fs.open → stat 得 size → read(max(0, size-512KB) �
 ## 3. HUD 渲染
 
 - 详情行（既有 `.trellis-detail`）在任务名/引导行后追加一行：
-  `⌘ brainstorm — <Next-Action 文本（截 80 code points，surrogate-safe）>`。
+  `⌘ brainstorm — <Next-Action 文本（截 120 code points，surrogate-safe（09-27 真机反馈 80 过紧））>`。
 - i18n：新增 `sessionHudTrellisCommand`（"正在执行 {command}" 族，7 语言）；Next-Action 原文透显
   （它是 workflow.md 的本地文本，不翻译）。
 - 高度契约沿用 §4.1 实测回传（新行由弹性高度机制自动容纳，无需改 computeHudHeight）。
