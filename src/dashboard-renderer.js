@@ -5200,6 +5200,18 @@ async function init() {
   });
 
   initDashboardViewSwitch();
+  // HUD task panel jump (09-27): flip to the Trellis view and reveal the
+  // task. Selection triggers its own detail fetch (independent IPC), so a
+  // list still loading only delays the left-rail highlight, not the pane.
+  if (window.dashboardAPI && typeof window.dashboardAPI.onNavigateTrellis === "function") {
+    window.dashboardAPI.onNavigateTrellis((payload) => {
+      if (!payload || typeof payload.taskPath !== "string") return;
+      switchDashboardView("trellis");
+      if (payload.taskPath) {
+        jumpToTrellisNetworkTask(payload.taskPath, typeof payload.cwd === "string" ? payload.cwd : undefined);
+      }
+    });
+  }
 
   const [nextI18n, nextSnapshot, nextKimiQuotaStatus] = await Promise.all([
     window.dashboardAPI.getI18n(),

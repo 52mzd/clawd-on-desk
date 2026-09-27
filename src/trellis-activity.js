@@ -1395,6 +1395,33 @@ function createTrellisActivity(options) {
   // cwd is the trusted cwd that owns the task's root.
   const ACTIVE_LIST_MAX = 200;
 
+  // Shared per-root active-task collection (readActiveList and the HUD
+  // panel both walk it — one traversal, two consumers).
+  async function collectActiveTasksInRoot(root, cwd) {
+    const projectRoot = path.dirname(root);
+    const entries = await readdirQuiet(path.join(root, "tasks"));
+    if (!entries) return [];
+    const out = [];
+    for (const entry of entries) {
+      if (entry === "archive") continue;
+      const info = await readTaskInfo(root, path.join(root, "tasks", entry));
+      if (!info) continue;
+      const task = {
+        taskPath: toPosix(path.relative(projectRoot, info.dir)),
+        title: info.title,
+        phase: info.phase,
+        progress: info.progress,
+        parent: typeof info.parent === "string" ? info.parent : null,
+        hasChildren: info.hasChildren === true,
+        priority: info.priority || null,
+        cwd,
+      };
+      if (info.nextStep) task.nextStep = info.nextStep;
+      out.push(task);
+    }
+    return out;
+  }
+
   async function readActiveList() {
     const tasks = [];
     // One cwd per root: a registered project root and a session cwd deep
@@ -1407,29 +1434,44 @@ function createTrellisActivity(options) {
       if (!root) continue;
       if (seenRoots.has(root)) continue;
       seenRoots.add(root);
-      const projectRoot = path.dirname(root);
-      const entries = await readdirQuiet(path.join(root, "tasks"));
-      if (!entries) continue;
-      for (const entry of entries) {
-        if (entry === "archive") continue;
-        const info = await readTaskInfo(root, path.join(root, "tasks", entry));
-        if (!info) continue;
-        const task = {
-          taskPath: toPosix(path.relative(projectRoot, info.dir)),
-          title: info.title,
-          phase: info.phase,
-          progress: info.progress,
-          parent: typeof info.parent === "string" ? info.parent : null,
-          hasChildren: info.hasChildren === true,
-          priority: info.priority || null,
-          cwd,
-        };
-        if (info.nextStep) task.nextStep = info.nextStep;
-        tasks.push(task);
-      }
+      const collected = await collectActiveTasksInRoot(root, cwd);
+      tasks.push(...collected);
       if (tasks.length >= ACTIVE_LIST_MAX) break;
     }
     return { status: "ok", tasks: tasks.slice(0, ACTIVE_LIST_MAX) };
+  }
+
+  // 09-27 hud-task-panel-jump: one-shot read of a single project's task
+  // overview for the HUD panel. Trust surface identical to readTaskDetail
+  // (live session cwd ∪ persisted roots ∪ positively-cached roots); the
+  // active part reuses the shared per-root walker, the archived part the
+  // shared archive traversal, newest-first capped at 8. Read-only, never
+  // cached — one fetch per panel open.
+  const HUD_PANEL_ARCHIVE_MAX = 8;
+
+  async function readHudTaskPanel(cwd) {
+    if (!isTrustedTrellisCwd(cwd)) return { status: "missing" };
+    const root = persistedRoots.has(normalizeRootPath(cwd))
+      ? persistedRootDir(cwd)
+      : await findTrellisRoot(cwd);
+    if (!root) return { status: "missing" };
+    const active = await collectActiveTasksInRoot(root, cwd);
+    const archived = listArchivedTasks(syncFs, path.join(root, "tasks", "archive"))
+      .sort((a, b) => {
+        const am = a.completedAtMs;
+        const bm = b.completedAtMs;
+        if (am === null && bm === null) return 0;
+        if (am === null) return 1;
+        if (bm === null) return -1;
+        return bm - am;
+      })
+      .slice(0, HUD_PANEL_ARCHIVE_MAX)
+      .map((entry) => ({
+        taskPath: `.trellis/tasks/archive/${entry.month}/${entry.name}`,
+        title: entry.title || entry.name,
+        completedAt: entry.completedAt,
+      }));
+    return { status: "ok", active, archived };
   }
 
   // Roots whose .trellis directory was resolved from a live session cwd
@@ -1472,6 +1514,7 @@ function createTrellisActivity(options) {
     readSpecTree,
     readSpecDoc,
     readTaskNetworkOverview,
+    readHudTaskPanel,
     readArchiveList,
     readActiveList,
   };

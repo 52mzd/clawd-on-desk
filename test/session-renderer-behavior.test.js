@@ -101,6 +101,14 @@ async function flush() {
 
 function translations() {
   return {
+    sessionHudTrellisTooltip: "Trellis task: {title} — {phase}",
+    sessionHudTrellisPhaseExecute: "Execute",
+    trellisHintExecute: "step {done}/{total}",
+    sessionHudTrellisPanelActive: "Active",
+    sessionHudTrellisPanelDone: "Done",
+    sessionHudTrellisPanelAll: "View all in Dashboard",
+    sessionHudTrellisPanelLoading: "Loading…",
+    sessionHudTrellisPanelEmpty: "No tasks",
     dashboardWindowTitle: "Sessions",
     dashboardCount: "{n} active",
     dashboardJumpTerminal: "Jump",
@@ -245,6 +253,15 @@ async function loadHud(sessions, openResult = { status: "ok" }) {
     ackCompletion: async () => ({ status: "noop" }),
     openDashboard: () => {},
     setPinned: () => {},
+    getTrellisPanel: async (payload) => {
+      openCalls.push(["getTrellisPanel", payload]);
+      return { status: "ok", active: [
+        { taskPath: ".trellis/tasks/09-27-x", title: "Task X", phase: "execute", progress: { done: 1, total: 3 } },
+      ], archived: [
+        { taskPath: ".trellis/tasks/archive/2026-09/09-20-old", title: "Old", completedAt: "2026-09-20T10:00:00.000Z" },
+      ] };
+    },
+    openTrellisTask: (payload) => { openCalls.push(["openTrellisTask", payload]); },
   };
   const context = vm.createContext({
     window: { sessionHudAPI: api }, document, console, Date,
@@ -602,4 +619,60 @@ test("model copy exists in all supported languages", () => {
   for (const lang of SUPPORTED_LANGS) {
     assert.ok(i18n[lang].dashboardModel, `${lang}.dashboardModel is required`);
   }
+});
+
+
+test("HUD trellis panel: chip opens the project panel, rows jump to the dashboard", async () => {
+  const { root, openCalls, pushSnapshot } = await loadHud([
+    { id: "s1", agentId: "claude-code", cwd: "/proj", state: "working", trellis:
+      { taskPath: ".trellis/tasks/09-27-cur", title: "Current", phase: "execute", progress: { done: 1, total: 2 }, parallelCount: 1 } },
+  ]);
+  const chip = root.querySelector ? null : null;
+  // vm DOM: find the chip via class walk
+  const byCls = (el, cls) => {
+    const out = [];
+    if (el.classList && el.classList.contains(cls)) out.push(el);
+    for (const child of (el.children || [])) out.push(...byCls(child, cls));
+    return out;
+  };
+  const chips = byCls(root, "trellis-chip");
+  assert.ok(chips.length === 1, "one chip on the bound session");
+  await chips[0].dispatch ? chips[0].dispatch("click") : chips[0].click();
+  await flush();
+  const panel = byCls(root, "trellis-task-panel");
+  assert.equal(panel.length, 1, "panel renders below the rows");
+  assert.ok(byCls(root, "trellis-panel-row").length >= 2, "active + archived rows render");
+  assert.ok(byCls(panel[0], "trellis-detail-title").some((el) => el.textContent.includes("Current")),
+    "panel header keeps the old detail-row task title (tooltip template)");
+  const rows = byCls(root, "trellis-panel-row");
+  rows[0].dispatch ? rows[0].dispatch("click") : rows[0].click();
+  assert.ok(openCalls.some((c) => c[0] === "openTrellisTask" && c[1] && c[1].taskPath === ".trellis/tasks/09-27-x"),
+    "row click sends the jump payload");
+  // Chip again closes the panel.
+  chips[0].dispatch ? chips[0].dispatch("click") : chips[0].click();
+  await flush();
+  assert.equal(byCls(root, "trellis-task-panel").length, 0, "second click closes");
+});
+
+test("HUD trellis panel auto-closes when the binding disappears", async () => {
+  const h = await loadHud([
+    { id: "s1", agentId: "claude-code", cwd: "/proj", state: "working", trellis:
+      { taskPath: ".trellis/tasks/09-27-cur", title: "Current", phase: "execute", progress: null, parallelCount: 1 } },
+  ]);
+  const byCls = (el, cls) => {
+    const out = [];
+    if (el.classList && el.classList.contains(cls)) out.push(el);
+    for (const child of (el.children || [])) out.push(...byCls(child, cls));
+    return out;
+  };
+  const chips = byCls(h.root, "trellis-chip");
+  chips[0].dispatch ? chips[0].dispatch("click") : chips[0].click();
+  await flush();
+  assert.equal(byCls(h.root, "trellis-task-panel").length, 1);
+  // Binding gone on the next snapshot → panel closes itself.
+  await h.pushSnapshot([
+    { id: "s1", agentId: "claude-code", cwd: "/proj", state: "working" },
+  ]);
+  await flush();
+  assert.equal(byCls(h.root, "trellis-task-panel").length, 0, "no trellis anchor → closed");
 });

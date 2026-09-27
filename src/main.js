@@ -2869,6 +2869,21 @@ function focusDashboardSession(sessionId, options = {}) {
   return false;
 }
 
+// 09-27 hud-task-panel-jump: reveal a trellis task in the Dashboard — bring
+// the window up first (creating it if cold), then hand the navigation to
+// the renderer; a page still loading receives it after did-finish-load.
+function openTrellisTaskFromHud({ taskPath, cwd } = {}) {
+  if (typeof taskPath !== "string") return; // "" = view-only jump
+  _dashboard.showDashboard({ source: "hud" });
+  const wc = _dashboard.getWebContents ? _dashboard.getWebContents() : null;
+  if (!wc || wc.isDestroyed()) return;
+  const send = () => {
+    if (!wc.isDestroyed()) wc.send("dashboard:navigate-trellis", { taskPath, cwd });
+  };
+  if (wc.isLoadingMainFrame()) wc.once("did-finish-load", send);
+  else send();
+}
+
 function hideDashboardSession(sessionId) {
   if (!_state || typeof _state.dismissSession !== "function") {
     return { status: "error", message: "session state is not ready" };
@@ -5267,6 +5282,11 @@ registerSessionIpc({
     sessionAutomationCoordinator.clearSessionAutomationGrant(payload),
   getSessionHistory: () => sessionHistoryRuntime.getHistory(),
   resumeSessionFromHistory: (payload) => sessionHistoryRuntime.resume(payload),
+  getTrellisHudPanel: (cwd) =>
+    _trellisActivity && typeof _trellisActivity.readHudTaskPanel === "function"
+      ? _trellisActivity.readHudTaskPanel(cwd)
+      : { status: "error", message: "trellis-activity-unavailable" },
+  openTrellisTask: (payload) => openTrellisTaskFromHud(payload),
   getTrellisNetworkOverview: (payload) => {
     if (!_trellisActivity || typeof _trellisActivity.readTaskNetworkOverview !== "function") {
       return { status: "error", message: "trellis-activity-unavailable" };

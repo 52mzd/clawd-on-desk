@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld("sessionHudAPI", {
   setTrellisDetailHeight: (px) =>
     ipcRenderer.send("session-hud:set-trellis-detail-height", Number(px) || 0),
   ackCompletion: (sessionId) => ipcRenderer.invoke("session:ack-completion", sessionId),
+  getTrellisPanel: (payload) => ipcRenderer.invoke("session-hud:trellis-panel", payload),
+  openTrellisTask: (payload) => ipcRenderer.send("session-hud:open-trellis-task", payload),
   onSessionSnapshot: (cb) => {
     if (typeof cb !== "function") return () => {};
     snapshotListeners.add(cb);

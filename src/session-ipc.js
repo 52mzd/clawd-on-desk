@@ -56,6 +56,14 @@ function registerSessionIpc(options = {}) {
     options.getTrellisTaskDoc,
     "getTrellisTaskDoc"
   );
+  const getTrellisHudPanel = requiredDependency(
+    options.getTrellisHudPanel,
+    "getTrellisHudPanel"
+  );
+  const openTrellisTask = requiredDependency(
+    options.openTrellisTask,
+    "openTrellisTask"
+  );
   const getTrellisSpecTree = requiredDependency(
     options.getTrellisSpecTree,
     "getTrellisSpecTree"
@@ -435,6 +443,42 @@ function registerSessionIpc(options = {}) {
   on("session-hud:set-pinned", (_event, value) => setSessionHudPinned(!!value));
   on("session-hud:set-trellis-detail-height", (_event, px) =>
     setSessionHudTrellisDetailHeight(Number(px) || 0));
+  // 09-27 hud-task-panel-jump: the HUD task panel. Panel data is a strict
+  // single-key {cwd} payload (the activity side re-checks the trust
+  // surface); the jump is fire-and-forget — the payload is shape-checked
+  // and the taskPath must stay inside .trellis/tasks/, deeper containment
+  // lives in the detail channel the jump ultimately routes through.
+  handle("session-hud:trellis-panel", (_event, payload) => {
+    const keys = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? Object.keys(payload).sort()
+      : [];
+    if (
+      keys.length !== 1
+      || keys[0] !== "cwd"
+      || typeof payload.cwd !== "string"
+      || !payload.cwd
+    ) {
+      return { status: "invalid" };
+    }
+    return getTrellisHudPanel(payload.cwd);
+  });
+  on("session-hud:open-trellis-task", (_event, payload) => {
+    const keys = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? Object.keys(payload).sort()
+      : [];
+    if (
+      keys.length !== 2
+      || keys[0] !== "cwd"
+      || keys[1] !== "taskPath"
+      || typeof payload.cwd !== "string"
+      || !payload.cwd
+      || typeof payload.taskPath !== "string"
+      || (payload.taskPath !== "" && !payload.taskPath.startsWith(".trellis/tasks/"))
+    ) {
+      return; // send channel: reject silently — "" means "just open the view"
+    }
+    openTrellisTask(payload);
+  });
 
   on("settings:open-dashboard", () => showDashboard({ source: "settings" }));
   on("show-dashboard", () => showDashboard());

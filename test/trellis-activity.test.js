@@ -1864,3 +1864,35 @@ describe("trellis-activity parent link", () => {
     assert.ok(!("parent" in info), "blank parent must not ride along");
   });
 });
+
+
+describe("trellis-activity readHudTaskPanel (09-27 hud-task-panel-jump)", () => {
+  function seed(fakeFs) {
+    addTask(fakeFs, "09-27-cur", { title: "当前", status: "in_progress", subtasks: [] });
+    for (let i = 0; i < 10; i += 1) {
+      const name = `old-${String(i).padStart(2, "0")}`;
+      fakeFs.add(path.join(PROJECT, ".trellis", "tasks", "archive", "2026-09", name, "task.json"),
+        JSON.stringify({ title: name, status: "completed", subtasks: [],
+          completed_at: `2026-09-${String(20 - i).padStart(2, "0")}T00:00:00.000Z` }));
+    }
+  }
+
+  it("returns the project's active tasks plus the 8 newest archived, read-only", async () => {
+    const h = makeHarness({ sessions: new Map([["s1", { agentId: "claude-code", cwd: CWD }]]) });
+    seed(h.fakeFs);
+    const result = await h.activity.readHudTaskPanel(CWD);
+    assert.strictEqual(result.status, "ok");
+    assert.deepStrictEqual(result.active.map((t) => t.taskPath), [".trellis/tasks/09-27-cur"]);
+    assert.strictEqual(result.archived.length, 8, "archived capped at 8");
+    assert.ok(result.archived[0].taskPath.endsWith("old-00"), "newest first");
+    assert.deepStrictEqual(h.fakeFs.writeOps, [], "read-only red line");
+  });
+
+  it("rejects untrusted cwds with missing, touching nothing", async () => {
+    const h = makeHarness({ sessions: new Map() });
+    seed(h.fakeFs);
+    const result = await h.activity.readHudTaskPanel("/nowhere");
+    assert.strictEqual(result.status, "missing");
+    assert.deepStrictEqual(h.fakeFs.writeOps, []);
+  });
+});

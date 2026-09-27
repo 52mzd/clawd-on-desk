@@ -583,6 +583,8 @@ function loadDashboard({
     ...quickApi,
   };
 
+  const navigateListeners = [];
+  api.onNavigateTrellis = (cb) => { navigateListeners.push(cb); };
   const context = vm.createContext({
     window: {
       dashboardAPI: api,
@@ -611,6 +613,7 @@ function loadDashboard({
   return {
     panel: elements.get("trellisPanel"),
     overlay: elements.get("trellisDetailOverlay"),
+    navigateTrellis: (payload) => { for (const fn of navigateListeners) fn(payload); },
     view: elements.get("trellisView"),
     // Renderer module scope, for the pure fold helpers (applySubtreeFold /
     // isTrellisRowVisible) — they are DOM-shape logic, not DOM plumbing.
@@ -2561,5 +2564,60 @@ describe("dashboard.html CSS structural guards (09-25 lessons)", () => {
     // folded", so a row-level writer is dead code by definition.
     assert.ok(!/(?:row|caret)\.classList\.(?:add|toggle)\("is-folded"/.test(src),
       "is-folded belongs to the phase card only — a row/caret writer is dead code");
+  });
+});
+
+
+describe("dashboard trellis navigation from the HUD panel (09-27)", () => {
+  it("switches to the trellis view and reveals the task", async () => {
+    const app = loadDashboard({
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/one"] },
+      activeResult: { status: "ok", tasks: [
+        { taskPath: ".trellis/tasks/a", title: "Task A", phase: "execute", progress: null, parent: null, cwd: "/proj/one" },
+      ] },
+      archiveResult: { status: "ok", tasks: [] },
+    });
+    await flush();
+    // Start on the sessions view (default).
+    assert.ok(app.view.hidden, "trellis view starts hidden");
+    app.navigateTrellis({ taskPath: ".trellis/tasks/a", cwd: "/proj/one" });
+    await flush();
+    assert.ok(!app.view.hidden, "navigation flips to the trellis view");
+    const selected = byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-selected"));
+    assert.equal(selected.length, 1, "the target task row is selected");
+  });
+
+  it("opens the archive group for archived targets", async () => {
+    const app = loadDashboard({
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/one"] },
+      activeResult: { status: "ok", tasks: [] },
+      archiveResult: { status: "ok", tasks: [
+        { taskPath: ".trellis/tasks/archive/2026-09/old-a", title: "Old A", archived: true, cwd: "/proj/one" },
+      ] },
+    });
+    await flush();
+    await switchToTrellis(app);
+    app.navigateTrellis({ taskPath: ".trellis/tasks/archive/2026-09/old-a", cwd: "/proj/one" });
+    await flush();
+    // The archived row must exist and be selected after the jump.
+    const rows = byClass(app.view, "trellis-split-row");
+    const hit = rows.filter((el) => textOf(el).includes("Old A"));
+    assert.ok(hit.length >= 1, "archived target row rendered");
+    assert.ok(hit.some((el) => el.classList.contains("is-selected")), "archived target selected");
+  });
+
+  it("a view-only jump (empty taskPath) just switches the view", async () => {
+    const app = loadDashboard({
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/one"] },
+      activeResult: { status: "ok", tasks: [] },
+      archiveResult: { status: "ok", tasks: [] },
+    });
+    await flush();
+    app.navigateTrellis({ taskPath: "", cwd: "/proj/one" });
+    await flush();
+    assert.ok(!app.view.hidden, "view-only jump still flips the view");
   });
 });

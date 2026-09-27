@@ -274,6 +274,62 @@ body { padding: 2px 3px 8px; }
 .trellis-finish { background: rgba(245, 158, 11, 0.15); color: #b45309; }
 .trellis-done { background: rgba(107, 114, 128, 0.13); color: #52525b; }
 
+/* 09-27 hud-task-panel-jump: the project task panel below the session rows.
+   Flex-locked like .trellis-detail (§4.1 runaway-shrink guard) and capped
+   with an inner scroll so a long list cannot grow the HUD without bound. */
+.trellis-task-panel {
+  flex: 0 0 auto;
+  margin: 2px 6px 4px;
+  padding: 5px 8px 4px;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  border-radius: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.trellis-panel-list { margin-top: 3px; }
+.trellis-panel-head {
+  font-size: 9px;
+  font-weight: 600;
+  opacity: 0.75;
+  margin-top: 4px;
+}
+.trellis-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 3px;
+  font-size: 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.trellis-panel-row:hover { background: rgba(128, 128, 128, 0.15); }
+.trellis-panel-row-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trellis-panel-row-side {
+  flex: 0 0 auto;
+  font-size: 9px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+.trellis-dot { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; }
+.trellis-dot-plan { background: #2563eb; }
+.trellis-dot-execute { background: #16a34a; }
+.trellis-dot-check { background: #9333ea; }
+.trellis-dot-finish { background: #b45309; }
+.trellis-dot-done { background: #6b7280; }
+.trellis-panel-all {
+  font-size: 9px;
+  opacity: 0.75;
+  margin-top: 4px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
 @media (prefers-color-scheme: dark) {
   .chip-thinking { background: rgba(99, 102, 241, 0.20); color: #818cf8; }
   .chip-working { background: rgba(22, 163, 74, 0.20); color: #4ade80; }

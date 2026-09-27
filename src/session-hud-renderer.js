@@ -27,45 +27,171 @@ function isHudSession(session) {
 // transparent window suppresses macOS help tags), and floating hover cards
 // are cramped. Click the trellis chip to expand the HUD with an inline
 // detail row under the session line instead.
-const trellisExpandedSessions = new Set();
+// 09-27 hud-task-panel-jump: the chip opens ONE panel below the session
+// rows (project-scoped task list) instead of a per-session detail row. The
+// header keeps the old detail-row content (task name / guide / command), so
+// no information is lost — the list is the addition.
+const trellisPanel = {
+  open: false,
+  sessionId: null,
+  cwd: null,
+  loading: false,
+  result: null,
+};
 
-function toggleTrellisDetail(sessionId) {
-  if (trellisExpandedSessions.has(sessionId)) {
-    trellisExpandedSessions.delete(sessionId);
-  } else {
-    trellisExpandedSessions.add(sessionId);
+function closeTrellisPanel() {
+  trellisPanel.open = false;
+  trellisPanel.sessionId = null;
+  trellisPanel.cwd = null;
+  trellisPanel.loading = false;
+  trellisPanel.result = null;
+}
+
+function toggleTrellisPanel(session) {
+  if (trellisPanel.open && trellisPanel.sessionId === session.id) {
+    closeTrellisPanel();
+    render();
+    return;
+  }
+  trellisPanel.open = true;
+  trellisPanel.sessionId = session.id;
+  const nextCwd = typeof session.cwd === "string" ? session.cwd : null;
+  if (!nextCwd) {
+    closeTrellisPanel();
+    render();
+    return;
+  }
+  const needsFetch = trellisPanel.cwd !== nextCwd || !trellisPanel.result;
+  trellisPanel.cwd = nextCwd;
+  if (needsFetch) {
+    trellisPanel.loading = true;
+    trellisPanel.result = null;
+    render();
+    if (window.sessionHudAPI && typeof window.sessionHudAPI.getTrellisPanel === "function") {
+      window.sessionHudAPI.getTrellisPanel({ cwd: nextCwd }).then((result) => {
+        // A close or a different project won the race — drop the stale fetch.
+        if (!trellisPanel.open || trellisPanel.cwd !== nextCwd || !trellisPanel.loading) return;
+        trellisPanel.loading = false;
+        trellisPanel.result = result && typeof result === "object" ? result : { status: "error" };
+        render();
+      }).catch(() => {
+        if (!trellisPanel.open || trellisPanel.cwd !== nextCwd || !trellisPanel.loading) return;
+        trellisPanel.loading = false;
+        trellisPanel.result = { status: "error" };
+        render();
+      });
+    } else {
+      trellisPanel.loading = false;
+      trellisPanel.result = { status: "error" };
+    }
   }
   render();
 }
 
-function createTrellisDetailRow(session) {
+function trellisPanelTaskRow(entry, archived) {
   const row = document.createElement("div");
-  row.className = "trellis-detail";
-  const info = trellisChipInfo(session);
-  if (!info) return row;
-  const lines = String(info.title || "").split("\n");
-  const title = document.createElement("div");
-  title.className = "trellis-detail-title";
-  title.textContent = lines[0] || "";
-  row.appendChild(title);
-  const guide = document.createElement("div");
-  guide.className = "trellis-detail-guide";
-  guide.textContent = lines[1] || "";
-  row.appendChild(guide);
-  // The command/step line (when present) is its own row; height flows
-  // through the §4.1 measured-report contract unchanged.
-  if (lines.length > 2) {
-    const command = document.createElement("div");
-    command.className = "trellis-detail-guide";
-    command.textContent = lines.slice(2).join(" ");
-    row.appendChild(command);
+  row.className = "trellis-panel-row";
+  const dot = document.createElement("span");
+  const phase = !archived && entry.phase ? String(entry.phase) : "done";
+  dot.className = `trellis-dot trellis-dot-${phase}`;
+  row.appendChild(dot);
+  const label = document.createElement("span");
+  label.className = "trellis-panel-row-title";
+  label.textContent = entry.title || entry.taskPath;
+  label.title = entry.title || entry.taskPath;
+  row.appendChild(label);
+  const side = document.createElement("span");
+  side.className = "trellis-panel-row-side";
+  if (archived) {
+    side.textContent = typeof entry.completedAt === "string" ? entry.completedAt.slice(5, 10) : "";
+  } else if (entry.progress && Number.isFinite(Number(entry.progress.total)) && Number(entry.progress.total) > 0) {
+    side.textContent = `${Math.max(0, Math.trunc(Number(entry.progress.done) || 0))}/${Math.trunc(Number(entry.progress.total))}`;
+  }
+  row.appendChild(side);
+  if (typeof entry.taskPath === "string" && entry.taskPath) {
+    row.addEventListener("click", () => {
+      if (window.sessionHudAPI && typeof window.sessionHudAPI.openTrellisTask === "function") {
+        window.sessionHudAPI.openTrellisTask({ taskPath: entry.taskPath, cwd: trellisPanel.cwd });
+      }
+    });
   }
   return row;
 }
 
+function createTrellisPanel(session) {
+  const panel = document.createElement("div");
+  panel.className = "trellis-task-panel";
+  const info = trellisChipInfo(session);
+  if (info) {
+    const lines = String(info.title || "").split("\n");
+    const title = document.createElement("div");
+    title.className = "trellis-detail-title";
+    title.textContent = lines[0] || "";
+    panel.appendChild(title);
+    const guide = document.createElement("div");
+    guide.className = "trellis-detail-guide";
+    guide.textContent = lines[1] || "";
+    panel.appendChild(guide);
+    if (lines.length > 2) {
+      const command = document.createElement("div");
+      command.className = "trellis-detail-guide";
+      command.textContent = lines.slice(2).join(" ");
+      panel.appendChild(command);
+    }
+  }
+  const list = document.createElement("div");
+  list.className = "trellis-panel-list";
+  if (trellisPanel.loading) {
+    const hint = document.createElement("div");
+    hint.className = "trellis-detail-guide";
+    hint.textContent = t("sessionHudTrellisPanelLoading");
+    list.appendChild(hint);
+  } else if (!trellisPanel.result || trellisPanel.result.status !== "ok") {
+    const hint = document.createElement("div");
+    hint.className = "trellis-detail-guide";
+    hint.textContent = t("sessionHudTrellisPanelEmpty");
+    list.appendChild(hint);
+  } else {
+    const active = Array.isArray(trellisPanel.result.active) ? trellisPanel.result.active : [];
+    const archived = Array.isArray(trellisPanel.result.archived) ? trellisPanel.result.archived : [];
+    if (active.length || archived.length) {
+      if (active.length) {
+        const head = document.createElement("div");
+        head.className = "trellis-panel-head";
+        head.textContent = t("sessionHudTrellisPanelActive");
+        list.appendChild(head);
+        for (const entry of active) list.appendChild(trellisPanelTaskRow(entry, false));
+      }
+      if (archived.length) {
+        const head = document.createElement("div");
+        head.className = "trellis-panel-head";
+        head.textContent = t("sessionHudTrellisPanelDone");
+        list.appendChild(head);
+        for (const entry of archived) list.appendChild(trellisPanelTaskRow(entry, true));
+      }
+    } else {
+      const hint = document.createElement("div");
+      hint.className = "trellis-detail-guide";
+      hint.textContent = t("sessionHudTrellisPanelEmpty");
+      list.appendChild(hint);
+    }
+  }
+  panel.appendChild(list);
+  const all = document.createElement("div");
+  all.className = "trellis-panel-all";
+  all.textContent = t("sessionHudTrellisPanelAll");
+  all.addEventListener("click", () => {
+    if (window.sessionHudAPI && typeof window.sessionHudAPI.openTrellisTask === "function") {
+      window.sessionHudAPI.openTrellisTask({ taskPath: "", cwd: trellisPanel.cwd });
+    }
+  });
+  panel.appendChild(all);
+  return panel;
+}
+
 function reportTrellisDetailHeight() {
   const measure = () => {
-    const rows = document.querySelectorAll(".trellis-detail");
+    const rows = document.querySelectorAll(".trellis-detail, .trellis-task-panel");
     let total = 0;
     for (const row of rows) total += row.offsetHeight + 4; // 2px margin top + bottom
     if (window.sessionHudAPI && typeof window.sessionHudAPI.setTrellisDetailHeight === "function") {
@@ -432,9 +558,9 @@ function createRowForSession(session, now) {
     chip.title = trellisInfo.title;
     chip.addEventListener("click", (event) => {
       event.stopPropagation();
-      toggleTrellisDetail(session.id);
+      toggleTrellisPanel(session);
     });
-    if (trellisExpandedSessions.has(session.id)) chip.classList.add("trellis-chip-active");
+    if (trellisPanel.open && trellisPanel.sessionId === session.id) chip.classList.add("trellis-chip-active");
     right.appendChild(chip);
     hasRightContent = true;
   }
@@ -597,15 +723,19 @@ function render() {
 
   const now = Date.now();
   const { expanded, folded } = splitHudLayout(sessions);
-  const expandedIds = new Set(expanded.map((session) => session.id));
-  for (const sessionId of trellisExpandedSessions) {
-    if (!expandedIds.has(sessionId)) trellisExpandedSessions.delete(sessionId);
-  }
 
   for (const session of expanded) {
     hudEl.appendChild(createRowForSession(session, now));
-    if (trellisExpandedSessions.has(session.id)) {
-      hudEl.appendChild(createTrellisDetailRow(session));
+  }
+  // The panel lives BELOW all session rows (project-scoped, opened from any
+  // bound session's chip). It auto-closes when its owning session's binding
+  // disappears — a panel without a trellis anchor has nothing to show.
+  if (trellisPanel.open) {
+    const owner = expanded.find((session) => session.id === trellisPanel.sessionId);
+    if (owner && owner.trellis) {
+      hudEl.appendChild(createTrellisPanel(owner));
+    } else {
+      closeTrellisPanel();
     }
   }
   reportTrellisDetailHeight();

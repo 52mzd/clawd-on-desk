@@ -384,6 +384,18 @@ activity.getKnownRoots()              // → string[]（本进程正向缓存的
                  nextStep?: string,
                  command?: string, workflowStatus?: string, workflowNextAction?: string }`
 
+**HUD 任务面板（09-27 hud-task-panel-jump）**：绑定会话的 chip 点击打开
+HUD 底部面板（`createTrellisPanel`，替代旧 per-session 详情行——原三行内容上移为
+面板头）。数据走 `session-hud:trellis-panel`（invoke，payload 严格单键 `{cwd}`，
+activity 侧 `readHudTaskPanel` 复用共享 per-root 遍历 + `listArchivedTasks`，
+active 全量 + 归档 newest-first 截 8，cwd 过 `isTrustedTrellisCwd`）；
+跳转走 `session-hud:open-trellis-task`（send，payload 严格双键，taskPath 须以
+`.trellis/tasks/` 开头或为空串=仅切视图）→ main `openTrellisTaskFromHud`
+（showDashboard → `dashboard:navigate-trellis`，isLoading 时挂 did-finish-load）
+→ renderer 复用 `jumpToTrellisNetworkTask`（归档自动开 archiveOpen）。面板
+计入 §4.1 高度实测（`.trellis-task-panel` 选择器），max-height 280px 内滚，
+flex 锁定同 `.trellis-detail`；绑定消失自动关；一次一拉不轮询。
+
 **过程级 trace（09-27 hud-process-awareness）**：绑定会话额外扫其 Claude Code
 transcript 尾部（`~/.claude/projects/<sanitized-cwd>/<raw-id>.jsonl`，尾窗
 `TRACE_TAIL_BYTES = 512KB`，`opts.readTail` 可注入、缺省 open/stat/read 只读实现），
