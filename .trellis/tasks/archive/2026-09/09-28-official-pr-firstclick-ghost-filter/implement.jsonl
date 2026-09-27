@@ -1,0 +1,1 @@
+{"file": ".trellis/spec/guides/repository-sync-guide.md", "reason": "PR 分支必须基于 origin/main 干净基线，防 fork 基建泄漏进官方 diff"}
