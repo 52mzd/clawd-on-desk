@@ -770,3 +770,25 @@ Settings → Trellis 安装向导支持 trellis init -u <name> 开发者身份�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 28: HUD 跳转保留面板修复 + 官方/二开问题归因排查
+<!-- trellis-session: v=2 fp=84d44e09baab072e -->
+
+**Date**: 2026-09-28
+**Task**: HUD 跳转保留面板修复 + 官方/二开问题归因排查
+**Branch**: `main`
+
+### Summary
+
+1) HUD 行点击跳终端不再关闭开着的 trellis 面板（renderer 删 closeTrellisPanel 调用，测试断言反转，spec trellis-panel-contract §514 同步标注 09-28 hud-jump-keeps-panel）。2) 归因排查：设置/dashboard 双击=官方缺 acceptFirstMouse（仅 permission.js 两处配置）；桌宠偶发点不了=点击链路全官方代码，嫌疑为官方 09-27 合并的 #1050 idle 镜像/拖拽刷新。3) 清理 ~/.clawd/session-history-v1 幽灵记录 116→4（cwd=/ 秒级 daemon 记录 + endedAt 损坏项），官方无自动清理机制。4) 性能结论：二开常驻开销可忽略（trellis 轮询纯 fs 5s/15s 自适应+多级 TTL 缓存）。遗留：readme-contributors 测试 1 失败（README 名单多 52mzd/hanzhe-one 未同步 Settings About，预先存在待决策）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `da51f580` | fix(hud): 跳转终端保留开着的任务面板 — owner 行仍在 expanded，跳走回来面板还在 |
+
+### Status
+
+[OK] **Completed**
