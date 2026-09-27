@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/trellis-panel-contract.md", "reason": "验收对照：只读断言（fake fs writeOps=[]）、隐藏语义守卫、trellis 面板测试断言点清单（§6）"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "质量门槛：测试命令与断言完整性要求"}
