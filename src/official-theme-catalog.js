@@ -78,6 +78,16 @@ function compareSemver(a, b) {
   return 0;
 }
 
+// Fork builds ship a prerelease-suffixed app version (e.g. "1.1.0-trellis.1.1");
+// its compatibility baseline is the release triplet before the first "-".
+// Applies to the app-side version only: catalog minAppVersion stays strictly
+// three-segment (validateCatalogEntry keeps rejecting anything else).
+function normalizeAppVersion(value) {
+  if (typeof value !== "string") return value;
+  const dash = value.indexOf("-");
+  return dash === -1 ? value : value.slice(0, dash);
+}
+
 function parseHttpsUrl(raw) {
   if (typeof raw !== "string" || !raw) return null;
   let url;
@@ -618,7 +628,7 @@ function deriveOfficialThemeState({ entry, installed, appVersion }) {
   if (!entry) {
     return { state: installed ? "repair-required" : "error", reason: "not-in-catalog" };
   }
-  const minOk = compareSemver(appVersion, entry.minAppVersion);
+  const minOk = compareSemver(normalizeAppVersion(appVersion), entry.minAppVersion);
   if (minOk === null || minOk < 0) {
     return { state: "update-app", reason: "min-app-version" };
   }
@@ -645,6 +655,7 @@ module.exports = {
   LIMITS,
   ERROR_CODES,
   compareSemver,
+  normalizeAppVersion,
   parseSemver,
   validateArchiveUrl,
   validateLicenseNoticeUrl,

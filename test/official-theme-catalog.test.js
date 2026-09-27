@@ -245,6 +245,39 @@ describe("official theme semver and state derivation", () => {
     );
   });
 
+  it("gates fork prerelease app versions by their release baseline", () => {
+    assert.strictEqual(catalog.normalizeAppVersion("1.1.0-trellis.1.1"), "1.1.0");
+    assert.strictEqual(catalog.normalizeAppVersion("1.1.0"), "1.1.0");
+    const base = { entry: validEntry(), appVersion: "1.1.0-trellis.1.1" };
+    assert.strictEqual(
+      catalog.deriveOfficialThemeState({ ...base, installed: null }).state,
+      "available",
+    );
+    assert.strictEqual(
+      catalog.deriveOfficialThemeState({
+        ...base,
+        entry: validEntry({ minAppVersion: "1.1.0" }),
+        installed: null,
+      }).state,
+      "available",
+    );
+    assert.strictEqual(
+      catalog.deriveOfficialThemeState({ ...base, installed: { version: "1.0.0", repairRequired: false } }).state,
+      "installed",
+    );
+    assert.strictEqual(
+      catalog.deriveOfficialThemeState({
+        ...base,
+        entry: validEntry({ minAppVersion: "1.2.0" }),
+        installed: null,
+      }).state,
+      "update-app",
+    );
+    // The suffix leniency never relaxes catalog-side validation.
+    const entryErrors = catalog.validateCatalogEntry(validEntry({ minAppVersion: "1.0" })).errors;
+    assert.ok(entryErrors.some((message) => message.includes("minAppVersion")));
+  });
+
   it("detects catalog version regression", () => {
     assert.strictEqual(catalog.catalogVersionRegression(1, 2), true);
     assert.strictEqual(catalog.catalogVersionRegression(2, 2), false);
