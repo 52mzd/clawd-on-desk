@@ -109,7 +109,16 @@ function loadResumableSessionHistory(options = {}) {
       interrupted: record.interrupted,
       // null means "could not determine" — the row is still offered.
       transcriptPresent: transcript,
-      resumeDisabledReason: profileVerified ? null : "profile-unverified",
+      // A confidently missing transcript (false) means `claude --resume`
+      // would be handed a session id whose .jsonl is gone, so the launch
+      // is guaranteed to fail. The row stays visible — the missing flag
+      // already tells the user why — but Resume is disabled, the same
+      // visible-but-disabled shape profile-unverified rows use.
+      resumeDisabledReason: !profileVerified
+        ? "profile-unverified"
+        : transcript === false
+          ? "transcript-missing"
+          : null,
     });
     if (rows.length >= limit) break;
   }
@@ -135,6 +144,10 @@ function resolveResumeTarget(agentId, historyKey, options = {}) {
   const profile = match.version >= 2 ? normalizeClaudeProfile(match.profile) : null;
   if (!profile) return null;
   if (!match.cwd || !path.isAbsolute(match.cwd)) return null;
+  // The filesystem root passes the directory check below, yet a daemon
+  // record with cwd="/" is never a project the user meant to keep; it must
+  // not relaunch there.
+  if (path.parse(match.cwd).root === match.cwd) return null;
   try {
     const stat = fs.lstatSync(match.cwd);
     if (!stat.isDirectory()) return null;
