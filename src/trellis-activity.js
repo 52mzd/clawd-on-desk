@@ -479,7 +479,9 @@ function createTrellisActivity(options) {
   const TRACE_WS_MARKER = "UserPromptSubmit hook additional context: <workflow-state>";
   const TRACE_STATUS_RE = /^Status:\s*(\S+)\s*$/m;
   const TRACE_NEXT_RE = /^Next-Action:\s*(.+)$/m;
-  const TRACE_NEXT_MAX = 80;
+  // 120 code points: the HUD detail row wraps (white-space: normal), so the
+  // cap only guards against pathological single-line lengths.
+  const TRACE_NEXT_MAX = 120;
 
   // Mirrors Claude Code's ~/.claude/projects/<sanitized-cwd>/ convention —
   // same rule as the trellis channel projectKey: backslash/slash/underscore
