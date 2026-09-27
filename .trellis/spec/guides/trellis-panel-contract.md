@@ -395,7 +395,14 @@ active 全量 + 归档 newest-first 截 8，cwd 过 `isTrustedTrellisCwd`）；
 跳转走 `session-hud:open-trellis-task`（send，payload 严格双键，taskPath 须以
 `.trellis/tasks/` 开头或为空串=仅切视图）→ main `openTrellisTaskFromHud`
 （showDashboard → `dashboard:navigate-trellis`，isLoading 时挂 did-finish-load）
-→ renderer 复用 `jumpToTrellisNetworkTask`（归档自动开 archiveOpen）。面板
+→ renderer 复用 `jumpToTrellisNetworkTask`（归档自动开 archiveOpen）。
+**跳转切项目 chip**（09-28 dashboard-trellis-sync）：先按 payload.cwd 经
+`trellisTaskOwningRoot` 解析 owning root 并切 `selectedRoot`（子目录 cwd 也能
+归到所属 root）；cwd 解析不到注册 root 时保持合并视图——**不 fallback 陈旧
+`trellisNetwork.root`**（HUD 带的 cwd 从不在 overview 拉取范围内）；仅无 cwd
+的真 overview 点击才用 overviewRoot。冷启动跳转先 await roots 就绪再解析，
+否则切 chip 静默丢失。已知边界：行选中是 (taskPath, cwd) 双键，HUD cwd 与
+聚合行 cwd 同 root 不同路径时不重合——现网 cwd=项目根未触发，未修。面板
 计入 §4.1 高度实测（`.trellis-task-panel` 选择器），max-height 320px 内滚，
 flex 锁定同 `.trellis-detail`；owner 会话消失才自动关（trellis 绑定消失不
 关，hud-panel-entry 起从磁盘续服务）；一次一拉不轮询。
@@ -511,13 +518,17 @@ entry.id 直接当外部工具记录 id 用的代码都会静默失配（HUD 徽
   cwd 锚点时点击无操作；面板开着时按钮 `.active` 高亮；tooltip
   `sessionHudTrellisToggleTooltip` ×7 语言。**行点击回归 fork 官方**：
   会话行**单击** = `unreadSessions.delete` → `render()` → `canFocus` ?
-  `focusSession`（跳转顺手关掉开着的面板——跳走即离开面板语境） :
+  `focusSession`（跳转**保留**开着的面板——09-28 hud-jump-keeps-panel：
+  HUD 锚点不变、owner 行仍在 expanded，跳走回来面板还在） :
   `showSessionFeedback`（不可聚焦反馈）→ fire-and-forget
   `ackCompletion`（"注意到了"语义）；**不开面板**。跳终端 = osascript
-  `activate` 终端进程（`focus.js`），clawd 整个 app 随之退后台——用户
-  回到 Dashboard/Settings 的**第一击只激活窗口、不传 click**（macOS 对
-  后台 app 窗口的标准行为，非 bug、app 内不可根治），现象是"选项卡要
-  双击才切换"。**双击无独立语义**
+  `activate` 终端进程（`focus.js`），clawd 整个 app 随之退后台——macOS
+  默认下用户回到 Dashboard/Settings 的**第一击只激活窗口、不传 click**，
+  现象是"选项卡要双击才切换"（官方基线仍如此）。**fork 已根治**（09-28
+  official-upstream-followups）：settings-window.js / dashboard.js 的窗口
+  opts 补 `acceptFirstMouse: true`（仅 darwin，对齐 permission.js 权限弹窗
+  既有写法），后台第一击直达页面；HUD 窗口 `focusable:false` 不受此影响
+  未改。**双击无独立语义**
   （无 dblclick handler，两次单击的自然结果）；HUD 容器**空白点击
   不触发面板**；trellis chip 纯信息（渲染 + title tooltip，无 click
   listener、无 active 态）。**面板存活（hud-panel-entry）**：开着的
@@ -799,11 +810,26 @@ Correct readArchiveList() 无参；根集来自 collectKnownRootCwds()
   case folding**）；持久化集合的 canonical 形式
 
 **3. Contracts**：
-- **路径来源只有目录 picker**：add 通道无 payload（renderer 仅触发），
+- **路径来源只有目录 picker 与 session 驱动发现**（09-28
+  dashboard-trellis-sync 起含后者）：add 通道无 payload（renderer 仅触发），
   main 侧 `electronDialog.showOpenDialog` 选目录后经
   `resolveProjectRoot`（向上找最近 .trellis，一次用户动作一次搜索、
   永不缓存）解析到项目根；无 .trellis 的目录也照注册（空列表直到
-  trellis init），用户选择永不静默丢弃
+  trellis init），用户选择永不静默丢弃。自动注册：activity 的
+  `findTrellisRoot` 正向命中（session cwd 向上解析，非 pick 流程的
+  向上爬）触发可选 `onRootDiscovered(trellisDir)` → main
+  `autoRegisterDiscoveredRoot`（dirname 取项目根，幂等 add，仅真新增
+  才广播）——跑过会话的项目自动进 Dashboard chips，Settings 扫描制
+  与 chips 注册制的可见差由此收敛；回调 throw 被吞、绝不破坏解析。
+  **红线：向上爬命中杂散 `~/.trellis`（全局 trellis 安装）时 projectRoot
+  === homedir → 拒绝注册**——$HOME 一旦入册会吞掉其下所有项目，与
+  picker 流程防 home 是同一条防线（本机实测存在 `~/.trellis`）
+- **变更后事件推送**（09-28 dashboard-trellis-sync）：roots 集合真变化
+  （手动 add/remove/removePick/自动注册）后 main
+  `broadcastTrellisRootsChanged` → `dashboard:trellis-roots-changed`
+  （send，无 payload）→ renderer 重拉 roots+active。one-shot 读原则
+  不破——这是事件驱动推送不是轮询；冷/关着的页面错过事件无所谓，
+  下次打开自然读到新集
 - **remove 是白名单成员删除**：store 内 `indexOf(normalized)` 命中
   才写盘；“曾注册但已删”的路径 → `not-found` 零写盘。IPC payload
   严格恰为 `{root: 非空 string}`（`Object.keys` 长度=1，`__proto__`

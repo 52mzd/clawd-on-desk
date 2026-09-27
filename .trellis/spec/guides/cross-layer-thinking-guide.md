@@ -216,6 +216,56 @@ Rules:
 **Check yourself**: "Am I about to name a helper, field, or wrapper
 shape I have not seen with my own eyes?" If yes, look it up first.
 
+### Mistake 10: A Read-Only Trust Surface Promoted Into A Persistent Write Path
+
+Real case (09-28 dashboard-trellis-sync, caught in /trellis-check
+before any user impact): to make session-worked projects show up in
+the Dashboard chips automatically, the discovery hook wired
+`findTrellisRoot` — the upward `.trellis` walk that resolves a
+session's cwd — into `rootsStore.add`. The walk's "harmless"
+reading at the time: an upward climb that hits a stray `~/.trellis`
+(global trellis install) at worst lists one extra project in the
+HUD. The same climb result PERSISTED as a registration instead
+writes `$HOME` into `~/.clawd/trellis-roots.json`, and the longest-
+prefix ownership rule then swallows every project under it. The
+official picker flow drew exactly this red line — but only in a code
+comment, never in a spec, so it was invisible to the new write path.
+The reasoning "consistent with the existing trust surface" was
+correct for READS and silent about the change that mattered: the
+purpose of the surface had been upgraded from display to
+persistence. The trigger was an environment fact, not a code path:
+the machine actually had `~/.trellis`, so the climb lands there for
+any home-relative cwd.
+
+Rules:
+
+- When a data source crosses from read-only consumption into a
+  persistent store, re-audit its worst-case input at the new
+  boundary. A climb to `~/.trellis` is a display nit on the read
+  side and a registration disaster on the write side; "it already
+  passes the trust surface" is not an argument once the surface's
+  purpose changes.
+- An implicit contract that lives only in a comment (or in the way
+  one caller happens to be written) must be promoted to spec text
+  before the SECOND consumer is wired up. The first consumer never
+  reads the comment; it just inherits the resolution code.
+- Tests must not merely restate the implementer's mental model
+  (fired / not re-fired / does not throw). Ask what the input DOMAIN
+  is and where its boundary sits — "how far up may this climb land?"
+  — and write the boundary case (here: `projectRoot === homedir` →
+  refuse). Prefer sinking such guards into the store's single write
+  entrypoint so every caller inherits them, instead of re-judging
+  per call site.
+- Discriminating evidence is often an environment fact, not code:
+  whether `~/.trellis` exists decides if this bug fires at all.
+  Audit questions like "does the worst case exist on THIS machine?"
+  are check-worthy during review, not just in production.
+
+**Check yourself**: "This source used to feed a display — what is
+its worst-case input now that the result gets persisted, how would
+I undo that write, and who else judged this input safe for a
+read-only purpose?"
+
 ## Checklist for Cross-Layer Features
 
 Before implementation:
