@@ -68,15 +68,15 @@ body { padding: 2px 3px 8px; }
 /* Two floating corner buttons (pin + trellis toggle) share this strip; rows
    reserve space so neither covers the right-side chips. */
 .hud.has-pin .row {
-  padding-right: 44px;
+  padding-right: 52px;
 }
 
 .pin-btn,
 .trellis-btn {
   position: absolute;
-  top: 4px;
-  width: 16px;
-  height: 16px;
+  top: 6px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   border: none;
   background: transparent;
@@ -85,7 +85,7 @@ body { padding: 2px 3px 8px; }
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: 5px;
   z-index: 2;
   opacity: 0.55;
   transition: opacity 100ms ease, background 100ms ease, color 100ms ease;
@@ -94,8 +94,12 @@ body { padding: 2px 3px 8px; }
 .pin-btn { right: 4px; }
 
 /* 09-27 hud-trellis-icon-entry: the trellis panel's only entry, beside the
-   pin; highlighted while its panel is open. */
-.trellis-btn { right: 24px; }
+   pin; highlighted while its panel is open. 22px touch targets (~macOS HIG)
+   with the SVGs scaled up a touch via CSS. */
+.trellis-btn { right: 26px; }
+
+.pin-btn svg { width: 12px; height: 12px; }
+.trellis-btn svg { width: 13px; height: 13px; }
 
 .pin-btn:hover,
 .trellis-btn:hover {

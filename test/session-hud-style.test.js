@@ -175,7 +175,7 @@ describe("session HUD visual shell", () => {
   });
 
   it("reserves row-level space for the two floating corner buttons (pin + trellis toggle)", () => {
-    assert.match(sessionHudHtml, /\.hud\.has-pin\s+\.row\s*\{[\s\S]*padding-right:\s*44px;[\s\S]*\}/);
+    assert.match(sessionHudHtml, /\.hud\.has-pin\s+\.row\s*\{[\s\S]*padding-right:\s*52px;[\s\S]*\}/);
     assert.doesNotMatch(sessionHudHtml, /\.hud\.has-pin\s+\.row\s+\.right\s*\{[\s\S]*padding-right:/);
   });
 
