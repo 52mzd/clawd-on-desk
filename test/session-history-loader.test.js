@@ -239,7 +239,26 @@ describe("session history loader", () => {
       assert.equal(rows[0].transcriptPresent, false, "no transcript was written for it");
       assert.equal(rows[1].interrupted, false);
       assert.equal(rows[1].transcriptPresent, true);
+      assert.equal(rows[0].resumeDisabledReason, "transcript-missing",
+        "a confidently missing transcript must disable Resume");
+      assert.equal(rows[1].resumeDisabledReason, null);
       assert.equal(rows[0].cwd, projectCwd);
+    });
+
+    it("keeps a transcript-missing row visible but disables its Resume", () => {
+      // Ghost session: the project directory exists (its sibling wrote a
+      // transcript into it) but this session's .jsonl is gone, so the probe
+      // confidently says false — resuming would spawn a doomed process.
+      record("ghost", T0);
+      record("alive", T0 + 1000, BOOT_A, { event: "SessionEnd", state: "idle" });
+      writeTranscript("alive");
+
+      const rows = loadResumableSessionHistory(loadOpts());
+      assert.deepEqual(rows.map((r) => r.sessionId), ["ghost", "alive"],
+        "the row stays listed — visibility is the official design; only the action is gated");
+      assert.equal(rows[0].transcriptPresent, false);
+      assert.equal(rows[0].resumeDisabledReason, "transcript-missing");
+      assert.equal(rows[1].resumeDisabledReason, null);
     });
 
     it("still offers a row whose transcript state is unknown", () => {
@@ -248,6 +267,8 @@ describe("session history loader", () => {
       const rows = loadResumableSessionHistory(loadOpts());
       assert.equal(rows.length, 1);
       assert.equal(rows[0].transcriptPresent, null);
+      assert.equal(rows[0].resumeDisabledReason, null,
+        "fail-open: unknown never disables Resume");
     });
 
     it("hides sessions that are already live on screen", () => {
@@ -302,6 +323,14 @@ describe("session history loader", () => {
         null,
         "a deleted project folder must not be relaunched into",
       );
+    });
+
+    it("refuses the filesystem root as a working directory", () => {
+      // A daemon record with cwd="/" passes the isDirectory check — the
+      // root is a directory — so only the explicit root guard can stop it.
+      const rootCwd = path.parse(root).root;
+      const recorded = record("root-cwd", T0, BOOT_A, { cwd: rootCwd });
+      assert.equal(resolveResumeTarget("claude-code", recorded.record.historyKey, loadOpts()), null);
     });
   });
 });
