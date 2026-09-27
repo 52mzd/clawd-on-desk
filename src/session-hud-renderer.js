@@ -59,26 +59,27 @@ function toggleTrellisPanel(session) {
     render();
     return;
   }
-  const needsFetch = trellisPanel.cwd !== nextCwd || !trellisPanel.result;
   trellisPanel.cwd = nextCwd;
-  if (needsFetch) {
+  // 09-28 hud-multi-project-audit: the payload covers every known project
+  // (cwd only picks which one sorts first), so a different anchor session
+  // no longer needs a refetch — only a cold open fetches.
+  if (!trellisPanel.result) {
     trellisPanel.loading = true;
-    trellisPanel.result = null;
     render();
     if (window.sessionHudAPI && typeof window.sessionHudAPI.getTrellisPanel === "function") {
       window.sessionHudAPI.getTrellisPanel({ cwd: nextCwd }).then((result) => {
-        // A close or a different project won the race — drop the stale fetch.
-        if (!trellisPanel.open || trellisPanel.cwd !== nextCwd || !trellisPanel.loading) return;
+        // A close or a superseding fetch won the race — drop the stale one.
+        if (!trellisPanel.open || trellisPanel.result || !trellisPanel.loading) return;
         trellisPanel.loading = false;
         trellisPanel.result = result && typeof result === "object" ? result : { status: "error" };
-        // A cwd with no resolvable .trellis root answers "missing" — the
-        // click was on a non-trellis project, leave nothing behind.
+        // No known .trellis root anywhere answers "missing" — there is no
+        // project content to show, leave nothing behind.
         if (trellisPanel.result.status === "missing") {
           closeTrellisPanel();
         }
         render();
       }).catch(() => {
-        if (!trellisPanel.open || trellisPanel.cwd !== nextCwd || !trellisPanel.loading) return;
+        if (!trellisPanel.open || trellisPanel.result || !trellisPanel.loading) return;
         trellisPanel.loading = false;
         trellisPanel.result = { status: "error" };
         render();
@@ -105,7 +106,7 @@ function lastBoundExpandedSession() {
   ) || null;
 }
 
-function trellisPanelTaskRow(entry, archived) {
+function trellisPanelTaskRow(entry, archived, cwd) {
   const row = document.createElement("div");
   row.className = "trellis-panel-row";
   const dot = document.createElement("span");
@@ -128,7 +129,10 @@ function trellisPanelTaskRow(entry, archived) {
   if (typeof entry.taskPath === "string" && entry.taskPath) {
     row.addEventListener("click", () => {
       if (window.sessionHudAPI && typeof window.sessionHudAPI.openTrellisTask === "function") {
-        window.sessionHudAPI.openTrellisTask({ taskPath: entry.taskPath, cwd: trellisPanel.cwd });
+        // cwd is the OWNING project section's (09-28 hud-multi-project-audit):
+        // rows from another project's section must not jump through the
+        // anchor session's cwd.
+        window.sessionHudAPI.openTrellisTask({ taskPath: entry.taskPath, cwd });
       }
     });
   }
@@ -169,24 +173,36 @@ function createTrellisPanel(session) {
     hint.textContent = t("sessionHudTrellisPanelEmpty");
     list.appendChild(hint);
   } else {
-    const active = Array.isArray(trellisPanel.result.active) ? trellisPanel.result.active : [];
-    const archived = Array.isArray(trellisPanel.result.archived) ? trellisPanel.result.archived : [];
-    if (active.length || archived.length) {
+    // 09-28 hud-multi-project-audit: one section per project (the anchor
+    // session's project first), each with its own active/done groups and
+    // its own cwd for row jumps.
+    const projects = Array.isArray(trellisPanel.result.projects) ? trellisPanel.result.projects : [];
+    for (const project of projects) {
+      if (!project || typeof project !== "object") continue;
+      const active = Array.isArray(project.active) ? project.active : [];
+      const archived = Array.isArray(project.archived) ? project.archived : [];
+      if (!active.length && !archived.length) continue;
+      const projectHead = document.createElement("div");
+      projectHead.className = "trellis-panel-project";
+      projectHead.textContent = project.name || project.cwd || "";
+      projectHead.title = project.cwd || "";
+      list.appendChild(projectHead);
       if (active.length) {
         const head = document.createElement("div");
         head.className = "trellis-panel-head";
         head.textContent = t("sessionHudTrellisPanelActive");
         list.appendChild(head);
-        for (const entry of active) list.appendChild(trellisPanelTaskRow(entry, false));
+        for (const entry of active) list.appendChild(trellisPanelTaskRow(entry, false, project.cwd));
       }
       if (archived.length) {
         const head = document.createElement("div");
         head.className = "trellis-panel-head";
         head.textContent = t("sessionHudTrellisPanelDone");
         list.appendChild(head);
-        for (const entry of archived) list.appendChild(trellisPanelTaskRow(entry, true));
+        for (const entry of archived) list.appendChild(trellisPanelTaskRow(entry, true, project.cwd));
       }
-    } else {
+    }
+    if (!list.childElementCount) {
       const hint = document.createElement("div");
       hint.className = "trellis-detail-guide";
       hint.textContent = t("sessionHudTrellisPanelEmpty");
@@ -415,13 +431,26 @@ function trellisChipInfo(session) {
   }
   // Process-level hint (09-27 hud-process-awareness): the latest trellis
   // command from the session transcript, optionally with the workflow
-  // Next-Action step. Absent → the title stays byte-identical to before.
+  // Next-Action step. 09-28 hud-multi-project-audit: current Claude Code
+  // transcripts carry no command marker at all (measured: 0 real command
+  // lines on this repo's own sessions), so the row also renders from the
+  // workflow-state signals alone — "Status — Next-Action" reads as the
+  // same what-is-running hint because Next-Action names the live skill.
+  // All signals absent → the title stays byte-identical to before.
   let title = t("sessionHudTrellisTooltip")
     .replace("{title}", info.title || info.taskPath || "")
     .replace("{phase}", t(phase.key)) + (hint ? "\n" + hint : "");
-  if (info.command) {
-    let commandLine = t("sessionHudTrellisCommand").replace("{command}", info.command);
-    if (info.workflowNextAction) commandLine += ` — ${info.workflowNextAction}`;
+  if (info.command || info.workflowStatus || info.workflowNextAction) {
+    let commandLine;
+    if (info.command) {
+      commandLine = t("sessionHudTrellisCommand").replace("{command}", info.command);
+      if (info.workflowNextAction) commandLine += ` — ${info.workflowNextAction}`;
+    } else {
+      // ws-only: passthrough text, no semantic reading of the block
+      // (same non-interpretation contract as before, hence no i18n key).
+      commandLine = `${info.workflowStatus || ""} — ${info.workflowNextAction || ""}`.trim();
+      if (commandLine === "—") commandLine = info.workflowNextAction || info.workflowStatus;
+    }
     title += "\n" + commandLine;
   }
   return {

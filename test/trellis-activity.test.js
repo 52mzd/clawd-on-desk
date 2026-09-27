@@ -401,6 +401,59 @@ describe("trellis-activity process-level trace", () => {
       "a workflowNextAction change must re-emit the snapshot");
     assert.strictEqual(h.activity.getTrellisInfo(RAW_ID).workflowNextAction, "write the PRD");
   });
+
+  it("widens the tail ladder until the workflow-state attachment is back in the window (09-28)", async () => {
+    // Shape measured on this repo's own 8.7MB session: one agent turn of
+    // large tool output pushes the user-turn boundary past 512KB, so the
+    // first window holds only decoys (assistant text + prompt_snapshot).
+    const filler = "x".repeat(2 * 1024 * 1024);
+    const decoyPromptSnapshot = JSON.stringify({
+      type: "attachment",
+      attachment: { type: "prompt_snapshot", systemPrompt: ["<command-name>/trellis-decoy</command-name>"] },
+      rendered: [],
+    });
+    const toolResultLine = JSON.stringify({
+      type: "user",
+      message: { role: "user", content: [{ type: "tool_result", text: filler }] },
+    });
+    const { h, readTailCalls } = makeTraceHarness([
+      // 512KB window: decoys and tool output only — every signal null.
+      ["garbage-head", decoyAssistantLine(), decoyPromptSnapshot, toolResultLine].join("\n"),
+      // 1MB window: the real workflow-state attachment is back inside.
+      ["garbage-head", decoyAssistantLine(), decoyPromptSnapshot, toolResultLine,
+        attachmentLine("planning", "Load `trellis-brainstorm`; stay in planning")].join("\n"),
+    ]);
+    seedBinding(h);
+    h.activity.start();
+    await h.timers.runDue();
+
+    const info = h.activity.getTrellisInfo(RAW_ID);
+    assert.strictEqual(info.command, undefined, "no real command line exists in current transcripts");
+    assert.strictEqual(info.workflowStatus, "planning");
+    assert.strictEqual(info.workflowNextAction, "Load `trellis-brainstorm`; stay in planning");
+    // The prompt_snapshot command decoy never leaks into the command field.
+    assert.notEqual(info.command, "decoy");
+    // The ladder stopped at the second step: 512KB, then 1MB.
+    assert.strictEqual(readTailCalls.length, 2);
+    assert.deepStrictEqual(readTailCalls.map((c) => c.maxBytes), [512 * 1024, 1024 * 1024]);
+  });
+
+  it("caps the ladder at 8MB when no signal exists anywhere", async () => {
+    const { h, readTailCalls } = makeTraceHarness("just tool output, no signals at all\n".repeat(50));
+    seedBinding(h);
+    h.activity.start();
+    await h.timers.runDue();
+
+    const info = h.activity.getTrellisInfo(RAW_ID);
+    assert.strictEqual(info.command, undefined);
+    assert.strictEqual(info.workflowStatus, undefined);
+    assert.strictEqual(info.workflowNextAction, undefined);
+    assert.strictEqual(readTailCalls.length, 5);
+    assert.deepStrictEqual(
+      readTailCalls.map((c) => c.maxBytes),
+      [512, 1024, 2048, 4096, 8192].map((kb) => kb * 1024)
+    );
+  });
 });
 
 describe("trellis-activity pointer binding", () => {
@@ -1866,7 +1919,10 @@ describe("trellis-activity parent link", () => {
 });
 
 
-describe("trellis-activity readHudTaskPanel (09-27 hud-task-panel-jump)", () => {
+describe("trellis-activity readHudTaskPanel (09-27 hud-task-panel-jump, 09-28 multi-project)", () => {
+  const PROJECT2 = path.resolve("/proj2");
+  const CWD2 = path.join(PROJECT2, "app");
+
   function seed(fakeFs) {
     addTask(fakeFs, "09-27-cur", { title: "当前", status: "in_progress", subtasks: [] });
     for (let i = 0; i < 10; i += 1) {
@@ -1877,18 +1933,37 @@ describe("trellis-activity readHudTaskPanel (09-27 hud-task-panel-jump)", () => 
     }
   }
 
-  it("returns the project's active tasks plus the 8 newest archived, read-only", async () => {
+  it("returns one section per known root, the anchor project first, read-only", async () => {
+    const h = makeHarness({ sessions: new Map([
+      ["s1", { agentId: "claude-code", cwd: CWD }],
+      ["s2", { agentId: "claude-code", cwd: CWD2 }],
+    ]) });
+    seed(h.fakeFs);
+    addTask(h.fakeFs, "09-28-other", { title: "Other", status: "planning", subtasks: [] }, { prd: true, root: PROJECT2 });
+    h.activity.start();
+    await h.timers.runDue();
+
+    const result = await h.activity.readHudTaskPanel(CWD2);
+    assert.strictEqual(result.status, "ok");
+    assert.deepStrictEqual(result.projects.map((p) => p.name), ["proj2", "proj"], "anchor project sorts first");
+    assert.deepStrictEqual(result.projects[0].active.map((t) => t.taskPath), [".trellis/tasks/09-28-other"]);
+    assert.strictEqual(result.projects[1].cwd, CWD, "each section carries its own trusted cwd");
+    assert.strictEqual(result.projects[1].archived.length, 3, "archived capped at 3 per project");
+    assert.ok(result.projects[1].archived[0].taskPath.endsWith("old-00"), "newest first");
+    assert.deepStrictEqual(h.fakeFs.writeOps, [], "read-only red line");
+  });
+
+  it("answers a single section when only the anchor's root is known (no poll yet)", async () => {
     const h = makeHarness({ sessions: new Map([["s1", { agentId: "claude-code", cwd: CWD }]]) });
     seed(h.fakeFs);
     const result = await h.activity.readHudTaskPanel(CWD);
     assert.strictEqual(result.status, "ok");
-    assert.deepStrictEqual(result.active.map((t) => t.taskPath), [".trellis/tasks/09-27-cur"]);
-    assert.strictEqual(result.archived.length, 8, "archived capped at 8");
-    assert.ok(result.archived[0].taskPath.endsWith("old-00"), "newest first");
-    assert.deepStrictEqual(h.fakeFs.writeOps, [], "read-only red line");
+    assert.strictEqual(result.projects.length, 1);
+    assert.deepStrictEqual(result.projects[0].active.map((t) => t.taskPath), [".trellis/tasks/09-27-cur"]);
+    assert.strictEqual(result.projects[0].name, "proj");
   });
 
-  it("rejects untrusted cwds with missing, touching nothing", async () => {
+  it("rejects untrusted cwds with missing when no root is known anywhere", async () => {
     const h = makeHarness({ sessions: new Map() });
     seed(h.fakeFs);
     const result = await h.activity.readHudTaskPanel("/nowhere");
