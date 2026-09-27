@@ -501,7 +501,8 @@ entry.id 直接当外部工具记录 id 用的代码都会静默失配（HUD 徽
   `:root` token（`--hud-fs-main: 14px` / `--hud-fs-sub: 12px` /
   `--hud-fs-badge: 11px`，style 测试守卫零裸值）；行高 34，宽度常量
   270/215/355/290（普通/紧凑/带标签/带标签紧凑）；行右侧
-  `padding-right: 44px` 为两个悬浮角按钮（pin + trellis 图标）留位。
+  `padding-right: 52px` 为两个悬浮角按钮（pin + trellis 图标，22px
+  点击热区 ~macOS HIG，absolute 不占流内空间、不进高度公式）留位。
   **入口收敛（09-27 hud-trellis-icon-entry）**：面板唯一入口是 pin
   按钮旁的**常驻 trellis 图标按钮**（`createTrellisToggleButton`），
   单击 = `toggleTrellisPanel(lastBoundExpandedSession())`——锚定
