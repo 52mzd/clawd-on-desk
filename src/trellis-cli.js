@@ -18,8 +18,10 @@
 // not read-only (it rewrites `.trellis/.version` when it differs from the CLI
 // version), so preview is computed in the runtime instead of shelled out here.
 //
-// Paths are only ever passed as `cwd`. They never enter argv and never reach a
-// shell string, so a directory named `a & b` cannot inject anything.
+// Paths are only ever passed as `cwd`. The one path-derived token that does
+// reach argv is the folder-name fallback of `-u`, and it is run through the
+// same whitelist as a typed developer name (`normalizeUserName`), so a
+// directory named `a & b` cannot inject anything either.
 
 const { execFile: defaultExecFile } = require("child_process");
 const fs = require("fs");
@@ -33,6 +35,32 @@ const TRELLIS_BIN = "trellis";
 const NPM_BIN = "npm";
 const REMOTE_PACKAGE = "@mindfoldhq/trellis";
 const REMOTE_CHANNELS = Object.freeze(["latest", "beta", "rc"]);
+const GIT_BIN = "git";
+
+// `-u` is the *developer identity* (`trellis init -u <name>`), not the project
+// name: the CLI writes `.trellis/workspace/<name>/` and records the name in
+// `.trellis/.developer`.
+//
+// Measured on 0.6.17: `trellis init --gemini -y` WITHOUT `-u` exits 0 and does
+// not hang (stdin=ignore) — but it creates neither `.trellis/.developer` nor
+// the personal workspace. So the reason `-u` must be non-empty is not "the CLI
+// aborts": it is that the user would be told the install succeeded while their
+// developer identity was silently never created.
+const USER_NAME_MAX_LENGTH = 64;
+
+// Whitelist, not a blacklist. Every shell metacharacter is ASCII, so a name
+// made of Unicode letters/digits/marks/other-symbols plus `_`, `.` and `-`
+// cannot be spliced into a command string when Node runs `shell: true`
+// (Windows) — it only ever concatenates argv, it never escapes it.
+//
+// Covers CJK and emoji (`\p{L}` / `\p{So}`); refuses spaces, quotes, `;`, `&`,
+// `|`, `<`, `>`, `^`, `%`, `$`, backticks, parentheses and control characters
+// (all of them ASCII). The leading char class excludes `.` and `-`, so `.` /
+// `..` can never be a whole segment and `-rf` can never be read as a flag,
+// while `my..project` remains valid.
+const USER_NAME_RE = /^[\p{L}\p{N}\p{M}\p{So}_][\p{L}\p{N}\p{M}\p{So}_.\-]*$/u;
+const GIT_USER_ARGS = Object.freeze(["config", "user.name"]);
+const GIT_USER_TIMEOUT_MS = 3000;
 
 // Kept apart on purpose — see the file header.
 // 09-25: --migrate added (user request, docs.trytrellis.app/zh/advanced/
@@ -105,6 +133,57 @@ function combineOutput(result) {
   const stderr = result && typeof result.stderr === "string" ? result.stderr.trim() : "";
   if (stdout && stderr) return `${stdout}\n${stderr}`;
   return stdout || stderr;
+}
+
+// Developer-name sanitation shared by every caller — typed wizard values AND
+// the folder-name fallback (H1b: a directory name is just as untrusted as
+// renderer input). Returns "" for anything unusable so the caller falls
+// through to the next fallback. The length cap counts code points, so a name
+// of emoji is not cut in half.
+function normalizeUserName(value) {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  // A lone surrogate (half of a pair) would surface in argv as U+FFFD. Refuse
+  // the value rather than silently mangling it (M2: `maxlength` counts UTF-16
+  // code units, the CLI cap counts code points).
+  if (typeof trimmed.isWellFormed === "function" && !trimmed.isWellFormed()) return "";
+  // Whitelist first: it is what keeps shell metacharacters out of argv. A
+  // lone surrogate fails here too — it is not in any allowed category — so
+  // this holds even on runtimes without `String.prototype.isWellFormed`.
+  if (!USER_NAME_RE.test(trimmed)) return "";
+  // Path escapes, at segment granularity only (M1: `my..project` is a fine
+  // folder name). The whitelist above already refuses separators and a leading
+  // dot; this keeps the intent explicit for the next reader.
+  if (trimmed === ".." || trimmed.includes("/") || trimmed.includes("\\")) return "";
+  const codePoints = Array.from(trimmed);
+  return codePoints.length > USER_NAME_MAX_LENGTH
+    ? codePoints.slice(0, USER_NAME_MAX_LENGTH).join("")
+    : trimmed;
+}
+
+// Single implementation of the `-u` fallback chain: the caller's value, then
+// the project folder name, then "clawd". Never returns "". The three call
+// sites (CLI, IPC stale-fix command, runtime preview/install) share it so the
+// fallback semantics cannot drift apart.
+function resolveUserName(projectPath, candidate) {
+  const explicit = normalizeUserName(candidate);
+  if (explicit) return explicit;
+  const folder = projectPath ? path.basename(String(projectPath)) : "";
+  const fromFolder = normalizeUserName(folder);
+  if (fromFolder) return fromFolder;
+  return "clawd";
+}
+
+// `trellis init` 的 argv 构造。`-u` **只在调用方显式提供 userName 时**才加入：
+// 加平台场景 CLI 会忽略它（`.developer` 已存在），而把目录名显示在预览命令里
+// 会让用户以为「身份被设成了目录名」；官方文档给加平台的命令本就不带 `-u`。
+// `undefined` → 完全不加；`""` → 首次 init 但用户没填，走回退链。
+function buildInitArgs(projectPath, flags, options = {}) {
+  if (options.userName === undefined || options.userName === null) {
+    return [...INIT_ARGS, ...flags, ...INIT_ARGS_SUFFIX];
+  }
+  return [...INIT_ARGS, "-u", resolveUserName(projectPath, options.userName), ...flags, ...INIT_ARGS_SUFFIX];
 }
 
 function parseVersionOutput(text) {
@@ -269,7 +348,9 @@ function createTrellisCli(options = {}) {
     };
   }
 
-  // `channel` is an npm dist-tag the CLI understands (`trellis upgrade <tag>`).
+  // `channel` is an npm dist-tag and MUST ride the `--tag` flag (measured on
+  // 0.6.17: `trellis upgrade beta` — a bare positional — is silently IGNORED and
+  // falls back to `latest`, so the user's beta/rc choice was lost).
   // Empty means auto: the CLI infers the channel from the prerelease marker of
   // the version it has installed (beta → beta, rc → rc, otherwise latest), so
   // Clawd must not compute a default here — it would pick a different channel
@@ -287,7 +368,7 @@ function createTrellisCli(options = {}) {
         error: "unknown-channel",
       };
     }
-    const args = wanted === "" ? GLOBAL_UPGRADE_ARGS : [...GLOBAL_UPGRADE_ARGS, wanted];
+    const args = wanted === "" ? GLOBAL_UPGRADE_ARGS : [...GLOBAL_UPGRADE_ARGS, "--tag", wanted];
     const before = await readGlobalVersion();
     const result = await run(TRELLIS_BIN, args, { timeoutMs: globalUpgradeTimeoutMs });
     const after = await readGlobalVersion();
@@ -301,21 +382,41 @@ function createTrellisCli(options = {}) {
     };
   }
 
+  // Best-effort read of `git config user.name` for the install wizard's
+  // developer-name default. A missing git, an unset value or a timeout all
+  // return an empty name so the wizard falls back to the folder name instead
+  // of blocking. Runs from the home directory so a cwd inside some other
+  // repository cannot lend its local `user.name` to the answer.
+  async function readGitUserName(runOptions = {}) {
+    let cwd = "";
+    try {
+      cwd = require("os").homedir();
+    } catch {
+      cwd = "";
+    }
+    const result = await run(GIT_BIN, GIT_USER_ARGS, {
+      cwd: cwd || undefined,
+      timeoutMs: (runOptions && runOptions.timeoutMs) || GIT_USER_TIMEOUT_MS,
+    });
+    if (!result.ok) return { name: "" };
+    return { name: normalizeUserName(result.stdout) };
+  }
+
   // `platformIds` must come from the PLATFORMS table. A single unknown id
   // rejects the whole call before any process is spawned, so renderer input can
   // never widen the argv surface.
-  async function addPlatforms(projectPath, platformIds) {
+  async function addPlatforms(projectPath, platformIds, options = {}) {
     const flags = flagsFor(platformIds);
     if (!flags) return { ok: false, reason: "unknown-platform", added: [], output: "", error: "unknown-platform" };
     if (flags.length === 0) return { ok: false, reason: "no-platforms", added: [], output: "", error: "no-platforms" };
 
-    // `trellis init -u <name> --<platform> -y` (09-25): -u is the developer
-    // name trellis records in config.yaml; it defaults to the folder name.
-    // Without it the CLI failed/aborted on fresh projects (install wizard
-    // showed "failed").
-    const userName = path.basename(String(projectPath)) || "clawd";
+    // `-u` is the developer identity trellis records in `.trellis/.developer`;
+    // it defaults to the folder name. Measured on 0.6.17: without `-u` the CLI
+    // still exits 0 on a fresh project, but creates no `.developer` and no
+    // personal workspace — so a first install must send one. Platform-only adds
+    // pass no userName at all, and then the argv carries no `-u` (buildInitArgs).
     const before = readPlatforms(projectPath);
-    const result = await run(TRELLIS_BIN, [...INIT_ARGS, "-u", userName, ...flags, ...INIT_ARGS_SUFFIX], { cwd: projectPath });
+    const result = await run(TRELLIS_BIN, buildInitArgs(projectPath, flags, options || {}), { cwd: projectPath });
     const after = readPlatforms(projectPath);
     const added = after.filter((id) => !before.includes(id));
     return {
@@ -368,12 +469,19 @@ function createTrellisCli(options = {}) {
     upgradeGlobal,
     addPlatforms,
     dryRunUpdate,
+    readGitUserName,
   };
 }
 
 module.exports = {
   createTrellisCli,
   augmentedCliPath,
+  resolveUserName,
+  buildInitArgs,
+  normalizeUserName,
+  USER_NAME_MAX_LENGTH,
+  GIT_USER_ARGS,
+  GIT_USER_TIMEOUT_MS,
   TRELLIS_BIN,
   NPM_BIN,
   REMOTE_PACKAGE,

@@ -24,9 +24,8 @@
 // A write happens only because a Settings button invoked one of these channels.
 
 const defaultPrefs = require("./prefs");
-const path = require("path");
 const defaultScanner = require("./trellis-scanner");
-const { createTrellisCli, TRELLIS_BIN, INIT_ARGS, INIT_ARGS_SUFFIX, REMOTE_CHANNELS } = require("./trellis-cli");
+const { createTrellisCli, TRELLIS_BIN, REMOTE_CHANNELS, buildInitArgs } = require("./trellis-cli");
 const { createTrellisRuntime, normalizeChannel } = require("./trellis-runtime");
 const { PLATFORMS, isKnownPlatformId, flagsFor, platformLabel } = require("./trellis-platforms");
 
@@ -81,7 +80,8 @@ function withStaleFixes(projects) {
         id,
         label: platformLabel(id),
         command: flags && flags.length > 0
-          ? { bin: TRELLIS_BIN, args: [...INIT_ARGS, "-u", path.basename(String(project.path)) || "clawd", ...flags, ...INIT_ARGS_SUFFIX], cwd: project.path }
+          // 已 init 项目的 stale 修复就是加平台 → 不带 `-u`（见 buildInitArgs）
+          ? { bin: TRELLIS_BIN, args: buildInitArgs(project.path, flags), cwd: project.path }
           : null,
       };
     });
@@ -142,6 +142,12 @@ function registerTrellisIpc(options = {}) {
     }
   };
   const cli = options.cli || createTrellisCli({ platform: options.platform, env: options.env });
+
+  // Process-local memo for the wizard's developer-name default: one `git
+  // config user.name` per Settings window lifetime, however many times the
+  // modal is opened. `null` means "not probed yet"; a failed probe caches the
+  // empty answer too, so a missing git is not respawned on every open.
+  let gitUserNameCache = null;
 
   const runtime = options.runtime || createTrellisRuntime({
     cli,
@@ -235,12 +241,36 @@ function registerTrellisIpc(options = {}) {
     if (!Array.isArray(requestedIds) || requestedIds.length === 0 || requestedIds.some((id) => !isKnownPlatformId(id))) {
       return { status: "error", message: "platforms must be a non-empty array of known platform ids" };
     }
+    // Optional developer identity (09-27). It is NOT whitelisted here: the
+    // runtime's `resolveUserName` is the single sanitizer (trim, code-point
+    // cap, Unicode whitelist). On win32 the runner uses `shell: true` and
+    // Node concatenates argv without escaping it, so that whitelist — not the
+    // array shape — is what keeps the value inert. Absent, the folder-name
+    // fallback reproduces the pre-09-27 command byte for byte.
+    const userName = payload && payload.userName;
     const addPlan = paths
       // Not filtered on isTrellisProject (09-25): first-time installs
       // preview through this branch too — `trellis init` IS the previewed
       // command for them. Platform ids were whitelist-checked above.
-      .map((projectPath) => runtime.previewAddPlatforms(projectPath, requestedIds));
+      .map((projectPath) => runtime.previewAddPlatforms(projectPath, requestedIds, { userName }));
     return { status: "ok", plan, addPlan };
+  });
+
+  // Developer-name suggestion for the wizard's first-run input (09-27).
+  // Read-only and never blocking: an absent/failing/throwing cli probe settles
+  // on an empty name and the wizard keeps its folder-name fallback.
+  handle("settings:trellis-user-suggestion", async () => {
+    if (gitUserNameCache === null) {
+      let name = "";
+      try {
+        const result = await cli.readGitUserName();
+        if (result && typeof result.name === "string") name = result.name;
+      } catch {
+        name = "";
+      }
+      gitUserNameCache = { name };
+    }
+    return { status: "ok", name: gitUserNameCache.name };
   });
 
   handle("settings:trellis-upgrade-project", (_event, payload) => {
@@ -289,7 +319,10 @@ function registerTrellisIpc(options = {}) {
     if (typeof projectPath !== "string" || !projectPath) {
       return { status: "error", message: "path must be a non-empty string", added: [] };
     }
-    return runtime.addPlatforms(projectPath, platformIds);
+    // Optional developer identity (09-27) — sanitized by `resolveUserName`
+    // inside the CLI layer, which is also the layer that knows about the
+    // win32 `shell: true` concatenation (see trellis-cli.js USER_NAME_RE).
+    return runtime.addPlatforms(projectPath, platformIds, { userName: payload && payload.userName });
   });
 
   // `channel` is a dist-tag whitelist, exactly like `platforms` above: the

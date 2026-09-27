@@ -5,18 +5,18 @@
 // Mirrors the read-only truth under <project>/.trellis:
 //   - .runtime/sessions/<platform>_<sanitized-session-id>.json  session→task pointer
 //   - tasks/<task>/task.json                                     status / subtasks
-// The key derivation is a faithful Node port of the Python original shipped by
-// the Trellis CLI (`.trellis/scripts/common/active_task.py` in a Trellis project;
-// _sanitize_key / _context_key / _CONTEXT_KEY_PLATFORM_ALIASES);
-// test/trellis-phase.test.js pins the port against real pointer filenames and
-// python3-verified sanitize outputs.
+// The key derivation is a faithful Node port of the Python original in
+// .trellis/scripts/common/active_task.py (_sanitize_key / _context_key /
+// _CONTEXT_KEY_PLATFORM_ALIASES); test/trellis-phase.test.js pins the port
+// against real pointer filenames and python3-verified sanitize outputs.
 
 const crypto = require("crypto");
 
 const SANITIZE_MAX_LEN = 160;
 
 // Clawd agentId → trellis runtime pointer-file platform prefix.
-// Sources (Trellis CLI's active_task.py, verified 2026-09-19):
+// Sources (active_task.py, verified 2026-09-19 — see the task's
+// "前置检查结论 D" for the full audit):
 //   - _KNOWN_PLATFORMS is the trellis-side platform name set
 //   - _ENV_PLATFORM_ALIASES maps vendor names onto it
 //     (claude-code → claude, github-copilot → copilot)

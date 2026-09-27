@@ -193,6 +193,16 @@ function loadTab({ snapshot = { trellisScanRoots: [] }, settingsAPI = {} } = {})
     },
     setButtonState: (button, patch = {}) => {
       if (typeof patch.disabled === "boolean") button.disabled = patch.disabled;
+      // Mirror the real helper (settings-ui-core's resolveButtonLabel): both
+      // `label` and `labelKey` replace the visible text.
+      if (
+        Object.prototype.hasOwnProperty.call(patch, "label")
+        || Object.prototype.hasOwnProperty.call(patch, "labelKey")
+      ) {
+        const next = patch.label != null ? String(patch.label) : String(patch.labelKey || "");
+        button.buttonLabel = next;
+        button.textContent = next;
+      }
       return button;
     },
     registerMountedDisposable: (disposable) => {
@@ -548,5 +558,61 @@ describe("settings-tab-trellis global CLI", () => {
     const select = findSelect(renderPanel(session.core, session), isGlobalChannelSelect);
     assert.ok(select, "the picker still renders");
     assert.deepStrictEqual(optionValues(select), [""], "only auto survives a failed remote lookup");
+  });
+
+  it("disables the upgrade button while in flight, refuses re-entry, and restores it on failure", async () => {
+    const session = loadTab();
+    const calls = [];
+    let settle = null;
+    session.api.trellisUpgradeGlobal = (payload) => {
+      calls.push(payload);
+      return new Promise((resolve) => { settle = resolve; });
+    };
+    await scanWith(session, makeScanResult());
+
+    const button = findButton(renderPanel(session.core, session), "trellisGlobalUpgrade");
+    assert.ok(button, "the global upgrade button renders");
+    assert.strictEqual(button.disabled, false, "it starts enabled");
+
+    button.dispatch("click");
+    await flushPromises();
+
+    assert.strictEqual(button.disabled, true, "must be disabled while the install runs");
+    assert.strictEqual(
+      button.buttonLabel,
+      "trellisStatusRunning",
+      "and relabelled to the running state",
+    );
+
+    button.dispatch("click");
+    await flushPromises();
+    assert.strictEqual(calls.length, 1, "a second click must not spawn a concurrent install");
+
+    settle({ status: "error", message: "boom" });
+    await flushPromises();
+    assert.strictEqual(button.disabled, false, "a failed upgrade restores the button");
+    assert.strictEqual(button.buttonLabel, "trellisGlobalUpgrade", "and its label");
+  });
+
+  it("keeps the upgrade button disabled when the card is rebuilt mid-flight", async () => {
+    const session = loadTab();
+    let settle = null;
+    session.api.trellisUpgradeGlobal = () => new Promise((resolve) => { settle = resolve; });
+    await scanWith(session, makeScanResult());
+
+    const button = findButton(renderPanel(session.core, session), "trellisGlobalUpgrade");
+    button.dispatch("click");
+    await flushPromises();
+    assert.strictEqual(button.disabled, true, "disabled while in flight");
+
+    // A rebuild (e.g. the user hits refresh mid-upgrade) must RENDER the
+    // in-flight state rather than clear it — otherwise the button comes back
+    // enabled and a second install can be spawned concurrently.
+    const rebuilt = findButton(renderPanel(session.core, session), "trellisStatusRunning");
+    assert.ok(rebuilt, "the rebuilt card still shows the running label");
+    assert.strictEqual(rebuilt.disabled, true, "and the button stays disabled across the rebuild");
+
+    settle({ status: "ok", from: "0.6.17", to: "0.7.0-beta.4" });
+    await flushPromises();
   });
 });

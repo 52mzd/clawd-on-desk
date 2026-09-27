@@ -17,8 +17,7 @@ const {
 } = require("../src/trellis-phase");
 
 // Every sanitize/hash expectation below was produced by running the Python
-// original shipped by the Trellis CLI
-// (.trellis/scripts/common/active_task.py::_sanitize_key /
+// original (.trellis/scripts/common/active_task.py::_sanitize_key /
 // _hash_value) on the same input, so the port is pinned to verified Python
 // behavior rather than to whatever the JS port happens to output.
 describe("trellis-phase sanitizeKey (python3-verified expectations)", () => {

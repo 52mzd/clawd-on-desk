@@ -31,13 +31,19 @@
 //   trellisPickRoot()                   Promise<{ status, path? }>
 //   trellisSetRoots(roots)              Promise<{ status, roots? }> — prefs write
 //                                       through settings-controller
-//   trellisPreview({ paths, platforms?, channel? })
+//   trellisPreview({ paths, platforms?, channel?, userName? })
 //                                       Promise<{ status, plan, addPlan? }> —
-//                                       pure computation, zero spawn
+//                                       pure computation, zero spawn; userName
+//                                       (09-27) is the wizard's developer
+//                                       identity for the init plan
+//   trellisUserSuggestion()             Promise<{ status, name }> — read-only
+//                                       `git config user.name` default; cached
+//                                       in the main process, "" when unavailable
 //   trellisUpgradeProject(path)         Promise<{ status, from, to, output }>
 //   trellisUpgradeAll(paths)            Promise<{ status, batchId, skipped }>
 //   trellisCancelBatch()                Promise<{ status, cancelled }>
-//   trellisAddPlatform(path, platforms) Promise<{ status, added, output }> —
+//   trellisAddPlatform(path, platforms, userName?)
+//                                       Promise<{ status, added, output }> —
 //                                       platforms is a known-id whitelist
 //   trellisUpgradeGlobal({ channel? })
 //                                       Promise<{ status, from, to, output }> —
@@ -278,14 +284,15 @@ contextBridge.exposeInMainWorld("settingsAPI", {
   trellisPickRoot: () => ipcRenderer.invoke("settings:trellis-pick-root"),
   trellisSetRoots: (roots) => ipcRenderer.invoke("settings:trellis-set-roots", { roots }),
   trellisPreview: (payload) => ipcRenderer.invoke("settings:trellis-preview", payload || {}),
+  trellisUserSuggestion: () => ipcRenderer.invoke("settings:trellis-user-suggestion", {}),
   trellisDryRun: (projectPath) =>
     ipcRenderer.invoke("settings:trellis-dry-run", { path: projectPath }),
   trellisUpgradeProject: (projectPath) =>
     ipcRenderer.invoke("settings:trellis-upgrade-project", { path: projectPath }),
   trellisUpgradeAll: (paths) => ipcRenderer.invoke("settings:trellis-upgrade-all", { paths }),
   trellisCancelBatch: () => ipcRenderer.invoke("settings:trellis-cancel-batch"),
-  trellisAddPlatform: (projectPath, platforms) =>
-    ipcRenderer.invoke("settings:trellis-add-platform", { path: projectPath, platforms }),
+  trellisAddPlatform: (projectPath, platforms, userName) =>
+    ipcRenderer.invoke("settings:trellis-add-platform", { path: projectPath, platforms, userName }),
   trellisUpgradeGlobal: (options) =>
     ipcRenderer.invoke("settings:trellis-upgrade-global", { channel: options && options.channel }),
   onTrellisProgress: (cb) => {

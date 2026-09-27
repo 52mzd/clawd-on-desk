@@ -14,6 +14,7 @@ const {
   buildSessionSnapshot,
   getActiveSessionAliasKeys,
   sessionSnapshotSignature,
+  shouldAutoClearDetachedSession,
   sessionDisplayFolder,
   sessionDisplayTitle,
   normalizeTitle,
@@ -1329,5 +1330,48 @@ describe("trellis resolver pass-through", () => {
     const a = buildWith(() => trellisInfo);
     const b = buildWith(() => ({ ...trellisInfo }));
     assert.strictEqual(sessionSnapshotSignature(a), sessionSnapshotSignature(b));
+  });
+});
+
+describe("shouldAutoClearDetachedSession WSL guard", () => {
+  it("never probes a WSL session and keeps it visible even with an ended badge", () => {
+    for (const marker of [{ wslDistro: "Ubuntu" }, { host: "wsl:Ubuntu" }]) {
+      let probes = 0;
+      const hidden = shouldAutoClearDetachedSession(
+        {
+          state: "idle",
+          headless: false,
+          pidReachable: true,
+          sourcePid: 20,
+          ...marker,
+        },
+        "done",
+        {
+          sessionHudCleanupDetached: true,
+          isProcessAlive: () => { probes += 1; return false; },
+        }
+      );
+      assert.strictEqual(hidden, false);
+      assert.strictEqual(probes, 0);
+    }
+  });
+
+  it("still clears a local detached-ended session whose source is gone", () => {
+    let probes = 0;
+    const hidden = shouldAutoClearDetachedSession(
+      {
+        state: "idle",
+        headless: false,
+        pidReachable: true,
+        sourcePid: 20,
+      },
+      "done",
+      {
+        sessionHudCleanupDetached: true,
+        isProcessAlive: () => { probes += 1; return false; },
+      }
+    );
+    assert.strictEqual(hidden, true);
+    assert.strictEqual(probes, 1);
   });
 });

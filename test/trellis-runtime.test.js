@@ -60,6 +60,7 @@ function makeFakeCli(options = {}) {
   const started = [];
   const aborted = [];
   const globalChannels = [];
+  const addPlatformOptions = [];
   let inflight = 0;
   let peak = 0;
 
@@ -68,6 +69,7 @@ function makeFakeCli(options = {}) {
     started,
     aborted,
     globalChannels,
+    addPlatformOptions,
     get peak() { return peak; },
     get inflight() { return inflight; },
     async fetchRemoteChannels() {
@@ -121,8 +123,9 @@ function makeFakeCli(options = {}) {
       globalChannels.push(channel);
       return { ok: true, from: "0.6.17", to: "0.7.0-beta.4", output: "ok", error: null };
     },
-    async addPlatforms(projectPath, platformIds) {
+    async addPlatforms(projectPath, platformIds, options) {
       calls.addPlatforms += 1;
+      addPlatformOptions.push(options);
       return { ok: true, added: platformIds, output: "ok", error: null };
     },
   };
@@ -360,15 +363,44 @@ describe("preview", () => {
     assert.deepStrictEqual(plan.added, ["gemini", "pi"]);
     assert.deepStrictEqual(plan.command, {
       bin: "trellis",
-      args: ["init", "-u", path.basename(projectPath), "--gemini", "--pi", "-y"],
+      args: ["init", "--gemini", "--pi", "-y"],
       cwd: projectPath,
     });
+    // 09-27: adding a platform never carries `-u` (the CLI ignores it).
+    assert.ok(!plan.command.args.includes("-u"), "add-platform preview must not carry -u");
     assert.strictEqual(cli.calls.addPlatforms, 0);
 
     const rejected = runtime.previewAddPlatforms(projectPath, ["--evil"]);
     assert.strictEqual(rejected.command, null);
     assert.deepStrictEqual(rejected.added, []);
     assert.strictEqual(cli.calls.addPlatforms, 0);
+  });
+
+  it("carries the wizard's developer name into preview and install (09-27)", async () => {
+    const root = makeTmpDir();
+    const projectPath = makeProject(root, "one");
+    const cli = makeFakeCli();
+    const { runtime } = makeRuntime(cli);
+
+    const plan = runtime.previewAddPlatforms(projectPath, ["gemini"], { userName: "alice" });
+    assert.deepStrictEqual(plan.command.args, ["init", "-u", "alice", "--gemini", "-y"]);
+
+    // First init with a blank name still carries `-u`: it falls back to the
+    // folder name byte for byte.
+    assert.deepStrictEqual(
+      runtime.previewAddPlatforms(projectPath, ["gemini"], { userName: "  " }).command.args,
+      ["init", "-u", "one", "--gemini", "-y"]
+    );
+
+    // Add-platform (no userName at all) omits `-u` entirely — distinct from the
+    // blank-name first-init case above.
+    const addPlan = runtime.previewAddPlatforms(projectPath, ["gemini"]);
+    assert.deepStrictEqual(addPlan.command.args, ["init", "--gemini", "-y"]);
+    assert.ok(!addPlan.command.args.includes("-u"), "add-platform preview must not carry -u");
+
+    await runtime.addPlatforms(projectPath, ["gemini"], { userName: "alice" });
+    assert.deepStrictEqual(cli.addPlatformOptions, [{ userName: "alice" }]);
+    assert.strictEqual(cli.calls.addPlatforms, 1);
   });
 });
 

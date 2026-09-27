@@ -39,6 +39,9 @@
     settingsTrellisWizardNothingToAdd: "Nothing new to add for the selected platforms.",
     settingsTrellisWizardProjectLabel: "Project",
     settingsTrellisWizardVersionLabel: "Version",
+    settingsTrellisWizardUserNameLabel: "Developer name",
+    settingsTrellisWizardUserNamePlaceholder: "usually your git username",
+    settingsTrellisWizardUserNameHint: "Trellis creates .trellis/workspace/<name>/ as your personal workspace.",
   };
 
   function tr(bridge, key) {
@@ -82,7 +85,11 @@
 
   function openShell(bridge, mode, project) {
     close();
-    state = { bridge: bridge, mode: mode, project: project, stage: "initial" };
+    // `userName` is the developer identity typed in the first-install field
+    // (09-27). It lives on the wizard state so select → preview → back keeps
+    // the value; empty means "not typed yet" and the probe/fallback chain
+    // takes over.
+    state = { bridge: bridge, mode: mode, project: project, stage: "initial", userName: "" };
     rootEl = document.createElement("div");
     rootEl.className = "modal-backdrop trellis-wizard-backdrop";
     rootEl.addEventListener("click", function (ev) {
@@ -152,6 +159,81 @@
   }
 
   /* ------------------------------------------------------------------ *
+   * Developer identity (first install only)
+   * ------------------------------------------------------------------ */
+
+  // `-u` sets the Trellis developer identity, so the field only makes sense on
+  // a first init: for an already-installed project the CLI protects the
+  // existing `.trellis/.developer` and `.trellis/workspace/<name>/`, and
+  // showing the field would imply the wizard could rename that workspace.
+  function isFirstInstall() {
+    return !!(state && state.project && state.project.installed === false);
+  }
+
+  function userFieldHtml(bridge) {
+    // `maxlength` counts UTF-16 code units, the CLI cap counts code points
+    // (M2). 128 units is the widest a 64-code-point name can be, so an emoji
+    // name is never cut mid-pair here; `captureUserName` then applies the real
+    // 64-code-point cap and the CLI re-validates. Attribute is valueless-safe:
+    // the vm harness parses `maxlength="…"` and nothing else.
+    return '<div class="trellis-wizard-field" data-field="user">'
+      + '<label class="trellis-wizard-field-label" for="trellis-wizard-user">'
+      + escapeHtml(tr(bridge, "settingsTrellisWizardUserNameLabel"))
+      + '</label>'
+      + '<input id="trellis-wizard-user" class="trellis-wizard-input" type="text"'
+      + ' data-user maxlength="128" autocomplete="off" spellcheck="false"'
+      + ' placeholder="' + escapeHtml(tr(bridge, "settingsTrellisWizardUserNamePlaceholder")) + '">'
+      + '<p class="trellis-wizard-hint">'
+      + escapeHtml(tr(bridge, "settingsTrellisWizardUserNameHint"))
+      + '</p>'
+      + '</div>';
+  }
+
+  // Read the field back into state before any stage change, so the value
+  // survives preview → back and reaches the install call. Trimmed here (M5):
+  // the preview and the install use the sanitized `-u`, and re-applying the
+  // raw value on back would show a name the command does not use. The
+  // 64-code-point cap mirrors the CLI so a paste cannot leave a half pair.
+  var USER_NAME_MAX_CODE_POINTS = 64;
+  function captureUserName() {
+    if (!rootEl) return;
+    var input = rootEl.querySelector("[data-user]");
+    if (!input) return;
+    var raw = typeof input.value === "string" ? input.value.trim() : "";
+    var points = Array.from(raw);
+    state.userName = points.length > USER_NAME_MAX_CODE_POINTS
+      ? points.slice(0, USER_NAME_MAX_CODE_POINTS).join("")
+      : raw;
+  }
+
+  // Re-apply the stored value after a re-render, or ask the main process for
+  // the `git config user.name` default when the user has not typed one yet.
+  // `state.userName` is already trimmed by `captureUserName`, so the value
+  // shown after `back` is exactly the value the preview showed (M5).
+  function syncUserNameField() {
+    if (!rootEl) return;
+    var input = rootEl.querySelector("[data-user]");
+    if (!input) return;
+    if (state.userName) {
+      input.value = state.userName;
+      return;
+    }
+    var api = (state.bridge && state.bridge.api) || {};
+    if (typeof api.trellisUserSuggestion !== "function") return;
+    Promise.resolve()
+      .then(function () { return api.trellisUserSuggestion(); })
+      .then(function (res) {
+        var name = res && typeof res.name === "string" ? res.name.trim() : "";
+        // The probe resolves after the render: the stage may have moved on,
+        // or the user may have started typing.
+        if (!name || !rootEl || input.value) return;
+        if (rootEl.querySelector("[data-user]") !== input) return;
+        input.value = name;
+      })
+      .catch(function () { /* the suggestion is best-effort */ });
+  }
+
+  /* ------------------------------------------------------------------ *
    * Flow A: add platforms
    * ------------------------------------------------------------------ */
 
@@ -182,10 +264,15 @@
     var body = '<p class="trellis-wizard-hint">'
       + escapeHtml(tr(bridge, "settingsTrellisWizardSelectHint"))
       + '</p>'
-      + '<div class="trellis-wizard-platforms">' + (boxes || "—") + '</div>';
+      + '<div class="trellis-wizard-platforms">' + (boxes || "—") + '</div>'
+      + (isFirstInstall() ? userFieldHtml(bridge) : "");
     var actions = buttonHtml("cancel", "settingsTrellisWizardCancel")
       + buttonHtml("preview", "settingsTrellisWizardPreview", { primary: true });
     rootEl.innerHTML = shellHtml(bridge, "add", tr(bridge, "settingsTrellisWizardAddTitle"), body, actions);
+    // After the render: put back a value the user already typed, or fetch the
+    // `git config user.name` suggestion (never awaited — the modal is usable
+    // while the probe is in flight).
+    if (isFirstInstall()) syncUserNameField();
     bindActions({
       cancel: close,
       preview: function () {
@@ -195,11 +282,16 @@
           if (input.checked) picked.push(input.getAttribute("data-platform"));
         });
         if (picked.length === 0) return;
+        captureUserName();
         renderLoading();
         var api = bridge.api || {};
         Promise.resolve()
           .then(function () {
-            return api.trellisPreview({ paths: [state.project.path], platforms: picked });
+            var payload = { paths: [state.project.path], platforms: picked };
+            // 只有首次 init 才带 `-u`：加平台时 CLI 会忽略它，把目录名显示在
+            // 预览命令里只会让用户以为身份被改成了目录名。
+            if (isFirstInstall()) payload.userName = state.userName;
+            return api.trellisPreview(payload);
           })
           .then(function (res) {
             var addPlan = res && Array.isArray(res.addPlan) ? res.addPlan[0] : null;
@@ -275,7 +367,12 @@
     var api = bridge.api || {};
     Promise.resolve()
       .then(function () {
-        return api.trellisAddPlatform(state.project.path, added);
+        // 与 preview 同源：只有首次 init 才带身份，加平台传 undefined
+        return api.trellisAddPlatform(
+          state.project.path,
+          added,
+          isFirstInstall() ? state.userName : undefined,
+        );
       })
       .then(function (res) {
         finishFlow(res && res.status === "ok", res && res.output);

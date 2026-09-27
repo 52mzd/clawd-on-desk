@@ -5,10 +5,15 @@ const assert = require("node:assert");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { execFile: realExecFile } = require("node:child_process");
 
 const {
   createTrellisCli,
   augmentedCliPath,
+  resolveUserName,
+  buildInitArgs,
+  normalizeUserName,
+  USER_NAME_MAX_LENGTH,
   UPDATE_ARGS,
   INIT_ARGS_SUFFIX,
   REMOTE_PACKAGE,
@@ -114,7 +119,7 @@ describe("argv contract", () => {
       ".version must be restored after a mutating dry-run");
   });
 
-  it("adds a platform with exactly [init, -u <name>, --gemini, -y]", async () => {
+  it("adds a platform with exactly [init, --gemini, -y] (no -u)", async () => {
     const projectPath = makeProject("0.6.17", { ".claude/x": "h" });
     const stub = makeExecFileStub({
       trellis: (call) => {
@@ -129,8 +134,11 @@ describe("argv contract", () => {
     });
 
     const result = await cliWith(stub).addPlatforms(projectPath, ["gemini"]);
-    // 09-25: -u <folder-name> rides init (fresh projects abort without it).
-    assert.deepStrictEqual(stub.calls[0].args, ["init", "-u", path.basename(projectPath), "--gemini", "-y"]);
+    // 09-27: adding a platform to an already-init project carries NO `-u` —
+    // the CLI ignores it (`.developer` exists) and showing the folder name in
+    // the preview command only makes the user think the identity was renamed.
+    assert.deepStrictEqual(stub.calls[0].args, ["init", "--gemini", "-y"]);
+    assert.ok(!stub.calls[0].args.includes("-u"), "add-platform argv must not carry -u");
     assert.deepStrictEqual(Array.from(INIT_ARGS_SUFFIX), ["-y"]);
     assert.ok(!stub.calls[0].args.includes("-s"), "-s must never be passed to init");
     assert.ok(!stub.calls[0].args.includes("--skip-all"));
@@ -139,6 +147,29 @@ describe("argv contract", () => {
     assert.strictEqual(stub.calls[0].options.cwd, projectPath);
     assert.strictEqual(result.ok, true);
     assert.deepStrictEqual(result.added, ["gemini"]);
+  });
+
+  it("buildInitArgs omits -u only when no userName was supplied (09-27)", () => {
+    // undefined (or an options object without userName) == add-platform.
+    assert.deepStrictEqual(buildInitArgs("/projects/alpha", ["--gemini"]), ["init", "--gemini", "-y"]);
+    assert.deepStrictEqual(buildInitArgs("/projects/alpha", ["--gemini"], {}), ["init", "--gemini", "-y"]);
+    // `null` must count as "not supplied" too — the IPC boundary can turn an
+    // omitted value into null, and treating it as a first install would put the
+    // folder name back into a platform-only add.
+    assert.deepStrictEqual(
+      buildInitArgs("/projects/alpha", ["--gemini"], { userName: null }),
+      ["init", "--gemini", "-y"]
+    );
+    // A supplied name (even the empty string) == first init, so `-u` rides along
+    // and an empty value falls back to the folder name.
+    assert.deepStrictEqual(
+      buildInitArgs("/projects/alpha", ["--gemini"], { userName: "alice" }),
+      ["init", "-u", "alice", "--gemini", "-y"]
+    );
+    assert.deepStrictEqual(
+      buildInitArgs("/projects/alpha", ["--gemini"], { userName: "" }),
+      ["init", "-u", "alpha", "--gemini", "-y"]
+    );
   });
 
   it("keeps the update and init argv constants separate", () => {
@@ -195,6 +226,160 @@ describe("addPlatforms whitelist", () => {
     const result = await cliWith(stub).addPlatforms(projectPath, ["pi"]);
     assert.strictEqual(result.ok, false);
     assert.deepStrictEqual(result.added, ["pi"]);
+  });
+});
+
+describe("resolveUserName fallback chain (09-27)", () => {
+  it("prefers the explicit developer name", () => {
+    assert.strictEqual(resolveUserName("/projects/alpha", "alice"), "alice");
+  });
+
+  it("falls back to the folder name, then to clawd", () => {
+    assert.strictEqual(resolveUserName("/projects/alpha", "  "), "alpha");
+    assert.strictEqual(resolveUserName("/projects/alpha", ""), "alpha");
+    assert.strictEqual(resolveUserName("/", ""), "clawd");
+    assert.strictEqual(resolveUserName("", ""), "clawd");
+  });
+
+  it("rejects names that would escape .trellis/workspace/ (M1: segment granularity)", () => {
+    assert.strictEqual(resolveUserName("/projects/alpha", "a/b"), "alpha");
+    assert.strictEqual(resolveUserName("/projects/alpha", "a\\b"), "alpha");
+    assert.strictEqual(resolveUserName("/projects/alpha", ".."), "alpha");
+    assert.strictEqual(resolveUserName("/projects/alpha", "../alpha"), "alpha");
+    assert.strictEqual(resolveUserName("/projects/alpha", ".hidden"), "alpha");
+    // M1: a `..` *substring* inside a segment is a perfectly valid folder name.
+    assert.strictEqual(resolveUserName("/projects/alpha", "my..project"), "my..project");
+  });
+
+  it("refuses whitespace and every ASCII shell metacharacter (H1)", () => {
+    // `run()` sets `shell: true` on win32 and Node then CONCATENATES argv
+    // without escaping it (DEP0190) — any of these would execute.
+    const hostile = [
+      ";", "&", "|", "<", ">", "^", "%", '"', "'", "`", "$", "(", ")", "!",
+      " ", "\r", "\n", "\t",
+      "x; touch pwned; #", "x & touch pwned", "x | touch pwned",
+      "$(touch pwned)", "`touch pwned`", "Tom & Jerry", "100%", "-rf", "--force",
+      "a=b", "{a,b}", "*", "?", "~", "[a]", "name@host", "name+tag",
+    ];
+    for (const value of hostile) {
+      assert.strictEqual(normalizeUserName(value), "", `normalize: ${JSON.stringify(value)}`);
+      assert.strictEqual(resolveUserName("/projects/alpha", value), "alpha", `fallback: ${JSON.stringify(value)}`);
+    }
+  });
+
+  it("still accepts CJK, combining marks and emoji names (H1 must not over-reach)", () => {
+    assert.strictEqual(normalizeUserName("张三"), "张三");
+    assert.strictEqual(normalizeUserName("\u305f\u308d\u3046"), "\u305f\u308d\u3046");
+    assert.strictEqual(normalizeUserName("\ud64d\uae38\ub3d9"), "\ud64d\uae38\ub3d9");
+    assert.strictEqual(normalizeUserName("cafe\u0301"), "cafe\u0301");
+    assert.strictEqual(normalizeUserName("\u{1F388}"), "\u{1F388}");
+    assert.strictEqual(normalizeUserName("\u{1F388}_alice-2"), "\u{1F388}_alice-2");
+  });
+
+  it("refuses a lone surrogate instead of letting argv render U+FFFD (M2)", () => {
+    assert.strictEqual(normalizeUserName("a\uD83C"), "");
+    assert.strictEqual(normalizeUserName("\uDE00b"), "");
+    assert.strictEqual(resolveUserName("/projects/alpha", "alice\uD83C"), "alpha");
+  });
+
+  it("falls back to clawd when the FOLDER NAME is hostile (H1b)", () => {
+    assert.strictEqual(resolveUserName("/projects/a & b", ""), "clawd");
+    assert.strictEqual(resolveUserName("/projects/a;b", ""), "clawd");
+    assert.strictEqual(resolveUserName("/projects/..", ""), "clawd");
+    assert.strictEqual(resolveUserName("/projects/my..project", ""), "my..project");
+  });
+
+  it("caps the name at 64 code points without splitting a surrogate pair", () => {
+    assert.strictEqual(resolveUserName("/projects/alpha", "x".repeat(120)).length, USER_NAME_MAX_LENGTH);
+    const emoji = resolveUserName("/projects/alpha", "\u{1F388}".repeat(80));
+    assert.strictEqual(Array.from(emoji).length, USER_NAME_MAX_LENGTH, "64 code points");
+    assert.strictEqual(emoji.length, USER_NAME_MAX_LENGTH * 2, "a surrogate pair is never cut in half");
+    assert.strictEqual(emoji.endsWith("\u{1F388}"), true, "no dangling surrogate half");
+    assert.strictEqual(normalizeUserName("  bob  "), "bob");
+  });
+
+  it("threads options.userName into the init argv and keeps the folder fallback", async () => {
+    const projectPath = makeProject("0.6.17");
+    const stub = makeExecFileStub({ trellis: { stdout: "ok" } });
+    const cli = cliWith(stub);
+
+    // Add-platform (no userName): `-u` is absent on purpose.
+    await cli.addPlatforms(projectPath, ["gemini"]);
+    assert.deepStrictEqual(stub.calls[0].args, ["init", "--gemini", "-y"]);
+    assert.ok(!stub.calls[0].args.includes("-u"), "add-platform argv must not carry -u");
+
+    // First init (explicit name): `-u <name>` rides init.
+    await cli.addPlatforms(projectPath, ["gemini"], { userName: "alice" });
+    assert.deepStrictEqual(stub.calls[1].args, ["init", "-u", "alice", "--gemini", "-y"]);
+
+    // First init with a blank name: still `-u`, falling back to the folder name.
+    await cli.addPlatforms(projectPath, ["gemini"], { userName: "   " });
+    assert.deepStrictEqual(stub.calls[2].args, ["init", "-u", path.basename(projectPath), "--gemini", "-y"]);
+
+    // First init with an empty string is NOT the add-platform case: `-u` stays.
+    await cli.addPlatforms(projectPath, ["gemini"], { userName: "" });
+    assert.deepStrictEqual(stub.calls[3].args, ["init", "-u", path.basename(projectPath), "--gemini", "-y"]);
+
+    // H1: a hostile value never reaches argv, even through addPlatforms.
+    await cli.addPlatforms(projectPath, ["gemini"], { userName: "x; touch pwned; #" });
+    assert.deepStrictEqual(stub.calls[4].args, ["init", "-u", path.basename(projectPath), "--gemini", "-y"]);
+  });
+
+  it("keeps a hostile value out of the real win32 shell concatenation (H1 regression)", async () => {
+    const projectPath = makeProject("0.6.17");
+    const markerDir = makeTmpDir();
+    const marker = path.join(markerDir, "clawd-injected");
+    const payload = `x; touch ${marker}; #`;
+
+    // Sanity: the payload IS live — unescaped argv in a shell runs it. Without
+    // this counter-check a green test could simply mean a dead payload.
+    await new Promise((resolve) => {
+      realExecFile("echo", ["-u", payload], { shell: true }, () => resolve());
+    });
+    assert.strictEqual(fs.existsSync(marker), true, "payload must be live or the regression proves nothing");
+    fs.rmSync(marker, { force: true });
+
+    // Same shell path, sanitized value. Only the binary is swapped for `echo`
+    // so a developer machine with trellis installed is not mutated.
+    const calls = [];
+    const shellStub = (bin, args, options, cb) => {
+      calls.push({ bin, args, options });
+      return realExecFile("echo", args, options, cb);
+    };
+    const cli = createTrellisCli({ execFileImpl: shellStub, platform: "win32" });
+    await cli.addPlatforms(projectPath, ["gemini"], { userName: payload });
+
+    assert.strictEqual(calls[0].options.shell, true, "win32 branch still uses a shell");
+    assert.strictEqual(calls[0].args[2], path.basename(projectPath), "fell back to the folder name");
+    assert.strictEqual(calls[0].args.includes(payload), false);
+    assert.strictEqual(calls[0].args.some((arg) => /[;&|$`\s()]/.test(arg)), false, "no metacharacter survives");
+    assert.strictEqual(fs.existsSync(marker), false, "sanitized name must not execute");
+  });
+});
+
+describe("readGitUserName (09-27)", () => {
+  it("reads [config, user.name] and trims the answer", async () => {
+    const stub = makeExecFileStub({ git: { stdout: "alice\n" } });
+    const result = await cliWith(stub).readGitUserName();
+    assert.deepStrictEqual(result, { name: "alice" });
+    assert.deepStrictEqual(stub.calls[0].args, ["config", "user.name"]);
+    assert.strictEqual(typeof stub.calls[0].options.timeout, "number");
+    assert.ok(stub.calls[0].options.timeout <= 3000, "never blocks the wizard for long");
+  });
+
+  it("returns an empty name for a missing git, a timeout or an unsafe value", async () => {
+    const missing = makeExecFileStub({
+      git: { err: Object.assign(new Error("not found"), { code: "ENOENT" }) },
+    });
+    assert.deepStrictEqual(await cliWith(missing).readGitUserName(), { name: "" });
+
+    const timedOut = makeExecFileStub({
+      git: { err: Object.assign(new Error("timeout"), { killed: true }), stdout: "" },
+    });
+    assert.deepStrictEqual(await cliWith(timedOut).readGitUserName(), { name: "" });
+
+    const unsafe = makeExecFileStub({ git: { stdout: "a/b\n" } });
+    assert.deepStrictEqual(await cliWith(unsafe).readGitUserName(), { name: "" });
   });
 });
 
@@ -372,10 +557,11 @@ describe("upgradeGlobal", () => {
     assert.deepStrictEqual(stub.calls[1].args, ["upgrade"]);
   });
 
-  it("passes a known dist-tag as the second argv token", async () => {
+  it("passes a known dist-tag as `--tag <tag>` (a bare positional is ignored by the CLI)", async () => {
     const stub = makeExecFileStub({ trellis: { stdout: "0.6.17\n" } });
     await cliWith(stub).upgradeGlobal("beta");
-    assert.deepStrictEqual(stub.calls[1].args, ["upgrade", "beta"]);
+    assert.deepStrictEqual(stub.calls[1].args, ["upgrade", "--tag", "beta"]);
+    assert.ok(stub.calls[1].args.includes("--tag"), "the dist-tag must ride the --tag flag");
   });
 
   it("treats null the same as omitted, keeping the auto channel", async () => {

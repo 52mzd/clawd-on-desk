@@ -83,6 +83,11 @@ function openUpgradePreviewWizard(project) {
   // CLI* is upgraded to. "" means auto, where the CLI derives the channel from
   // its own installed version.
   let globalChannel = "";
+  // Global-CLI upgrade button + its in-flight guard. `npm install -g` takes
+  // seconds to tens of seconds, so without disabling the button a user can fire
+  // concurrent installs at the same global package.
+  let globalUpgradeButton = null;
+  let globalUpgradePending = false;
   let channelCatalog = [];
   let progressByPath = new Map();
   let batchRunning = false;
@@ -803,26 +808,55 @@ function openUpgradePreviewWizard(project) {
     target.textContent = `${t("trellisGlobalUpgradeTarget")}:`;
     control.appendChild(target);
     control.appendChild(buildGlobalChannelSelect());
-    control.appendChild(helpers.buildButton({
+    const upgradeButton = helpers.buildButton({
       label: t("trellisGlobalUpgrade"),
       tone: "accent",
       size: "compact",
       onClick: onUpgradeGlobal,
-    }));
+    });
+    globalUpgradeButton = upgradeButton;
+    // Same convention as `scanning` / `batchRunning`: the in-flight flag is
+    // module-level and a rebuild **reads** it to render the button rather than
+    // clearing it. Resetting here would re-open the concurrent-install window
+    // whenever a refresh rebuilt the card mid-upgrade.
+    if (globalUpgradePending) {
+      helpers.setButtonState(upgradeButton, { disabled: true, label: t("trellisStatusRunning") });
+    }
+    control.appendChild(upgradeButton);
     return helpers.buildSection("", rows);
+  }
+
+  // Flip the upgrade button into (or out of) its in-flight state. The success
+  // path is covered by runScan() rebuilding this card with a new button; the
+  // failure/throw paths must restore it explicitly or the button stays disabled
+  // forever.
+  function setGlobalUpgradePending(pending) {
+    if (!globalUpgradeButton) return;
+    helpers.setButtonState(globalUpgradeButton, pending
+      ? { disabled: true, label: t("trellisStatusRunning") }
+      : { disabled: false, label: t("trellisGlobalUpgrade") });
   }
 
   function onUpgradeGlobal() {
     const settingsApi = api();
     if (!settingsApi || typeof settingsApi.trellisUpgradeGlobal !== "function") return;
+    if (globalUpgradePending) return;
+    globalUpgradePending = true;
+    setGlobalUpgradePending(true);
     settingsApi.trellisUpgradeGlobal({ channel: globalChannel }).then((result) => {
       if (!result || result.status !== "ok") {
         ops.showToast((result && result.message) || t("trellisScanFailed"), { error: true });
+        globalUpgradePending = false;
+        setGlobalUpgradePending(false);
         return;
       }
       ops.showToast(tf("trellisGlobalUpgraded", { from: result.from || "—", to: result.to || "—" }));
+      globalUpgradePending = false;
       runScan();
-    }).catch(() => {});
+    }).catch(() => {
+      globalUpgradePending = false;
+      setGlobalUpgradePending(false);
+    });
   }
 
   // ── render ────────────────────────────────────────────────────────
