@@ -1547,19 +1547,27 @@ function createTrellisActivity(options) {
   }
 
   // ── Per-root recency (09-28 hud-multi-project-audit) ───────────────────
-  // The newest last_seen_at across a root's session pointers: the Trellis
-  // CLI refreshes that stamp on every interaction, so it is a durable,
-  // restart-proof proxy for "which project was touched last". Roots with no
-  // readable pointer answer 0 — under the callers' stable sorts they keep
-  // their incoming order at the tail. Root argument is the `.trellis` dir
-  // (this module's root convention, same as rootCache / knownRoots).
+  // The newest of two signals: the max last_seen_at across a root's session
+  // pointers (the Trellis CLI refreshes that stamp on every interaction),
+  // and the sessions directory's mtime. The second signal matters because
+  // the CLI empties the directory when a session ends — measured 09-28:
+  // freshly-worked projects (write-notes-like-deepseek, vlc-android) had
+  // EMPTY sessions dirs with fresh mtimes, ranking dead-last on pointer
+  // content alone. Together they are a durable, restart-proof proxy for
+  // "which project was touched last". Roots with neither signal answer 0 —
+  // under the callers' stable sorts they keep their incoming order at the
+  // tail. Root argument is the `.trellis` dir (this module's root
+  // convention, same as rootCache / knownRoots).
   async function readRootRecencies(roots) {
     const out = new Map();
     for (const root of Array.isArray(roots) ? roots : []) {
       if (typeof root !== "string" || !root) continue;
       const sessionsDir = path.join(root, ".runtime", "sessions");
+      // Directory mtime: pointer creation/cleanup touches it even when no
+      // pointer content survives (one extra stat per root).
+      const st = await statQuiet(sessionsDir);
+      let best = st && Number.isFinite(st.mtimeMs) ? st.mtimeMs : 0;
       const entries = await readdirQuiet(sessionsDir);
-      let best = 0;
       if (entries) {
         for (const name of entries) {
           if (!name.endsWith(".json")) continue;

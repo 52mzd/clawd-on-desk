@@ -89,8 +89,9 @@ function makeFakeFs() {
     async stat(p) {
       readOps.stat += 1;
       const k = key(p);
-      if (files.has(k)) return { isDirectory: () => false };
-      if (isDir(k)) return { isDirectory: () => true };
+      const withMtime = { get mtimeMs() { return mtimes.get(k) || 0; } };
+      if (files.has(k)) return { isDirectory: () => false, ...withMtime };
+      if (isDir(k)) return { isDirectory: () => true, ...withMtime };
       throw enoent();
     },
     async readdir(p) {
@@ -1880,6 +1881,32 @@ describe("trellis-activity readActiveList", () => {
     assert.strictEqual(result.status, "ok");
     assert.deepStrictEqual(result.tasks.map((t) => t.title), ["B", "A"],
       "the dashboard's per-project grouping follows the newest root first");
+  });
+
+  it("ranks a cleaned-out sessions dir by its directory mtime (09-28 measured)", async () => {
+    const PROJECT2 = path.resolve("/proj2");
+    const h = makeHarness({ sessions: new Map([
+      ["pi:a", { agentId: "pi", cwd: CWD }],
+      ["pi:b", { agentId: "pi", cwd: path.join(PROJECT2, "app") }],
+    ]) });
+    addTask(h.fakeFs, "09-21-a", { title: "A", status: "in_progress", subtasks: [] }, { prd: true });
+    addTask(h.fakeFs, "09-21-b", { title: "B", status: "in_progress", subtasks: [] }, { prd: true, root: PROJECT2 });
+    h.activity.start();
+    await h.timers.runDue();
+    // PROJECT keeps a stale pointer (an hour old). PROJECT2's sessions dir
+    // was just emptied by the CLI — no pointer content left — but the
+    // directory mtime remembers the cleanup (a minute ago) and must outrank
+    // the stale pointer.
+    addPointer(h.fakeFs, "pi_a.json", pointerPayload({
+      platform: "pi", currentTask: null, seenAgoMs: 60 * 60 * 1000, clockNow: h.clock.now,
+    }));
+    h.fakeFs.add(path.join(PROJECT2, ".trellis", ".runtime", "sessions", ".keep"), "");
+    h.fakeFs.setMtime(path.join(PROJECT2, ".trellis", ".runtime", "sessions"), h.clock.now - 60 * 1000);
+
+    const result = await h.activity.readActiveList();
+    assert.strictEqual(result.status, "ok");
+    assert.deepStrictEqual(result.tasks.map((t) => t.title), ["B", "A"],
+      "the emptied-dir project leads on its directory mtime");
   });
 });
 
