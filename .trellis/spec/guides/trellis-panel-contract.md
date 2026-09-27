@@ -1423,6 +1423,22 @@ fade-out（`animateTrellisOverlayClose`：setTimeout 140ms 守卫，重开
 stale 语义 `staleIdsOf` 不变。同类风险：`.version`、`config.yaml`、`runtime.json` 都按
 版本化契约对待——解析失败/空集时先怀疑上游改契约，再查自己的代码。
 
+**生命周期维度（09-28 break-loop 补）**：状态文件不只是格式会漂，**还会被上游清理**。
+09-28 recency 排序第一版把 pointer `last_seen_at` 当持久信号，实测 trellis CLI 在会话
+结束时**清空** `.runtime/sessions/`——刚动过的项目内容戳全灭、排序垫底，用户实测打回；
+唯一持久痕迹是**目录 mtime**（文件增删的文件系统副作用），修法取
+max(内容戳, 目录 mtime)（bf137f2d）。所以消费外部落盘状态前是**三问**，不是两问：
+
+1. 格式会随上游版本变吗？（上方版本化契约）
+2. **会被谁在什么时机清理？**（pointer 型数据在会话生命周期内存在；把瞬态数据当
+   持久真相，反例只在真实使用里出现——开发机自己有活跃 pointer 时永远测不出来）
+3. **清理后文件系统留下什么痕迹？**（目录 mtime / 残留文件——痕迹与内容戳取 max
+   才是持久信号）
+
+验证纪律：**选数据源时的验证集必须含反例**（数据源为空/被清理的路径）。第一版测试
+用 pointer fixture 驱动、实现与测试共享同一数据源假设，绿灯是自证式的（同
+「自证式断言只能验证一致性，不能验证正确性」）。
+
 ## Scenario: spawn 外部 CLI 时的 GUI PATH 契约（09-26 fork-release）
 
 **Bug 复盘**：打包版（Finder 双击启动）报「PATH 中未找到 trellis CLI」，
