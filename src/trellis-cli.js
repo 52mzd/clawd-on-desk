@@ -348,7 +348,9 @@ function createTrellisCli(options = {}) {
     };
   }
 
-  // `channel` is an npm dist-tag the CLI understands (`trellis upgrade <tag>`).
+  // `channel` is an npm dist-tag and MUST ride the `--tag` flag (measured on
+  // 0.6.17: `trellis upgrade beta` — a bare positional — is silently IGNORED and
+  // falls back to `latest`, so the user's beta/rc choice was lost).
   // Empty means auto: the CLI infers the channel from the prerelease marker of
   // the version it has installed (beta → beta, rc → rc, otherwise latest), so
   // Clawd must not compute a default here — it would pick a different channel
@@ -366,7 +368,7 @@ function createTrellisCli(options = {}) {
         error: "unknown-channel",
       };
     }
-    const args = wanted === "" ? GLOBAL_UPGRADE_ARGS : [...GLOBAL_UPGRADE_ARGS, wanted];
+    const args = wanted === "" ? GLOBAL_UPGRADE_ARGS : [...GLOBAL_UPGRADE_ARGS, "--tag", wanted];
     const before = await readGlobalVersion();
     const result = await run(TRELLIS_BIN, args, { timeoutMs: globalUpgradeTimeoutMs });
     const after = await readGlobalVersion();

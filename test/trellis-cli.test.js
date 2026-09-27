@@ -550,10 +550,11 @@ describe("upgradeGlobal", () => {
     assert.deepStrictEqual(stub.calls[1].args, ["upgrade"]);
   });
 
-  it("passes a known dist-tag as the second argv token", async () => {
+  it("passes a known dist-tag as `--tag <tag>` (a bare positional is ignored by the CLI)", async () => {
     const stub = makeExecFileStub({ trellis: { stdout: "0.6.17\n" } });
     await cliWith(stub).upgradeGlobal("beta");
-    assert.deepStrictEqual(stub.calls[1].args, ["upgrade", "beta"]);
+    assert.deepStrictEqual(stub.calls[1].args, ["upgrade", "--tag", "beta"]);
+    assert.ok(stub.calls[1].args.includes("--tag"), "the dist-tag must ride the --tag flag");
   });
 
   it("treats null the same as omitted, keeping the auto channel", async () => {
