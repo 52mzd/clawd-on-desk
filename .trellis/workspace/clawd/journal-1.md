@@ -740,3 +740,33 @@ Settings → Trellis 安装向导支持 trellis init -u <name> 开发者身份�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 27: HUD 交互三轮迭代收敛（字号重设计→语义统一→绑定解耦→常驻图标回归官方）+ 主题版本门修复
+<!-- trellis-session: v=2 fp=473c1ea7fab5973b -->
+
+**Date**: 2026-09-27
+**Task**: HUD 交互三轮迭代收敛（字号重设计→语义统一→绑定解耦→常驻图标回归官方）+ 主题版本门修复
+**Branch**: `main`
+
+### Summary
+
+主题版本门修复（normalizeAppVersion 兼容 fork 预发布号，channel worker 全流程）。HUD 全局字号重设计（:root token 14/12/11 + 行高 34 + 宽度重排 + 整面点击展开）。单击/双击统一语义后用户实测单击不展开：根因=面板入口依赖活动任务绑定（pointer 随任务归档清空）而数据源读盘不依赖——解耦修复（行单击/空白锚定放宽为 cwd 承载、fetch 答 missing 自动关零残留、owner 存活不要求绑定）。再经用户反馈（双击必先闪面板=物理连击序列固有缺陷；选项卡双击=诊断 macOS 后台窗口第一击被系统吃、非 bug）收敛终局：行交互逐语义回归 origin/main 官方（单击跳终端+清铃铛+ack），面板唯一入口=pin 旁常驻 trellis 图标按钮（22px 热区 + 13px 图标，absolute 不进高度公式）。知识沉淀：§4.1 入口契约与 Tests Required 断言清单、renderer-guidelines 连击序列推演+入口生命周期对齐+官方基线 diff 流程原则、macOS 后台第一击知识。两任务（hud-panel-entry/hud-trellis-icon-entry）均 implement→check→commit→archive 完整走完。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dd0c04c6` | fix(theme): 官方主题版本门兼容 fork 预发布版本号 |
+| `b9d15397` | feat(hud): 全局字号重设计 — token 化 14/12/11 + 行高 34 + 整面点击展开 |
+| `6c7cf727` | feat(hud): 单击/双击统一语义 — 单击即面板，双击唯一跳终端入口 |
+| `d79ce88d` | feat(hud): 面板入口与活动任务绑定解耦 — 单击任何 cwd 行即面板，missing 零残留 |
+| `664b1def` | feat(hud): 面板入口收敛为常驻 trellis 图标，行交互回归官方 |
+| `7921bfe1` | style(hud): pin/trellis 按钮点击热区 16→22px，图标视觉同步放大 |
+| `7529271b` | docs(spec): 按钮 22px 热区与 52px 行避让同步进 §4.1 尺寸记录 |
+| `bd70862b` | docs(spec): HUD 入口三轮迭代复盘 — 连击序列推演/入口生命周期对齐/macOS 后台第一击 |
+| `c83c0d45` | docs(spec): §4.1 Tests Required 补入口收敛断言点；guides 补官方基线 diff 流程原则 |
+
+### Status
+
+[OK] **Completed**
