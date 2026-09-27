@@ -376,23 +376,29 @@ body { padding: 2px 3px 8px; }
   padding: 6px 10px 6px 30px;
   margin: 2px 4px;
   border-radius: 6px;
-  background: rgba(30, 30, 36, 0.96);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid var(--hud-border);
   overflow: hidden;
 }
 .trellis-detail-title {
   font-size: 11px;
-  color: #ececf1;
+  color: var(--text);
   white-space: normal;
   word-break: break-word;
   line-height: 1.35;
 }
 .trellis-detail-guide {
   font-size: 10px;
-  color: #a1a1aa;
+  color: var(--text-muted);
   white-space: normal;
   word-break: break-word;
   line-height: 1.35;
+}
+
+@media (prefers-color-scheme: dark) {
+  .trellis-detail {
+    background: rgba(30, 30, 36, 0.96);
+  }
 }
 </style>
 </head>
