@@ -391,8 +391,8 @@ HUD 底部面板（`createTrellisPanel`，替代旧 per-session 详情行——�
 无 click listener 无 active 态；行单击回归 fork 官方跳终端语义，见 §4.1）。
 数据走 `session-hud:trellis-panel`（invoke，payload 严格单键 `{cwd}`，
 activity 侧 `readHudTaskPanel` 复用共享 per-root 遍历 + `listArchivedTasks`；
-**09-28 hud-multi-project-audit 起多项目**：cwd 仅决定锚定项目排序（过
-`isTrustedTrellisCwd`），面板覆盖全部已知 root（`collectKnownRootCwds()` 信任面，
+**09-28 hud-multi-project-audit 起多项目**：cwd 只保证锚定项目进集合（过
+`isTrustedTrellisCwd`；recency 排序后**不保证位置**，见下段 recency 契约），面板覆盖全部已知 root（`collectKnownRootCwds()` 信任面，
 项目 ≤5、每项目 active 全量 + 归档 newest-first 截 3，`{status, projects:[{cwd,
 name, active, archived}]}`），renderer 每项目一节（`.trellis-panel-project`
 节头），行跳转用**所属节的 cwd**——非锚定项目的行不得经锚定 cwd 解析；
@@ -411,6 +411,22 @@ name, active, archived}]}`），renderer 每项目一节（`.trellis-panel-proje
 计入 §4.1 高度实测（`.trellis-task-panel` 选择器），max-height 320px 内滚，
 flex 锁定同 `.trellis-detail`；owner 会话消失才自动关（trellis 绑定消失不
 关，hud-panel-entry 起从磁盘续服务）；一次一拉不轮询。
+
+**项目列表 recency 排序（09-28 hud-multi-project-audit）**：四处项目列表统一
+「最近动过的项目排最前」——HUD 面板（`readHudTaskPanel`）、dashboard 任务分组
+（`readActiveList` 的 root 遍历序，任务按 root 聚集跟随）、chips
+（main.js `listTrellisRoots`，roots/picks 各按成员最新 root 排）、Settings 扫描
+（`settings:trellis-scan` 的 `sortScanByRecency`，projects 按自身 pointer、scans/
+roots 按扫描根内最新项目）。排序键：per-root recency = max(`.trellis/.runtime/
+sessions/*.json` 的 `last_seen_at`)——trellis CLI 每次交互刷新该戳，重启不丢；
+唯一实现在 `trellis-activity.readRootRecencies`（root 参数是 `.trellis` 目录，
+同 rootCache 约定）。红线：无 pointer → 0，稳定排序保存储序垫底；锚定 root 只保
+membership 不保位置（陈旧锚定不得压过刚动过的项目）；reader 缺失（测试）/抛错 →
+保存储序，排序永不使 scan 失败；`readArchiveList` 不参与（全局 completedAtMs
+desc 已构成任务级时间倒序，root 序无用户可见效果——曾改后主动撤销）。测试断言
+点：readHudTaskPanel 多项目用例须用**真 pointer fixture**（不同 last_seen_at 验
+翻转，不得靠稳定排序碰巧通过）、readActiveList 排序序、scan 的 reader 缺失/抛错
+保序（`test/trellis-activity.test.js` / `test/trellis-ipc.test.js`）。
 
 **过程级 trace（09-27 hud-process-awareness；09-28 hud-multi-project-audit 修订）**：绑定会话
 额外扫其 Claude Code transcript 尾部（`~/.claude/projects/<sanitized-cwd>/<raw-id>.jsonl`，
