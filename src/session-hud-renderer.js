@@ -73,6 +73,11 @@ function toggleTrellisPanel(session) {
         if (!trellisPanel.open || trellisPanel.cwd !== nextCwd || !trellisPanel.loading) return;
         trellisPanel.loading = false;
         trellisPanel.result = result && typeof result === "object" ? result : { status: "error" };
+        // A cwd with no resolvable .trellis root answers "missing" — the
+        // click was on a non-trellis project, leave nothing behind.
+        if (trellisPanel.result.status === "missing") {
+          closeTrellisPanel();
+        }
         render();
       }).catch(() => {
         if (!trellisPanel.open || trellisPanel.cwd !== nextCwd || !trellisPanel.loading) return;
@@ -89,10 +94,11 @@ function toggleTrellisPanel(session) {
 }
 
 // 09-27 hud-panel-readability: clicking blank HUD space toggles the trellis
-// panel too, anchored to the most recent bound session — the trellis chip
-// stays as a second entry point. 09-27 hud-click-semantics unified the row
-// clicks: single-click toggles the panel (bound rows only), double-click is
-// the ONLY focus-terminal entry (see createRowForSession). The open panel
+// panel too, anchored to the most recent cwd-bearing session — the trellis
+// chip stays as a second entry point. 09-27 hud-click-semantics unified the
+// row clicks: single-click toggles the panel (the fetch's "missing" answer
+// closes it for non-trellis cwds), double-click is the ONLY focus-terminal
+// entry (see createRowForSession). The open panel
 // itself is content, not blank space — clicks inside its headings/padding
 // must not close it.
 const HUD_INTERACTIVE_CLASS_RE = /(?:^|\s)(row|pin-btn|trellis-task-panel)(?:\s|$)/;
@@ -110,22 +116,22 @@ function isHudInteractiveTarget(node) {
   return false;
 }
 
-function hasTrellisBinding(session) {
-  return !!(session && session.trellis && typeof session.cwd === "string" && session.cwd);
-}
-
 function lastBoundExpandedSession() {
   const sessions = orderedHudSessions(snapshot);
   const { expanded } = splitHudLayout(sessions);
   // orderedIds is newest-first (sessionUpdatedAtComparator sorts desc), so
-  // the FIRST bound session in `expanded` is the most recently active one.
-  return expanded.find(hasTrellisBinding) || null;
+  // the FIRST cwd-bearing session in `expanded` is the most recently active
+  // one. Binding is NOT required here — the panel fetch decides via the
+  // "missing" answer whether the cwd has a .trellis at all.
+  return expanded.find((session) =>
+    session && typeof session.cwd === "string" && session.cwd
+  ) || null;
 }
 
 function onHudContainerClick(event) {
   if (isHudInteractiveTarget(event && event.target)) return;
   const anchor = lastBoundExpandedSession();
-  if (!anchor) return; // no bound session → no panel (unchanged behavior)
+  if (!anchor) return; // no cwd-bearing session → nothing to anchor a panel to
   toggleTrellisPanel(anchor);
 }
 
@@ -692,25 +698,21 @@ function createRowForSession(session, now) {
   if (hasRightContent) row.appendChild(right);
 
   // 09-27 hud-click-semantics: single-click on ANY session row toggles the
-  // trellis panel anchored to that row (bound rows only — an unbound row
-  // opens nothing: no focus, no feedback, no fetch). Double-click is the
-  // ONLY focus-terminal entry regardless of binding.
+  // trellis panel anchored to that row — no active-task binding required
+  // (hud-panel-entry: bindings vanish between tasks, the panel reads from
+  // disk). A cwd without .trellis answers "missing" and the panel closes.
+  // Double-click is the ONLY focus-terminal entry regardless of binding.
   row.addEventListener("click", () => {
     // A single click means the row was noticed — dismiss the unread bell
     // and ack the completion right here (bell-dismiss and panel-open do
-    // not conflict), then toggle the panel for bound rows only.
-    const dismissedUnread = unreadSessions.delete(session.id);
+    // not conflict), then toggle the panel. Binding is not required: the
+    // panel fetch answers "missing" for a cwd without .trellis and the
+    // panel closes itself — no visible residue on non-trellis projects.
+    unreadSessions.delete(session.id);
     if (window.sessionHudAPI && typeof window.sessionHudAPI.ackCompletion === "function") {
       Promise.resolve(window.sessionHudAPI.ackCompletion(session.id)).catch((err) => {
         console.warn("ack completion threw:", err);
       });
-    }
-    if (!hasTrellisBinding(session)) {
-      // Only a dismissed bell needs an immediate repaint; otherwise the
-      // ack's forced snapshot will re-render anyway — skip the redundant
-      // full redraw.
-      if (dismissedUnread) render();
-      return;
     }
     toggleTrellisPanel(session);
   });
@@ -803,11 +805,12 @@ function render() {
     hudEl.appendChild(createRowForSession(session, now));
   }
   // The panel lives BELOW all session rows (project-scoped, opened from any
-  // bound session's chip). It auto-closes when its owning session's binding
-  // disappears — a panel without a trellis anchor has nothing to show.
+  // row's single click). Its owner just has to still be an expanded row —
+  // an active-task binding is NOT required (the task may have been archived
+  // while the panel was open; the list keeps serving from disk).
   if (trellisPanel.open) {
     const owner = expanded.find((session) => session.id === trellisPanel.sessionId);
-    if (owner && owner.trellis) {
+    if (owner) {
       hudEl.appendChild(createTrellisPanel(owner));
     } else {
       closeTrellisPanel();

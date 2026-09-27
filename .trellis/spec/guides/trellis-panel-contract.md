@@ -394,7 +394,8 @@ active 全量 + 归档 newest-first 截 8，cwd 过 `isTrustedTrellisCwd`）；
 （showDashboard → `dashboard:navigate-trellis`，isLoading 时挂 did-finish-load）
 → renderer 复用 `jumpToTrellisNetworkTask`（归档自动开 archiveOpen）。面板
 计入 §4.1 高度实测（`.trellis-task-panel` 选择器），max-height 320px 内滚，
-flex 锁定同 `.trellis-detail`；绑定消失自动关；一次一拉不轮询。
+flex 锁定同 `.trellis-detail`；owner 会话消失才自动关（trellis 绑定消失不
+关，hud-panel-entry 起从磁盘续服务）；一次一拉不轮询。
 
 **过程级 trace（09-27 hud-process-awareness）**：绑定会话额外扫其 Claude Code
 transcript 尾部（`~/.claude/projects/<sanitized-cwd>/<raw-id>.jsonl`，尾窗
@@ -496,16 +497,23 @@ entry.id 直接当外部工具记录 id 用的代码都会静默失配（HUD 徽
   `:root` token（`--hud-fs-main: 14px` / `--hud-fs-sub: 12px` /
   `--hud-fs-badge: 11px`，style 测试守卫零裸值）；行高 34，宽度常量
   270/215/355/290（普通/紧凑/带标签/带标签紧凑）。**整面触发**：HUD
-  容器空白点击即 toggle 面板，锚定 expanded 中**最近活跃**的绑定会话
-  （orderedIds 最新在前，取第一个绑定者）；会话行/pin/面板内容区
+  容器空白点击即 toggle 面板，锚定 expanded 中**最近活跃**的 **cwd
+  承载**会话（orderedIds 最新在前，取第一个有 cwd 者——**不要求绑定**，
+  09-27 hud-panel-entry 起）；会话行/pin/面板内容区
   （`trellis-task-panel` 整块）是交互面，不参与 toggle——面板内容
-  点击不得误关自身。**行点击统一语义（09-27 hud-click-semantics）**：
-  会话行**单击** = 清完成铃铛 + `ackCompletion`（fire-and-forget，"注意
-  到了"语义，与开面板不冲突）后 toggle 面板锚定该行（须有绑定；无绑定
-  行单击除清铃铛外零操作——不跳终端、无反馈、零 fetch）；**双击** = 跳
+  点击不得误关自身。**行点击统一语义（09-27 hud-click-semantics；
+  hud-panel-entry 与绑定解耦）**：会话行**单击** = 清完成铃铛 +
+  `ackCompletion`（fire-and-forget，"注意到
+  了"语义，与开面板不冲突）后 toggle 面板锚定该行（**不要求 trellis
+  绑定**——绑定随任务归档消失，面板数据本就从磁盘读；fetch 答
+  `missing`（cwd 无 .trellis）时面板自动关，零残留，非 trellis 项目
+  单击无可见副作用）；**双击** = 跳
   终端的**唯一**入口（`focusSession`，不分有无绑定），跳转顺手关掉开着
   的面板，不重复未读清理（单击已触发）；
-  `canFocus=false` 行双击给不可用反馈。折叠行（"其他 N 个"）保留单击
+  `canFocus=false` 行双击给不可用反馈。**面板存活（hud-panel-entry）**：
+  开着的面板只要求 owner session 仍是 expanded 行，**不要求**
+  `owner.trellis` 绑定——任务归档（pointer 清空）后列表继续从磁盘
+  服务；owner 会话本身消失才自动关。折叠行（"其他 N 个"）保留单击
   openDashboard，不参与本语义。面板底部 `trellis-panel-hint` 常驻双击
   提示（`sessionHudTrellisPanelDblclickHint` ×7 语言，静态非交互）。
 - detailExtraPx 只能来自渲染层实测，main 侧不预测、不缓存跨快照
