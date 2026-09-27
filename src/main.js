@@ -2538,6 +2538,13 @@ function autoRegisterDiscoveredRoot(trellisDir) {
   } catch {
     return;
   }
+  // The upward climb may reach a stray ~/.trellis (e.g. a global trellis
+  // install) from any home-relative session cwd — registering $HOME would
+  // swallow every project under it. Same red line the picker flow draws.
+  const os = require("os");
+  let home = null;
+  try { home = path.normalize(os.homedir()); } catch { home = null; }
+  if (home && projectRoot === home) return;
   const outcome = _trellisRootsStore.add(projectRoot);
   if (outcome.status !== "ok") return;
   syncTrellisPersistedRoots();
