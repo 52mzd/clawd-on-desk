@@ -82,8 +82,19 @@ function createTrellisBubble(options) {
     const petBounds = getPetBounds();
     const workArea = getWorkArea();
     if (!petBounds || !workArea) return null;
+    // The follow branch requires anchorRect || hitRect (update-bubble's own
+    // caller derives both from petBounds). Passing only petBounds made the
+    // branch dead code and silently degraded every trellis bubble to the
+    // fixed bottom-right corner — derive the anchor here instead.
+    const anchorRect = {
+      left: petBounds.x,
+      top: petBounds.y,
+      right: petBounds.x + (petBounds.width || 0),
+      bottom: petBounds.y + (petBounds.height || 0),
+    };
     return computeUpdateBubbleBounds({
       bubbleFollowPet: true,
+      anchorRect,
       width: BUBBLE_WIDTH,
       height: BUBBLE_HEIGHT,
       edgeMargin: EDGE_MARGIN,

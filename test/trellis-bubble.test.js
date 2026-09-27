@@ -272,3 +272,29 @@ test("phase bubble keys stay independent of the idle shownTasks set", () => {
   assert.strictEqual(h.bubble.maybeShow(), true);
   assert.strictEqual(h.win._texts.at(-1).hint, "trellisHintPlan");
 });
+
+test("idle bubble follows the pet, not the fixed corner (09-27 regression)", () => {
+  const h = makeHarness();
+  // Pet near screen center — far from every fixed corner.
+  h.state.petBounds = { x: 660, y: 400, width: 120, height: 120 };
+  assert.strictEqual(h.bubble.maybeShow(), true);
+  const b = h.win._bounds;
+  assert.ok(b, "bounds computed");
+  // Horizontally centered on the pet (auto preference: below first).
+  const petCx = 660 + 60;
+  assert.ok(Math.abs(b.x + b.width / 2 - petCx) <= 1,
+    `bubble centered on pet cx=${petCx}, got x=${b.x} width=${b.width}`);
+  // Below the pet — NOT the pre-fix fixed bottom-right corner.
+  assert.ok(b.y > 520 && b.y < 620, `bubble below the pet, got y=${b.y}`);
+  assert.ok(b.x < 1000, `not the corner x, got x=${b.x}`);
+});
+
+test("phase-transition bubble follows the pet too (same buildBounds)", () => {
+  const h = makeHarness();
+  h.state.petBounds = { x: 660, y: 400, width: 120, height: 120 };
+  h.bubble.showPhaseTransitionBubble({ taskPath: ".trellis/tasks/task-a", title: "Task A", toPhase: "finish", phaseLabel: "Finish" });
+  const b = h.win._bounds;
+  assert.ok(b, "bounds computed");
+  assert.ok(b.y > 520 && b.y < 620, `bubble below the pet, got y=${b.y}`);
+  assert.ok(b.x < 1000, `not the corner x, got x=${b.x}`);
+});
