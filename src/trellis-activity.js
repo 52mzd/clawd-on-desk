@@ -52,7 +52,6 @@ const ROOT_SEARCH_MAX_DEPTH = 8;
 const CHILD_PROJECT_MAX = 32;
 const ROOT_NEGATIVE_TTL_MS = 60 * 1000;
 const FALLBACK_MAX_AGE_MS = 30 * 60 * 1000;
-const CELEBRATION_MIN_INTERVAL_MS = 10 * 1000;
 const PARALLEL_COUNT_TTL_MS = 30 * 1000;
 
 function toPosix(p) {
@@ -77,9 +76,6 @@ function createTrellisActivity(options) {
   const setTimeoutFn = opts.setTimeoutFn || setTimeout;
   const clearTimeoutFn = opts.clearTimeoutFn || clearTimeout;
   const onTrellisUpdate = typeof opts.onTrellisUpdate === "function" ? opts.onTrellisUpdate : null;
-  const onCelebration = typeof opts.onCelebration === "function" ? opts.onCelebration : null;
-  const onPhaseTransition = typeof opts.onPhaseTransition === "function" ? opts.onPhaseTransition : null;
-  const onAggregateChange = typeof opts.onAggregateChange === "function" ? opts.onAggregateChange : null;
 
   let lifecycleToken = 0;
   let pollTimer = null;
@@ -91,16 +87,6 @@ function createTrellisActivity(options) {
   const sessionCache = new Map();
   // cwd → { root } | { root: null, negativeUntil } — root lookup memo.
   const rootCache = new Map();
-  // Absolute task dir → last observed phase. The first observation seeds
-  // the baseline and never celebrates — otherwise booting Clawd onto a
-  // finished task would cheer out of nowhere.
-  const phaseHistory = new Map();
-  // Absolute task dir → taskPath (".trellis/tasks/<name>") as last reported
-  // by a live pointer. Retained across rounds so an archive-completion
-  // celebration (pointer already deleted) can still name the task.
-  const taskRelPaths = new Map();
-  // Absolute task dir → ms of the last celebration (jitter suppression, D5).
-  const lastCelebrationAt = new Map();
   // Absolute .trellis root → { count, activeTasks, computedAt } (per-root
   // summary cache: parallelCount + the Settings active-task digest).
   const parallelCache = new Map();
@@ -109,12 +95,6 @@ function createTrellisActivity(options) {
   // the trust surface of readTaskDetail / readArchiveList / readActiveList
   // so registered projects stay browsable with no live session at all.
   const persistedRoots = new Set();
-  // Project aggregates for the pet visual (avatar R3/R3.1): total executing
-  // tasks across roots that still have a bound live session, and whether any
-  // bound task is in the planning phase. Both are rewritten from the same
-  // caches each poll round — pure memory reads, zero extra IO (R4).
-  let executingCount = 0;
-  let planningActive = false;
 
   // ── lifecycle ──
 
@@ -156,12 +136,7 @@ function createTrellisActivity(options) {
     started = false;
     sessionCache.clear();
     rootCache.clear();
-    phaseHistory.clear();
-    taskRelPaths.clear();
-    lastCelebrationAt.clear();
     parallelCache.clear();
-    executingCount = 0;
-    planningActive = false;
     // persistedRoots survives stop(): it mirrors a file the caller owns,
     // not a cache this module owns.
     return wasStarted;
@@ -174,37 +149,9 @@ function createTrellisActivity(options) {
     return value === undefined ? null : value;
   }
 
-  // R3 thinking-cap gate: true while any bound live session's task is in
-  // the planning phase. The cache only holds entries for live sessions, so
-  // this cannot go stale beyond one poll round.
-  function hasPlanningBinding() {
-    for (const info of sessionCache.values()) {
-      if (info && info.phase === "plan") return true;
-    }
-    return false;
-  }
-
-  // R3.1 parallel-task juggling input: total executing tasks across roots
-  // that still have a bound live session (per-root deduped, so two sessions
-  // on one project count that project's tasks once).
-  function getExecutingCount() {
-    return executingCount;
-  }
-
-  function setAggregate(nextExecuting, nextPlanning) {
-    if (nextExecuting === executingCount && nextPlanning === planningActive) return;
-    executingCount = nextExecuting;
-    planningActive = nextPlanning;
-    if (onAggregateChange) onAggregateChange({ executingCount, planningActive });
-  }
-
-  // Aggregate fanout for rounds with no bound session left: stale bindings
-  // must not keep the wizard-hat or the juggling tier alive after the last
-  // bound session disappears from the live snapshot.
   function clearStaleBindings() {
     if (sessionCache.size === 0) return;
     sessionCache.clear();
-    setAggregate(0, false);
   }
 
   // ── read-only fs helpers ──
@@ -615,23 +562,6 @@ function createTrellisActivity(options) {
       sessionCache.set(sessionId, resolved ? resolved.info : null);
     }
 
-    const archived = await detectArchivedTasks(nextResolved);
-    recordPhaseTransitions(nextResolved, archived);
-
-    // R3/R3.1 project aggregate: count executing tasks per root that still
-    // has a bound session this round (resolveSessionTrellis already warmed
-    // parallelCache), then fan out only on change.
-    const boundRoots = new Set();
-    for (const { session, root } of bound) {
-      if (nextResolved.get(session.sessionId)) boundRoots.add(root);
-    }
-    let nextExecuting = 0;
-    for (const root of boundRoots) {
-      const summary = parallelCache.get(root);
-      if (summary) nextExecuting += summary.count;
-    }
-    setAggregate(nextExecuting, hasPlanningBinding());
-
     if (changed.length && onTrellisUpdate) onTrellisUpdate(changed);
   }
 
@@ -655,75 +585,6 @@ function createTrellisActivity(options) {
       && (a.workflowStatus || null) === (b.workflowStatus || null)
       && (a.workflowNextAction || null) === (b.workflowNextAction || null)
     );
-  }
-
-  // Phase-transition watching (D5): only arrivals at finish/done celebrate;
-  // planning → execute is announced by the working animation itself.
-  // Archive completion: `task.py archive` moves the task dir and deletes
-  // the session pointer in one commit — by the time the next poll round
-  // runs, the binding is already gone. Detect "bound last round, gone now,
-  // dir lives under archive/" and surface it as an explicit completion so
-  // the celebration fires on the real archive event (not just the brief
-  // pre-archive status flip, which poll timing may skip entirely).
-  // returns [{ archivedDir, relPath }] for entries that completed.
-  async function detectArchivedTasks(nextResolved) {
-    const liveDirs = new Set();
-    for (const resolved of nextResolved.values()) {
-      if (!resolved) continue;
-      liveDirs.add(resolved.absDir);
-      if (resolved.info && resolved.info.taskPath) {
-        taskRelPaths.set(resolved.absDir, resolved.info.taskPath);
-      }
-    }
-    const archived = [];
-    for (const [dir, relPath] of [...taskRelPaths.entries()]) {
-      if (liveDirs.has(dir)) continue;
-      // Binding vanished. If the task dir moved into archive/ it completed.
-      // archive/ is a sibling: <root>/tasks/<name> → tasks/archive/<month>/<name>.
-      taskRelPaths.delete(dir);
-      if (!relPath) continue;
-      const archiveRoot = path.resolve(dir, "..", "archive");
-      const archivedDir = await findArchivedTaskDir(archiveRoot, path.basename(relPath));
-      if (!archivedDir) continue;
-      phaseHistory.set(archivedDir, "done");
-      archived.push({ archivedDir, relPath });
-    }
-    return archived;
-  }
-
-  function recordPhaseTransitions(nextResolved, archived) {
-    const nowMs = nowFn();
-    for (const { archivedDir, relPath } of archived) {
-      if (lastCelebrationAt.has(archivedDir)) continue;
-      lastCelebrationAt.set(archivedDir, nowMs);
-      // Archive move = arrival at done. The pointer is already deleted, so
-      // no title is available here — the bubble falls back to the task path.
-      if (onPhaseTransition) onPhaseTransition({ taskPath: relPath, title: null, fromPhase: null, toPhase: "done" });
-      if (onCelebration) onCelebration(relPath);
-    }
-    const seen = new Map(); // abs task dir → { relPath, title, phase }
-    for (const resolved of nextResolved.values()) {
-      if (!resolved || !resolved.info) continue;
-      seen.set(resolved.absDir, {
-        relPath: resolved.info.taskPath,
-        title: resolved.info.title,
-        phase: resolved.info.phase,
-      });
-    }
-    for (const [absDir, { relPath, title, phase }] of seen) {
-      const last = phaseHistory.get(absDir);
-      phaseHistory.set(absDir, phase);
-      if (!last || !phase || last === phase) continue;
-      // v3 lifecycle feedback: every genuine transition is surfaced to the
-      // host (one-shot phase bubble). The celebration below keeps its
-      // narrower finish/done-only remit and its own 10s jitter window.
-      if (onPhaseTransition) onPhaseTransition({ taskPath: relPath, title, fromPhase: last, toPhase: phase });
-      if (phase !== "finish" && phase !== "done") continue;
-      const lastAt = lastCelebrationAt.get(absDir) || 0;
-      if (nowMs - lastAt < CELEBRATION_MIN_INTERVAL_MS) continue;
-      lastCelebrationAt.set(absDir, nowMs);
-      if (onCelebration) onCelebration(relPath);
-    }
   }
 
   async function resolveSessionTrellis(session, root, taskReads, traceReads) {
@@ -1602,8 +1463,6 @@ function createTrellisActivity(options) {
     getTrellisInfo,
     getByProject,
     getKnownRoots,
-    getExecutingCount,
-    hasPlanningBinding,
     setPersistedRoots,
     resolveProjectRoot,
     isDirectProjectRoot,

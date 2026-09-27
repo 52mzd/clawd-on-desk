@@ -1,6 +1,6 @@
 ---
 name: trellis-panel-contract
-description: Trellis 集成契约——外部进程 argv 冻结/信任门禁/输出解析身份，以及只读流程感知的会话绑定契约
+description: Trellis 集成契约——外部进程 argv 冻结/信任门禁/输出解析身份，以及只读流程感知的会话绑定契约（09-27 起宠物视觉反馈绑定已整体退役：celebration/phase 气泡/idle 气泡/wizard-hat/trellis juggling 均已删除，保留 HUD/Dashboard/recap 信息面）
 paths:
   - src/main.js
   - src/trellis-*.js
@@ -367,8 +367,7 @@ Correct resolveUserName(projectPath, candidate) 单一回退链，三处 import 
 ```js
 // src/trellis-activity.js — 工厂；fs/timer 全部可注入
 createTrellisActivity({ state?, getLiveSessions?, fs, now, setTimeoutFn,
-                        clearTimeoutFn?, onTrellisUpdate, onCelebration?,
-                        onPhaseTransition? })
+                        clearTimeoutFn?, onTrellisUpdate? })
 activity.start() / activity.stop()
 activity.getTrellisInfo(sessionKey)   // → TrellisInfo | null（null = 不渲染）
 activity.getByProject(projectPath)    // → { count, activeTasks:[{title,phase}] } | null
@@ -379,15 +378,6 @@ activity.getKnownRoots()              // → string[]（本进程正向缓存的
 供 recap Trellis 段（`src/recap-trellis.js`）作扫描根：会话结束后根保留
 （当天早些时候做过的项目晚上仍进小结），stop() 清空后 recap 查询得到空
 数组 → 返回 null → 该段隐藏。**只返回根路径字符串，不含任何任务内容。**
-
-`onPhaseTransition({ taskPath, title, fromPhase, toPhase })` 同一 diff
-管道的两个触发源：①`seen` 循环的真跃迁（首轮观察静默 seed，与跃迁庆祝
-同规则）；②归档负空间检测的 `toPhase:"done"`（指针已删、title 为 null，
-bubble 回退 taskPath）。title 读取复用 readTaskInfo（归档后从归档目录）。
-
-`onCelebration(taskRelPath: string)` 两个触发源，参数统一是
-`.trellis/tasks/<name>` 相对路径：①轮询观察到 →finish/done 跃迁；
-②归档完成（绑定消失 + `tasks/archive/<月>/<同名>` 出现）。
 
 `TrellisInfo = { taskPath, title, phase: plan|execute|check|finish|done,
                  progress: {done,total}|null, parallelCount,
@@ -461,41 +451,6 @@ entry.id 直接当外部工具记录 id 用的代码都会静默失配（HUD 徽
   implement.md 读取（存在或 ENOENT）与 task.json 同轮共享 per-round
   `taskReads` 缓存（同任务去重，+1 readFile/轮）；无 .trellis 根时
   零新增 IO；parallelCount 的 30s root summary **不**读 implement.md。
-- **跃迁庆祝**：→ finish/done 才播，同 task <10s 抑制；DND / petHidden /
-  mini 模式不播；主题缺 reactions.double 资产静默跳过（可选能力降级，
-  不改 REQUIRED_STATES）。触发源两路：轮询可见的相位跃迁，以及归档
-  完成（`task.py archive` 删指针+移目录是同一次提交，中间态不落盘，
-  靠「绑定消失 + 归档副本存在」负空间检测；无副本的消失静默）。
-- **idle 任务气泡**（trellis-bubble）：agent-idle（无 working 会话）+
-  绑定任务 → 桌宠旁 thought-bubble 显示任务名 + `deriveNextStepHint`
-  引导行（plan/execute/check/finish 四档，done/null 不弹；execute 且
-  有 nextStep 时升级为 `trellisHintExecuteNext` 三插槽文案，nextStep
-  在 formatHint 里**最后**替换，防止步骤文本内的 `{done}` 字面量被
-  二次解释）；同 task 每会话
-  一次；4s 自动隐藏；DND/petHidden/mini 同门槛；定位复用 update-bubble
-  的 `__test.computeUpdateBubbleBounds`（permission stack + HUD 避让）。
-  两个语义坑：①「idle」是 agent-idle 不是鼠标 idle 渲染态（用户在场
-  时鼠标在动，鼠标 idle 永远不触发）；② loadFile 异步——注入文本必须
-  等 `did-finish-load`，否则 executeJavaScript 被 catch 吞掉、窗口全
-  透明。HUD chip tooltip 同源引导文案（7 语言）。
-- **阶段切换气泡**（v3 lifecycle feedback，`showPhaseTransitionBubble`）：
-  每次 `onPhaseTransition` 真跃迁弹一次性 thought-bubble（任务名 +
-  `trellisPhaseBubbleHint` 单插槽 `{phase}`，在 formatHint 替换链里
-  追加在 nextStep 之后，防止阶段名内的 `{…}` 字面量被二次解释）。
-  与 idle 气泡共用窗口/定位/4s 隐藏，但**键独立**：去抖双表——
-  dedupe `${taskPath} ${toPhase}` 10s 不重弹 + per-taskPath 10s rapid
-  window（快速连续切换只弹最终态：可见时原地重写文本并**重置** hide
-  timer，已隐藏则丢弃）。gate：DND/petHidden/mini（与 idle 气泡共享）
-  + sleeping-like（`SLEEP_SEQUENCE.has(getCurrentState())`，phase-only
-  新增）；**无 agent-idle gate**（转换通常 mid-work）。阶段名复用 HUD
-  徽标键 `sessionHudTrellisPhase*`（`phaseLabelKey`，未知 phase 回退
-  raw 字符串）；title null（归档负空间检测）回退 taskPath。双通道
-  语义：finish/done 时 celebration 动画与 phase 气泡**并列触发**（PRD
-  要求的「过渡动画+气泡」），两通道抑制窗口/触发面独立、互不接管。
-  已知边界：pointer 存活时归档 done 的 taskPath 是归档路径
-  （`.trellis/tasks/archive/<月>/<名>`），与 finish 时的 active 路径
-  不同 key，per-task 去抖不跨归档边界生效（finish+快速归档会各弹
-  一次，两次信息各自正确）。
 - **HUD Trellis 详情行**（点击展开，取代 hover tooltip）：点 chip 在
   该会话行下方插入 `.trellis-detail` 弹性行，显示任务名 + 引导行。
   三个硬约束：① **高度双轨制**——`computeHudHeight(rowCount,
@@ -509,25 +464,6 @@ entry.id 直接当外部工具记录 id 用的代码都会静默失配（HUD 徽
   落定），无帧循环环境（测试 harness）同步 fallback，否则 0 或旧值。
   新增 `session-hud:*` IPC 通道必须同步补 session-ipc.test.js 频道
   白名单与依赖基座（required dep 缺失会被白名单测试拦住）。
-- **阶段化身与并行 juggling**（avatar R3/R3.1）：`onAggregateChange({
-  executingCount, planningActive})` 只在聚合值变化时 fan out（steady
-  轮零触发；`stop()` 复位不 fan out）。三段契约：① **thinking-cap
-  配件链**——planning 阶段 wizard-hat 是 ephemeral 补位：仅当
-  manual+holiday 解析后 head 槽为 `none` 时注入（main.js
-  `getEffectivePetAccessoryPayloads` 与 holiday runtime 注入的
-  `resolveHeadAccessoryOverride` 两条独立 delivery 必须同口径），不写
-  prefs、不顶掉 holiday（窗口内）或 manual 选择；主题无该配件经
-  `buildPetAccessoryPayload` 静默降级。② **juggling 显示层升级**——
-  `resolveDisplayState` 仅在 base 为 `working` 且跨项目
-  `executingCount >= 2` 时返回 `juggling`：显示层 only，不改状态机、
-  不加 REQUIRED_STATES、不写回 session.state；juggling tier 取
-  `live subagents + trellisParallelCount` 之和
-  （`normalizeTierExtraCount` 把 NaN/负/垃圾归 0）。③ **求和口径**——
-  per-root 去重（同 root 多会话只计一次），仅统计本轮仍有 bound
-  live session 的 root（复用 `parallelCache`，零额外 IO）；最后绑定
-  消失的下一轮必须清零（`clearStaleBindings`）。注入侧
-  `getTrellisProjectExecutingCount` 缺失/throw/垃圾值一律归 0 走旧路径。
-
 #### §4.1 详情行高度契约（code-spec 7 段式）
 
 **1. Scope/Trigger**：HUD 内任何「主进程算窗口尺寸 × 渲染层弹性内容」
@@ -1071,7 +1007,7 @@ parent 嵌套成树」的代码。当前实现：`src/dashboard-trellis-panel.js
 | --- | --- | --- |
 | HUD 行有会话但徽标不渲染 | snapshot scoped id 当 raw id 用，指针永不命中 | §3 双源契约 + `parseSessionKey` round-trip 测试 |
 | 徽标显示陈旧阶段 | 缓存 diff 未触发 `onTrellisUpdate` → snapshot 未重发 | 更新必须走既有 sendSnapshot 路径，不绕开直发 webContents.send |
-| 阶段在 done/finish 间抖动连播动画 | 归档中目录移动的中间态 | 跃迁史 + 10s 抑制；指针悬空时 `detectArchivedTasks` 在同轮用 `tasks/archive/<month>/<name>` 精确名匹配判定 done 并庆祝（归档删指针与移目录是同一次提交，等下一轮必然绑定已消失；无归档副本的消失保持静默） |
+ 归档中目录移动的中间态 | 跃迁史 + 10s 抑制；指针悬空时 `detectArchivedTasks` 在同轮用 `tasks/archive/<month>/<name>` 精确名匹配判定 done 并庆祝（归档删指针与移目录是同一次提交，等下一轮必然绑定已消失；无归档副本的消失保持静默） |
 | 详情行文字被截断（显示不完整） | 用固定常数当展开行高度，遇换行即溢出 | 高度双轨制：固定行高 ×28 + 渲染层实测弹性高度回传（见 §4） |
 | 展开后 HUD 越缩越小 | detail 行可 flex-shrink，实测回传的是被压缩值，反馈成 runaway loop | `.trellis-detail { flex: 0 0 auto }`；实测值与压缩值必须区分 |
 | Dashboard 面板隐藏后仍留空白间距 | `.trellis-panel { display:flex }` 覆盖了 UA `[hidden]` 规则 | `.trellis-panel[hidden] { display:none }` + 静态测试断言（见 §4.2） |
@@ -1090,10 +1026,6 @@ parent 嵌套成树」的代码。当前实现：`src/dashboard-trellis-panel.js
   profile 的拒收
 - stop() 后已排入 timer 不再执行（token 守卫）
 - 阶段气泡：首轮 seed 静默；同 task+phase 10s 不重弹、rapid window 可见时
-  原地重写（shown 计数不变）隐藏时丢弃；gate 链 dnd/petHidden/mini/
-  sleeping 逐项抑制且 working 照弹；`{phase}` 插槽 + phaseLabelKey 未知
-  回退 raw；与 idle shownTasks 键独立（phase 弹过 idle 仍能弹）；
-  `onPhaseTransition` 与 celebration 双通道并存断言
 
 ### 7. Wrong vs Correct
 
@@ -1115,25 +1047,6 @@ getLiveSessions: () => snapshot.sessions.map((entry) => ({
   agentId: entry.agentId, cwd: entry.cwd,
 }))
 // activity 内部：sessionPointerKey(agentId, session.rawSessionId || session.sessionId)
-```
-
-#### Wrong：期待轮询能观察到归档前的 status 翻转
-
-```js
-const phase = derivePhase(taskJson.status);   // archived 后再读已无源
-if (prev === "execute" && phase === "done") celebrate();
-// task.py archive 删指针+移目录是一次提交 → 这个分支永不触发
-```
-
-#### Correct：归档完成 = 负空间检测
-
-```js
-// 上一轮还在绑定的任务，这一轮绑定消失且归档副本存在
-for (const [dir, relPath] of taskRelPaths) {
-  if (liveDirs.has(dir)) continue;
-  const archivedDir = await findArchivedTaskDir(archiveRoot, basename(relPath));
-  if (archivedDir) onCelebration(relPath);   // 显式 done，不依赖中间态
-}
 ```
 
 ---

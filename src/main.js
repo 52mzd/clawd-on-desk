@@ -96,9 +96,6 @@ const { createRecapRuntime } = require("./recap-runtime");
 const { computeTrellisDailyCounts } = require("./recap-trellis");
 const { createTrellisActivity } = require("./trellis-activity");
 const { createTrellisRootsStore } = require("./trellis-roots");
-const { createTrellisCelebration } = require("./trellis-celebration");
-const { createTrellisBubble, TRELLIS_BUBBLE_DIMENSIONS } = require("./trellis-bubble");
-const { phaseLabelKey } = require("./trellis-phase");
 const { createKimiQuotaClient } = require("./kimi-quota-client");
 const { createKimiQuotaCredentialStore } = require("./kimi-quota-credential-store");
 const { createKimiQuotaRuntime } = require("./kimi-quota-runtime");
@@ -1064,13 +1061,6 @@ function getEffectivePetAccessoryPayloads(activeTheme = getActiveTheme()) {
     holidayAccessoryEnabled: snapshot.holidayAccessoryEnabled,
     themeId: activeTheme && activeTheme._id,
   });
-  // Trellis planning thinking cap (avatar R3): only fills an otherwise empty
-  // head slot — manual and holiday accessories keep priority. Themes without
-  // accessory support silently degrade via buildPetAccessoryPayload.
-  if (headId === "none") {
-    const phaseAccessoryId = getTrellisPhaseAccessoryId();
-    if (phaseAccessoryId) headId = phaseAccessoryId;
-  }
   const mouthId = getPetMouthAccessoryIdForTheme(
     snapshot.petMouthAccessory,
     activeTheme && activeTheme._id
@@ -1082,15 +1072,6 @@ function getEffectivePetAccessoryPayloads(activeTheme = getActiveTheme()) {
 }
 
 // Ephemeral, never persisted: while any bound live trellis task is in the
-// planning phase the pet wears the wizard hat. Shared by the accessory
-// payload resolver above and the holiday runtime's independent delivery so
-// both compute the same head slot.
-const TRELLIS_PLANNING_ACCESSORY_ID = "wizard-hat";
-function getTrellisPhaseAccessoryId() {
-  if (!_trellisActivity || !_trellisActivity.hasPlanningBinding()) return null;
-  return TRELLIS_PLANNING_ACCESSORY_ID;
-}
-
 function getEffectivePetAccessoryIds() {
   const activeTheme = getActiveTheme();
   const canonical = getPetAccessorySlotsSnapshot(activeTheme);
@@ -1658,7 +1639,6 @@ function sendToRenderer(channel, ...args) {
     const delivered = requestDisplayedVisual(args[0], args[1], args[2] || {});
     // Pet render state settled on idle → bubble candidate (gate chain
     // re-evaluates agent-idle + dedup inside maybeShow).
-    if (_trellisBubble && args[0] === "idle") _trellisBubble.maybeShow();
     return delivered;
   }
   return sendRawToRenderer(channel, ...args);
@@ -2333,7 +2313,6 @@ function deliverRendererThemeConfig() {
 // _state.sessions as its live-session view); _stateCtx.trellisResolver reads
 // it lazily, so a plain forward let declaration is enough.
 let _trellisActivity = null;
-let _trellisBubble = null;
 
 const recapRuntime = createRecapRuntime({
   // A default-filled snapshot is not user authority when prefs were unreadable,
@@ -2465,11 +2444,6 @@ const _stateCtx = {
   // (it needs _state.sessions) without reordering module setup.
   trellisResolver: (sessionId) =>
     _trellisActivity ? _trellisActivity.getTrellisInfo(sessionId) : null,
-  // Trellis parallel executing count (avatar R3.1): feeds the display-only
-  // working→juggling upgrade inside state.js. Same lazy forward reference as
-  // trellisResolver — pure aggregate cache read, zero extra IO.
-  getTrellisProjectExecutingCount: () =>
-    _trellisActivity ? _trellisActivity.getExecutingCount() : 0,
   // Waiting-auth display override: feeds the display-only working→waiting
   // lift inside state.js. Same lazy forward reference pattern as above — pure
   // pending count read from the permission runtime, zero extra IO.
@@ -2500,115 +2474,6 @@ const { parseSessionKey } = require("./session-key");
 // signature (state-session-snapshot) already includes entry.trellis, so
 // emitSessionSnapshot fans the update out through the existing broadcast
 // path (Dashboard + HUD sendSnapshot with hudShow*/hudPinned merge).
-// Phase 4: onCelebration routes →finish/done transitions into the one-shot
-// reaction entry (requestClickReaction) shared with the 4-click combo — the
-// celebrate helper owns the DND / petHidden / mini gates and picks the
-// theme's reactions.double clip, silently skipping themes without one.
-// Idle thought-bubble: names the bound trellis task + next-step hint.
-// Same gate chain as the celebration; shown once per task per Clawd session.
-// Trigger points: state-change("idle") in sendToRenderer (above) and the
-// onTrellisUpdate callback just above.
-_trellisBubble = createTrellisBubble({
-  getDnd: () => doNotDisturb,
-  getPetHidden: () => petWindowRuntime.isPetEffectivelyHidden(),
-  getMiniMode: () => _mini.getMiniMode(),
-  getPetState: () => {
-    // "idle" here means no working session (agent idle), NOT the pet's
-    // mouse-idle animation state — the user is usually at the computer when
-    // the bubble should appear, so mouse activity must not gate it.
-    const snap = _state.getLastSessionSnapshot ? _state.getLastSessionSnapshot() : null;
-    const sessions = snap && Array.isArray(snap.sessions) ? snap.sessions : [];
-    return sessions.some((s) => s && s.state === "working") ? "working" : "idle";
-  },
-  getPetBounds: () => petWindowRuntime.getPetWindowBounds(),
-  getWorkArea: () => {
-    const b = petWindowRuntime.getPetWindowBounds() || { x: 0, y: 0, width: 0, height: 0 };
-    return screen.getDisplayMatching(b).workArea;
-  },
-  getAvoidRects: () => [
-    ..._perm.getVisibleBubbleBounds(),
-    ...(() => {
-      const hudWin = _sessionHud.getWindow();
-      return hudWin && !hudWin.isDestroyed() ? [hudWin.getBounds()] : [];
-    })(),
-  ],
-  getHudReservedOffset: () => _sessionHud.getHudReservedOffset(),
-  getPermissionReservedHeight: () =>
-    _perm.getVisibleBubbleBounds().reduce((max, r) => Math.max(max, r.height || 0), 0),
-  getSleepingLike: () => {
-    // Phase-transition bubble only: sleeping pets stay quiet even mid-work.
-    // DND/hidden/mini gates are shared with the idle bubble above.
-    try {
-      return _state.SLEEP_SEQUENCE.has(_state.getCurrentState());
-    } catch {
-      return false;
-    }
-  },
-  getWindow: () => {
-    // Same shape as update-bubble: standalone transparent window, no parent.
-    // macOS "panel" type matches the proven update-bubble construction.
-    const bubbleWin = new BrowserWindow({
-      width: TRELLIS_BUBBLE_DIMENSIONS.width,
-      height: TRELLIS_BUBBLE_DIMENSIONS.height,
-      show: false,
-      frame: false,
-      transparent: true,
-      alwaysOnTop: true,
-      resizable: false,
-      skipTaskbar: true,
-      hasShadow: false,
-      focusable: false,
-      ...(process.platform === "darwin" ? { type: "panel" } : {}),
-      webPreferences: {
-        contextIsolation: true,
-        nodeIntegration: false,
-      },
-    });
-    bubbleWin.setAlwaysOnTop(true, "screen-saver");
-    bubbleWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false });
-    bubbleWin.loadFile(path.join(__dirname, "trellis-bubble.html"));
-    return bubbleWin;
-  },
-  setText: (win, { title, hint }) => {
-    if (!win || win.isDestroyed()) return;
-    const inject = () => {
-      if (win.isDestroyed()) return;
-      win.webContents.executeJavaScript(
-        `window.__setBubbleText(${JSON.stringify({ title, hint })})`
-      ).catch(() => { /* window closing */ });
-    };
-    // loadFile is async: injecting before did-finish-load means
-    // __setBubbleText is undefined and the error gets swallowed —
-    // the window then shows as fully transparent (invisible).
-    if (win.webContents.isLoadingMainFrame()) {
-      win.webContents.once("did-finish-load", inject);
-    } else {
-      inject();
-    }
-  },
-  formatHint: ({ key, params }) => {
-    let text = translate(key);
-    if (params) {
-      text = text
-        .replace("{done}", String(params.done))
-        .replace("{total}", String(params.total))
-        .replace("{nextStep}", params.nextStep == null ? "" : String(params.nextStep))
-        .replace("{phase}", params.phase == null ? "" : String(params.phase));
-    }
-    return text;
-  },
-  getTrellisInfo: () => {
-    // First live bound session wins; bubble names one task, not a list.
-    const snapshot = _state.getLastSessionSnapshot ? _state.getLastSessionSnapshot() : null;
-    const sessions = snapshot && Array.isArray(snapshot.sessions) ? snapshot.sessions : [];
-    for (const entry of sessions) {
-      const info = entry && entry.trellis;
-      if (info && info.taskPath) return info;
-    }
-    return null;
-  },
-});
-
 _trellisActivity = createTrellisActivity({
   getLiveSessions: () => {
     const snapshot = _state.getLastSessionSnapshot ? _state.getLastSessionSnapshot() : null;
@@ -2627,47 +2492,7 @@ _trellisActivity = createTrellisActivity({
   state: _state,
   onTrellisUpdate: (changedKeys) => {
     _state.emitSessionSnapshot();
-    // Binding arrived/changed → let the bubble decide (its gate chain uses
-    // agent-idle semantics, not the pet's mouse-idle render state — those
-    // disagree exactly when the user is away from the mouse).
-    if (_trellisBubble) _trellisBubble.maybeShow();
   },
-  // Avatar R3/R3.1: phase aggregates drive the pet visual. executingCount
-  // feeds the working→juggling display lift (state.js resolves it again on
-  // the next event; refresh here so the swap lands without waiting for one),
-  // planningActive toggles the wizard-hat via the standard accessory
-  // delivery. setState's own DND gate and the delivery's renderer-ack
-  // contract both stay intact; best-effort — a closed renderer retries on
-  // the next aggregate change.
-  onAggregateChange: () => {
-    try {
-      const displayState = _state.resolveDisplayState();
-      _state.setState(displayState, _state.getSvgOverride(displayState));
-    } catch {}
-    try { deliverAccessorySlotsSnapshot(); } catch {}
-  },
-  // v3 lifecycle feedback: every genuine phase transition drives the
-  // one-shot phase bubble (task name + localized phase label). Diff-driven
-  // off the existing polling round — no new timers. The finish/done
-  // celebration below keeps its own reactions channel; themes without
-  // celebration assets simply degrade to bubble-only here.
-  onPhaseTransition: (transition) => {
-    try {
-      if (!_trellisBubble) return;
-      const key = phaseLabelKey(transition && transition.toPhase);
-      _trellisBubble.showPhaseTransitionBubble({
-        ...transition,
-        phaseLabel: key ? translate(key) : null,
-      });
-    } catch { /* bubble feedback must never break the poll round */ }
-  },
-  onCelebration: createTrellisCelebration({
-    getDnd: () => doNotDisturb,
-    getPetHidden: () => petWindowRuntime.isPetEffectivelyHidden(),
-    getMiniMode: () => _mini.getMiniMode(),
-    getTheme: () => getActiveTheme(),
-    playReaction: requestClickReaction,
-  }),
 });
 _trellisActivity.start();
 
@@ -4975,7 +4800,6 @@ const holidayAccessoryRuntime = createHolidayAccessoryRuntime({
   // Avatar R3: holiday refreshes (midnight timer / clock events) re-derive
   // the head slot independently — route them through the same trellis
   // planning override so a holiday delivery can't silently drop the hat.
-  resolveHeadAccessoryOverride: () => getTrellisPhaseAccessoryId(),
 });
 
 const settingsEffectRouter = createSettingsEffectRouter({
@@ -6415,9 +6239,6 @@ if (!gotTheLock) {
     if (displayedVisualProjection) displayedVisualProjection.dispose();
     if (_trellisActivity) {
       try { _trellisActivity.stop(); } catch {}
-    }
-    if (_trellisBubble) {
-      try { _trellisBubble.dispose(); } catch {}
     }
     try { recapRuntime.dispose(); } catch {}
     _state.cleanup();

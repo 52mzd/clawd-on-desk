@@ -149,12 +149,9 @@ function getWorkingSvg(options = {}) {
 }
 
 function getJugglingSvg(options = {}) {
-  // Trellis parallel executing tasks join live subagents as tier inputs
-  // (avatar R3.1): both are simultaneous load on the pet, so the tier keys
-  // off their sum. A trellis-only upgrade (no subagents) starts from 0 and
-  // the parallel count alone picks the tier.
-  const count = countLiveSubagents(options.sessions)
-    + normalizeTierExtraCount(options.trellisParallelCount);
+  // Tier keys off live subagents only (09-27: the trellis parallel-count
+  // input was removed with the rest of the trellis×pet-visual bindings).
+  const count = countLiveSubagents(options.sessions);
   const stateSvgs = options.stateSvgs;
   return selectTieredStateFile(
     options.theme && options.theme.jugglingTiers,
