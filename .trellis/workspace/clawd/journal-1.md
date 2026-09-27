@@ -814,3 +814,25 @@ Settings → Trellis 安装向导支持 trellis init -u <name> 开发者身份�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 30: Dashboard trellis 同步修复：HUD 跳转切项目 chip + roots 自动发现与刷新
+<!-- trellis-session: v=2 fp=3560b1707feb7289 -->
+
+**Date**: 2026-09-28
+**Task**: Dashboard trellis 同步修复：HUD 跳转切项目 chip + roots 自动发现与刷新
+**Branch**: `main`
+
+### Summary
+
+三合一修复：① findTrellisRoot 正向命中触发 onRootDiscovered → main 自动注册（跑过会话的项目自动进 Dashboard chips，收敛设置扫描制与 chips 注册制的可见差）；② roots 真变化后事件推送 dashboard:trellis-roots-changed，renderer 重拉 roots+active（one-shot 不破）；③ HUD 跳转按 payload.cwd 解析 owning root 切 selectedRoot，不 fallback 陈旧 overviewRoot，冷启动 await roots。全量 11781 fail 0；spec §4.5/HUD 段同步；另发现跳转 (taskPath,cwd) 双键与聚合行 cwd 同 root 不同路径不重合的边界，记 spec 未修。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `28a29ed2` | fix(trellis): Dashboard 项目 chips 自动发现 + HUD 跳转切对应项目 — session 解析 root 自动注册、roots 变更事件推送、跳转按 cwd 解析 owning root |
+
+### Status
+
+[OK] **Completed**

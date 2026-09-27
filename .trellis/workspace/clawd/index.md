@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 29
+- **Total Sessions**: 30
 - **Last Active**: 2026-09-28
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~816 | Active |
+| `journal-1.md` | ~838 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 30 | 2026-09-28 | Dashboard trellis 同步修复：HUD 跳转切项目 chip + roots 自动发现与刷新 | `28a29ed2` | `main` |
 | 29 | 2026-09-28 | 官方上游跟进：幽灵会话 issue + macOS acceptFirstMouse 补丁 | `26e331ff` | `main` |
 | 28 | 2026-09-28 | HUD 跳转保留面板修复 + 官方/二开问题归因排查 | `da51f580` | `main` |
 | 27 | 2026-09-27 | HUD 交互三轮迭代收敛（字号重设计→语义统一→绑定解耦→常驻图标回归官方）+ 主题版本门修复 | `dd0c04c6`, `b9d15397`, `6c7cf727`, `d79ce88d`, `664b1def`, `7921bfe1`, `7529271b`, `bd70862b`, `c83c0d45` | `main` |
