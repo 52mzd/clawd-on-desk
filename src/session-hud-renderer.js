@@ -663,12 +663,13 @@ function createRowForSession(session, now) {
   // 09-27 hud-trellis-icon-entry: back to the fork-official single-click
   // semantics — dismiss the unread bell, jump to the terminal (or explain
   // why not), and ack the completion fire-and-forget. The trellis panel
-  // moved to its own icon button; jumping away closes an open panel (the
-  // jump leaves the panel's context) before the repaint.
+  // moved to its own icon button; the jump keeps an open panel alive
+  // (09-28 hud-jump-keeps-panel) — the HUD anchor is unchanged and the
+  // panel's owner row stays expanded, so the panel is still there when
+  // the user comes back from the terminal.
   row.addEventListener("click", () => {
     unreadSessions.delete(session.id);
     if (canFocus) {
-      if (trellisPanel.open) closeTrellisPanel();
       render();
       window.sessionHudAPI.focusSession(session.id);
     } else {

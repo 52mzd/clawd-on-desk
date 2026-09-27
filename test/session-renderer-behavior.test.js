@@ -794,7 +794,7 @@ test("HUD icon click on a cwd without .trellis leaves no panel behind", async ()
     "a missing answer closes the panel before it ever shows");
 });
 
-test("HUD row single-click jump closes an open panel alongside", async () => {
+test("HUD row single-click jump keeps an open panel alive", async () => {
   const h = await loadHud([
     { id: "bound", agentId: "claude-code", cwd: "/proj", state: "working", badge: "done",
       updatedAt: Date.now(), canFocus: true, trellis:
@@ -807,10 +807,10 @@ test("HUD row single-click jump closes an open panel alongside", async () => {
   await byClass(h.root, "row")[0].dispatch("click");
   await flush();
   assert.deepStrictEqual(h.focusCalls, ["bound"], "the row click jumps to the terminal");
-  assert.equal(byClass(h.root, "trellis-task-panel").length, 0,
-    "jumping away closes the open panel — the jump leaves the panel's context");
-  assert.ok(!byClass(h.root, "trellis-btn")[0].classList.contains("active"),
-    "the button highlight drops with the panel");
+  assert.equal(byClass(h.root, "trellis-task-panel").length, 1,
+    "the jump keeps the panel open — the owner row stays expanded");
+  assert.ok(byClass(h.root, "trellis-btn")[0].classList.contains("active"),
+    "the button highlight stays with the panel");
 });
 
 test("two row single clicks are two jumps — double-click has no separate semantics", async () => {
