@@ -45,3 +45,13 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:23333/state   # 200 = 
 - `git diff -- src/ | grep "^+" | grep -iE "innerHTML"` 逐个核对：静态常量模板豁免，
   任何含运行时插值的必须改 createElement
 - CSS 类新增后核对「定义 ↔ renderer 引用」双向存在（死 CSS / 裸类名）
+
+## Manifest 消费纪律（09-27 教训）
+
+`implement.jsonl` / `check.jsonl` 里 curate 的 spec 是**实现输入**，不是任务收尾的仪式：
+动工前通读清单里每一份。check 阶段若发现自己引用过但没读过的 spec，按流程违规处理。
+
+实录：`trellis-detail-command` 裸类名（renderer 引用、CSS 无定义）违反本文「CSS 类定义↔
+引用双向存在」硬线，而本文当时正躺在 check.jsonl 里未被实现阶段读过——直到复查补读才
+被抓（0a26a9b6）。教训不是"加一条硬线"（硬线本来就在），而是**引用≠消费**：把 spec 写进
+manifest 的那一刻不等于它进入了实现者的工作记忆。
