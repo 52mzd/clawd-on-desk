@@ -858,3 +858,31 @@ issue #1069 预告评论后提两个官方 PR：#1071（acceptFirstMouse cherry-
 ### Status
 
 [OK] **Completed**
+
+
+## Session 32: HUD 多项目面板 + 过程级感知修复 + 全局 recency 排序
+<!-- trellis-session: v=2 fp=940a0e1a516d98a3 -->
+
+**Date**: 2026-09-28
+**Task**: HUD 多项目面板 + 过程级感知修复 + 全局 recency 排序
+**Branch**: `main`
+
+### Summary
+
+三重根因修复:jsonl 无 command 痕迹(降级 ws-only 第三行)+固定 512KB 尾窗(阶梯扩窗 512K-8MB)+渲染门槛绑死 command。readHudTaskPanel 多 root 分节(≤5 项目、节 cwd 跳转)。四处项目列表统一 recency 排序(readRootRecencies=max pointer last_seen_at, sessions 目录 mtime——实测 CLI 清空 sessions 后内容戳全灭,目录 mtime 记住最后增删)。用户验收:排序顺序、第三行 ws 信号、多项目分节均正常。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2e183206` | fix(hud): restore process-level trace and multi-project panel |
+| `58648edc` | docs(spec): trace 信号源实测修订 + 尾窗阶梯 + HUD 面板多项目契约 |
+| `a0a69d53` | feat(trellis): order project lists newest-touched first across HUD, dashboard and settings |
+| `a8fa1ebe` | docs(spec): record the recency-order contract for trellis project lists |
+| `bf137f2d` | fix(trellis): rank cleared sessions dirs by directory mtime |
+| `1684fa8d` | docs(spec): record the sessions-dir mtime signal in the recency contract |
+| `8c7e4fb9` | test(hud): cover the ws-only third line and fix the vm childElementCount stub |
+
+### Status
+
+[OK] **Completed**
