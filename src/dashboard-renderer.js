@@ -2847,42 +2847,21 @@ function buildTrellisSpecListGroup() {
 }
 
 // ── v7 R10: network relations group (left column, below spec) ──
+// 09-27 links-trim: vertical parent/child edges are no longer listed here —
+// the split list tree (groupTrellisTasks) already renders that nesting, so
+// this group carries only the horizontal relations the tree cannot show
+// (shared spec / referenced PRD).
 function trellisNetworkGroups() {
   const result = trellisNetwork.result;
   if (!result || result.status !== "ok") return [];
   const groups = [];
-  const edges = Array.isArray(result.edges) ? result.edges : [];
-  const byParent = new Map();
-  for (const edge of edges) {
-    if (!byParent.has(edge.parentTaskPath)) byParent.set(edge.parentTaskPath, []);
-    byParent.get(edge.parentTaskPath).push(edge.childTaskPath);
-  }
-  const nodeByTaskPath = new Map(
-    (Array.isArray(result.nodes) ? result.nodes : []).map((n) => [n.taskPath, n])
-  );
-  const refOf = (taskPath) => {
-    const node = nodeByTaskPath.get(taskPath);
-    return node
-      ? { taskPath, title: node.title, archived: node.archived }
-      : { taskPath, title: taskPath, archived: String(taskPath).includes("/archive/"), missing: true };
-  };
-  for (const [parentTaskPath, children] of [...byParent.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0])))) {
-    groups.push({
-      key: `v|${parentTaskPath}`,
-      label: t("dashboardTrellisLinksChildren").replace("{n}", String(children.length)),
-      sub: parentTaskPath || t("dashboardTrellisLinksMissing"),
-      members: [
-        ...(parentTaskPath ? [refOf(parentTaskPath)] : []),
-        ...children.map(refOf),
-      ],
-    });
-  }
   for (const group of Array.isArray(result.specGroups) ? result.specGroups : []) {
     groups.push({
       key: `s|${group.specPath}`,
       label: t("dashboardTrellisLinksSharedSpec"),
       sub: group.specPath,
       members: group.tasks.slice(),
+      truncated: !!group.truncated,
     });
   }
   for (const group of Array.isArray(result.prdGroups) ? result.prdGroups : []) {
@@ -2891,6 +2870,7 @@ function trellisNetworkGroups() {
       label: t("dashboardTrellisLinksSharedPrd"),
       sub: group.prdPath,
       members: [group.owner, ...group.tasks],
+      truncated: !!group.truncated,
     });
   }
   return groups;
@@ -2941,7 +2921,8 @@ function buildTrellisNetworkListGroup() {
     main.appendChild(groupTitle);
     main.appendChild(createText("span", "trellis-split-row-sub", group.sub));
     row.appendChild(main);
-    row.appendChild(createText("span", "trellis-split-row-side", String(group.members.length)));
+    row.appendChild(createText("span", "trellis-split-row-side",
+      group.truncated ? `${group.members.length}+` : String(group.members.length)));
     row.addEventListener("click", () => {
       trellisSplit.detailKind = "network";
       trellisSplit.networkGroupKey = group.key;
@@ -3562,6 +3543,9 @@ function buildTrellisNetworkGroupContent(key) {
     wrap.appendChild(trellisNetworkRefButton(ref));
   }
   pane.appendChild(wrap);
+  if (group.truncated) {
+    pane.appendChild(createText("div", "trellis-detail-hint", t("dashboardTrellisLinksTruncated")));
+  }
   return pane;
 }
 

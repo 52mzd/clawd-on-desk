@@ -2183,12 +2183,16 @@ describe("dashboard trellis v7 single view (R5–R7)", () => {
       ] }],
     ]);
     let netByRoot = new Map([
-      ["/proj/one", { status: "ok", nodes: [], edges: [
-        { parentTaskPath: ".trellis/tasks/one-p", childTaskPath: ".trellis/tasks/one-c", parentMissing: false },
-      ], specGroups: [], prdGroups: [], truncated: false }],
-      ["/proj/two", { status: "ok", nodes: [], edges: [
-        { parentTaskPath: ".trellis/tasks/two-p", childTaskPath: ".trellis/tasks/two-c", parentMissing: false },
-      ], specGroups: [], prdGroups: [], truncated: false }],
+      ["/proj/one", { status: "ok", nodes: [], edges: [], specGroups: [
+        { specPath: "guides/one-p.md", truncated: false, tasks: [
+          { taskPath: ".trellis/tasks/one-a", title: "One A", archived: false },
+        ] },
+      ], prdGroups: [], truncated: false }],
+      ["/proj/two", { status: "ok", nodes: [], edges: [], specGroups: [
+        { specPath: "guides/two-p.md", truncated: false, tasks: [
+          { taskPath: ".trellis/tasks/two-a", title: "Two A", archived: false },
+        ] },
+      ], prdGroups: [], truncated: false }],
     ]);
     const app = loadDashboard({
       sessions: [],
@@ -2286,7 +2290,7 @@ it("lists spec docs in the left-column group with status badges", async () => {
 });
 
 describe("dashboard trellis v7 R8 project drawers", () => {
-    it("lists relations in the left-column group and jumps on click", async () => {
+    it("lists horizontal relations only and jumps on click", async () => {
     const app = loadDashboard({
       sessions: [],
       rootsResult: { status: "ok", roots: ["/proj/one"] },
@@ -2299,8 +2303,15 @@ describe("dashboard trellis v7 R8 project drawers", () => {
         { taskPath: ".trellis/tasks/a", title: "Task A", archived: false, priority: null },
         { taskPath: ".trellis/tasks/kid", title: "Kid", archived: false, priority: null },
       ], edges: [
+        // Vertical edges stay in the payload but must NOT become rows here:
+        // the split list tree already nests parent/child (09-27 links-trim).
         { parentTaskPath: ".trellis/tasks/a", childTaskPath: ".trellis/tasks/kid", parentMissing: false },
-      ], specGroups: [], prdGroups: [], truncated: false },
+      ], specGroups: [
+        { specPath: "guides/panel.md", truncated: false, tasks: [
+          { taskPath: ".trellis/tasks/a", title: "Task A", archived: false },
+          { taskPath: ".trellis/tasks/kid", title: "Kid", archived: false },
+        ] },
+      ], prdGroups: [], truncated: false },
     });
     await flush();
     await switchToTrellis(app);
@@ -2317,9 +2328,11 @@ describe("dashboard trellis v7 R8 project drawers", () => {
     await flush();
     assert.deepEqual(app.networkOverviewCalls, [{ root: "/proj/one" }], "first expand lazy-loads");
     const rows = byClass(app.view, "trellis-network-row");
-    assert.equal(rows.length, 1, "one vertical group row");
-    assert.ok(textOf(rows[0]).includes(".trellis/tasks/a"),
-      "the group row carries its parent path");
+    assert.equal(rows.length, 1, "only the horizontal group row renders");
+    assert.ok(!textOf(rows[0]).includes(".trellis/tasks/a"),
+      "vertical parent paths no longer re-list in the relations group");
+    assert.ok(textOf(rows[0]).includes("guides/panel.md"),
+      "the group row carries its spec path");
     const side = byClass(rows[0], "trellis-split-row-side")[0];
     assert.ok(textOf(side).includes("2"), "the side carries the member count");
 
@@ -2329,7 +2342,7 @@ describe("dashboard trellis v7 R8 project drawers", () => {
     const pane = byClass(app.view, "trellis-split-detail")[0];
     assert.equal(byClass(pane, "trellis-network-group-content").length, 1);
     const members = byClass(pane, "trellis-network-ref");
-    assert.equal(members.length, 2, "parent + child");
+    assert.equal(members.length, 2, "both citing tasks");
 
     // Clicking a member jumps to that task in the split list.
     await members[1].dispatch("click");
@@ -2337,6 +2350,66 @@ describe("dashboard trellis v7 R8 project drawers", () => {
     assert.deepEqual(app.detailCalls, [{ taskPath: ".trellis/tasks/kid", cwd: "/proj/one" }]);
     assert.equal(byClass(app.view, "trellis-network-group-content").length, 0,
       "a task selection replaces the group view in the pane");
+  });
+
+  it("flags truncated relation members instead of hiding the cut silently", async () => {
+    const app = loadDashboard({
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/one"] },
+      activeResult: { status: "ok", tasks: [] },
+      archiveResult: { status: "ok", tasks: [] },
+      networkOverviewResult: { status: "ok", nodes: [], edges: [], specGroups: [
+        { specPath: "guides/panel.md", truncated: true, tasks: [
+          { taskPath: ".trellis/tasks/a", title: "Task A", archived: false },
+          { taskPath: ".trellis/tasks/b", title: "Task B", archived: false },
+        ] },
+      ], prdGroups: [], truncated: false },
+    });
+    await flush();
+    await switchToTrellis(app);
+
+    const netHead = byClass(app.view, "trellis-split-group-head")
+      .find((el) => textOf(el).includes(i18n.en.dashboardTrellisLinksGroup));
+    await netHead.dispatch("click");
+    await flush();
+
+    const rows = byClass(app.view, "trellis-network-row");
+    assert.equal(rows.length, 1);
+    assert.equal(textOf(byClass(rows[0], "trellis-split-row-side")[0]), "2+",
+      "the row side flags the cut");
+
+    await rows[0].dispatch("click");
+    await flush();
+    const pane = byClass(app.view, "trellis-split-detail")[0];
+    assert.ok(textOf(pane).includes(i18n.en.dashboardTrellisLinksTruncated),
+      "the group content spells out the truncation");
+  });
+
+  it("shows the empty hint when only vertical relations exist", async () => {
+    const app = loadDashboard({
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/one"] },
+      activeResult: { status: "ok", tasks: [
+        { taskPath: ".trellis/tasks/a", title: "Task A", phase: "execute", progress: null, parent: null, cwd: "/proj/one" },
+        { taskPath: ".trellis/tasks/kid", title: "Kid", phase: "plan", progress: null, parent: "a", cwd: "/proj/one" },
+      ] },
+      archiveResult: { status: "ok", tasks: [] },
+      networkOverviewResult: { status: "ok", nodes: [], edges: [
+        { parentTaskPath: ".trellis/tasks/a", childTaskPath: ".trellis/tasks/kid", parentMissing: false },
+      ], specGroups: [], prdGroups: [], truncated: false },
+    });
+    await flush();
+    await switchToTrellis(app);
+
+    const netHead = byClass(app.view, "trellis-split-group-head")
+      .find((el) => textOf(el).includes(i18n.en.dashboardTrellisLinksGroup));
+    await netHead.dispatch("click");
+    await flush();
+
+    assert.equal(byClass(app.view, "trellis-network-row").length, 0,
+      "vertical-only graphs produce no relation rows");
+    assert.ok(textOf(app.view).includes(i18n.en.dashboardTrellisLinksEmpty),
+      "the empty hint explains the absence");
   });
 
   it("shows the spec doc in the right pane when its row is clicked", async () => {

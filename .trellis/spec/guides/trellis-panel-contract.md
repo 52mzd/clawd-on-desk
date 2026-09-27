@@ -1132,7 +1132,7 @@ for (const [dir, relPath] of taskRelPaths) {
 默认收起，首次展开懒加载 `getTrellisSpecTree`；行=spec 文件（relPath +
 行数/待填/引用计数徽标），点击行右栏（`.trellis-split-detail`）渲染文档
 （`trellis-spec-doc-content`）。关联分组（`dashboardTrellisLinksGroup`）
-同理：行=关联组（父→子/共享规范/共享 PRD），点击右栏渲染组成员
+同理：行=关联组（共享规范/引用 PRD——09-27 links-trim 起纵向父子只在左栏树，不再入关联分组；组成员超 NETWORK_REF_MAX 时行侧 N+ 并在右栏提示截断），点击右栏渲染组成员
 （`trellis-network-group-content`），成员点击跳 `selectTrellisSplitTask`。
 project bar 的 📐/⛓ 按钮、panelOpen 的 spec/network 槽位、
 `.trellis-spec-split`/`.trellis-network-panel` CSS 均已删除（⚙ 管理抽屉
@@ -1200,7 +1200,9 @@ spec/PRD 组）。v7 R8 起取代旧的单任务 `dashboard:trellis-task-network
 （该通道、数据面 `readTaskNetwork`、详情卡 ⛓ 入口均已删除；关联是项目级
 视图，不是逐任务钻取）；v7 R10 起入口是左栏分组展开（懒加载），非按钮。纵向证据源**只有 task.json**；横向边用任务文档文本
 （prd/design/implement.md + implement/check.jsonl，
-`SPEC_REF_DOC_NAMES`）。
+`SPEC_REF_DOC_NAMES`）。（09-27 links-trim：payload
+仍含纵向 edges，但渲染层不再将其列为分组行——纵向父子唯一
+呈现面是左栏树。）
 
 **2. Signatures**：
 - activity：`readTaskNetworkOverview(root)` → `{status:"ok", nodes, edges,
