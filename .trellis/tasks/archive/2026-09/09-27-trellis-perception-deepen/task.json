@@ -1,0 +1,29 @@
+{
+  "id": "trellis-perception-deepen",
+  "name": "trellis-perception-deepen",
+  "title": "Trellis 感知深化：HUD 过程级 + 关联修剪",
+  "description": "父任务：HUD 过程级感知（trellis 指令/步骤）与 Dashboard 关联分组修剪，两个可独立验收的子交付",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "clawd",
+  "assignee": "clawd",
+  "createdAt": "2026-09-27",
+  "completedAt": "2026-09-27",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-27-hud-process-awareness",
+    "09-27-links-group-trim"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
