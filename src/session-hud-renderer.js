@@ -25,12 +25,10 @@ function isHudSession(session) {
 
 // Native title tooltips never appear in the HUD host (non-activating
 // transparent window suppresses macOS help tags), and floating hover cards
-// are cramped. Click the trellis chip to expand the HUD with an inline
-// detail row under the session line instead.
-// 09-27 hud-task-panel-jump: the chip opens ONE panel below the session
-// rows (project-scoped task list) instead of a per-session detail row. The
-// header keeps the old detail-row content (task name / guide / command), so
-// no information is lost — the list is the addition.
+// are cramped. 09-27 hud-trellis-icon-entry: the trellis chip is purely
+// informational (label + title tooltip); the panel below the session rows
+// (project-scoped task list) opens from the dedicated icon button beside
+// the pin — see createTrellisToggleButton.
 const trellisPanel = {
   open: false,
   sessionId: null,
@@ -93,29 +91,8 @@ function toggleTrellisPanel(session) {
   render();
 }
 
-// 09-27 hud-panel-readability: clicking blank HUD space toggles the trellis
-// panel too, anchored to the most recent cwd-bearing session — the trellis
-// chip stays as a second entry point. 09-27 hud-click-semantics unified the
-// row clicks: single-click toggles the panel (the fetch's "missing" answer
-// closes it for non-trellis cwds), double-click is the ONLY focus-terminal
-// entry (see createRowForSession). The open panel
-// itself is content, not blank space — clicks inside its headings/padding
-// must not close it.
-const HUD_INTERACTIVE_CLASS_RE = /(?:^|\s)(row|pin-btn|trellis-task-panel)(?:\s|$)/;
-
-function isHudInteractiveTarget(node) {
-  // vm DOM has no closest(); walk parentNode manually. A detached node (no
-  // parentNode chain) simply stops early — same verdict as the real DOM.
-  let current = node || null;
-  while (current && current !== hudEl) {
-    if (current.tagName === "BUTTON") return true;
-    const cls = typeof current.className === "string" ? current.className : "";
-    if (HUD_INTERACTIVE_CLASS_RE.test(cls)) return true;
-    current = current.parentNode;
-  }
-  return false;
-}
-
+// 09-27 hud-trellis-icon-entry: anchors the trellis icon button's toggle to
+// the most recent cwd-bearing session — the panel's ONLY entry now.
 function lastBoundExpandedSession() {
   const sessions = orderedHudSessions(snapshot);
   const { expanded } = splitHudLayout(sessions);
@@ -127,15 +104,6 @@ function lastBoundExpandedSession() {
     session && typeof session.cwd === "string" && session.cwd
   ) || null;
 }
-
-function onHudContainerClick(event) {
-  if (isHudInteractiveTarget(event && event.target)) return;
-  const anchor = lastBoundExpandedSession();
-  if (!anchor) return; // no cwd-bearing session → nothing to anchor a panel to
-  toggleTrellisPanel(anchor);
-}
-
-let hudContainerClickBound = false;
 
 function trellisPanelTaskRow(entry, archived) {
   const row = document.createElement("div");
@@ -235,12 +203,6 @@ function createTrellisPanel(session) {
     }
   });
   panel.appendChild(all);
-  // 09-27 hud-click-semantics: since double-click is the only jump entry, the
-  // panel footer advertises it (static hint, not a click target).
-  const hint = document.createElement("div");
-  hint.className = "trellis-panel-hint";
-  hint.textContent = t("sessionHudTrellisPanelDblclickHint");
-  panel.appendChild(hint);
   return panel;
 }
 
@@ -474,6 +436,9 @@ const FOCUS_UNAVAILABLE_SVG = `<svg width="11" height="11" viewBox="0 0 24 24" f
 const FOLDER_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h6l2 2h10v9H3z"/><path d="M3 7V5h6l2 2"/></svg>`;
 const PIN_SVG_FILLED = `<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M14 4l6 6-4 1-3 3 1 5-2 1-4-4-5 5-1-1 5-5-4-4 1-2 5 1 3-3 1-4z"/></svg>`;
 const PIN_SVG_OUTLINE = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M14 4l6 6-4 1-3 3 1 5-2 1-4-4-5 5-1-1 5-5-4-4 1-2 5 1 3-3 1-4z"/></svg>`;
+// Three-node tree/branch lines — the trellis workflow glyph, same stroke
+// family as PIN_SVG_OUTLINE so the two HUD corner buttons read as a pair.
+const TRELLIS_SVG = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="2.4"/><circle cx="5.5" cy="18.5" r="2.4"/><circle cx="18.5" cy="18.5" r="2.4"/><path d="M12 7.5V11"/><path d="M12 11l-5 5"/><path d="M12 11l5 5"/></svg>`;
 
 function updateUnread(sessions) {
   const now = Date.now();
@@ -608,14 +573,12 @@ function createRowForSession(session, now) {
     chip.className = `trellis-chip ${trellisInfo.cls}`;
     chip.textContent = trellisInfo.label;
     // Native title tooltips never show in the HUD host (non-activating
-    // transparent window suppresses system help tags on macOS). Click the
-    // chip to expand the HUD with an inline detail row under this line.
+    // transparent window suppresses system help tags on macOS), so the
+    // phase/progress/command context rides this title. The chip is
+    // informational only (09-27 hud-trellis-icon-entry): clicks bubble to
+    // the row's official focus handler; the panel opens from the trellis
+    // icon button beside the pin.
     chip.title = trellisInfo.title;
-    chip.addEventListener("click", (event) => {
-      event.stopPropagation();
-      toggleTrellisPanel(session);
-    });
-    if (trellisPanel.open && trellisPanel.sessionId === session.id) chip.classList.add("trellis-chip-active");
     right.appendChild(chip);
     hasRightContent = true;
   }
@@ -697,37 +660,25 @@ function createRowForSession(session, now) {
   row.appendChild(left);
   if (hasRightContent) row.appendChild(right);
 
-  // 09-27 hud-click-semantics: single-click on ANY session row toggles the
-  // trellis panel anchored to that row — no active-task binding required
-  // (hud-panel-entry: bindings vanish between tasks, the panel reads from
-  // disk). A cwd without .trellis answers "missing" and the panel closes.
-  // Double-click is the ONLY focus-terminal entry regardless of binding.
+  // 09-27 hud-trellis-icon-entry: back to the fork-official single-click
+  // semantics — dismiss the unread bell, jump to the terminal (or explain
+  // why not), and ack the completion fire-and-forget. The trellis panel
+  // moved to its own icon button; jumping away closes an open panel (the
+  // jump leaves the panel's context) before the repaint.
   row.addEventListener("click", () => {
-    // A single click means the row was noticed — dismiss the unread bell
-    // and ack the completion right here (bell-dismiss and panel-open do
-    // not conflict), then toggle the panel. Binding is not required: the
-    // panel fetch answers "missing" for a cwd without .trellis and the
-    // panel closes itself — no visible residue on non-trellis projects.
     unreadSessions.delete(session.id);
+    if (canFocus) {
+      if (trellisPanel.open) closeTrellisPanel();
+      render();
+      window.sessionHudAPI.focusSession(session.id);
+    } else {
+      showSessionFeedback(session.id, focusUnavailableTooltip(session));
+    }
     if (window.sessionHudAPI && typeof window.sessionHudAPI.ackCompletion === "function") {
       Promise.resolve(window.sessionHudAPI.ackCompletion(session.id)).catch((err) => {
         console.warn("ack completion threw:", err);
       });
     }
-    toggleTrellisPanel(session);
-  });
-
-  row.addEventListener("dblclick", () => {
-    if (!canFocus) {
-      showSessionFeedback(session.id, focusUnavailableTooltip(session));
-      return;
-    }
-    // The terminal jump is the HUD's only jump-out, on double click; an
-    // open panel closes alongside. Unread dismissal already ran on the
-    // first click of this double click.
-    closeTrellisPanel();
-    render();
-    window.sessionHudAPI.focusSession(session.id);
   });
 
   return row;
@@ -773,14 +724,26 @@ function createPinButton(pinned) {
   return btn;
 }
 
+// 09-27 hud-trellis-icon-entry: the trellis panel's ONLY entry — a permanent
+// icon button beside the pin. Row clicks are back to the fork-official jump
+// semantics, so the project task panel lives behind this button.
+function createTrellisToggleButton() {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = trellisPanel.open ? "trellis-btn active" : "trellis-btn";
+  btn.innerHTML = TRELLIS_SVG;
+  btn.title = t("sessionHudTrellisToggleTooltip");
+  btn.setAttribute("aria-label", t("sessionHudTrellisToggleTooltip"));
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    // No cwd-bearing session → nothing to anchor a panel to, no-op.
+    const anchor = lastBoundExpandedSession();
+    if (anchor) toggleTrellisPanel(anchor);
+  });
+  return btn;
+}
+
 function render() {
-  // Container-level blank-space toggle (bound once; the real DOM dedupes a
-  // repeated addEventListener of the same reference, but the vm test stub
-  // accumulates — the guard keeps both worlds at exactly one listener).
-  if (!hudContainerClickBound) {
-    hudContainerClickBound = true;
-    hudEl.addEventListener("click", onHudContainerClick);
-  }
   const sessions = orderedHudSessions(snapshot);
   const currentIds = new Set(sessions.map((session) => session.id));
   for (const sessionId of pendingFolderSessions) {
@@ -804,10 +767,11 @@ function render() {
   for (const session of expanded) {
     hudEl.appendChild(createRowForSession(session, now));
   }
-  // The panel lives BELOW all session rows (project-scoped, opened from any
-  // row's single click). Its owner just has to still be an expanded row —
-  // an active-task binding is NOT required (the task may have been archived
-  // while the panel was open; the list keeps serving from disk).
+  // The panel lives BELOW all session rows (project-scoped, opened from the
+  // trellis icon button beside the pin). Its owner just has to still be an
+  // expanded row — an active-task binding is NOT required (the task may
+  // have been archived while the panel was open; the list keeps serving
+  // from disk).
   if (trellisPanel.open) {
     const owner = expanded.find((session) => session.id === trellisPanel.sessionId);
     if (owner) {
@@ -822,6 +786,7 @@ function render() {
   }
 
   hudEl.appendChild(createPinButton(snapshot.hudPinned === true));
+  hudEl.appendChild(createTrellisToggleButton());
 }
 
 function updateElapsedLabels() {

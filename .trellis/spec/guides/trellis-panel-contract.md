@@ -384,9 +384,12 @@ activity.getKnownRoots()              // → string[]（本进程正向缓存的
                  nextStep?: string,
                  command?: string, workflowStatus?: string, workflowNextAction?: string }`
 
-**HUD 任务面板（09-27 hud-task-panel-jump）**：绑定会话的 chip 点击打开
+**HUD 任务面板（09-27 hud-task-panel-jump；09-27 hud-trellis-icon-entry 起入口收敛）**：
+HUD 条 pin 按钮旁的**常驻 trellis 图标按钮**（`createTrellisToggleButton`）单击打开
 HUD 底部面板（`createTrellisPanel`，替代旧 per-session 详情行——原三行内容上移为
-面板头）。数据走 `session-hud:trellis-panel`（invoke，payload 严格单键 `{cwd}`，
+面板头）——图标是面板**唯一入口**（trellis chip 纯信息：渲染 + title tooltip，
+无 click listener 无 active 态；行单击回归 fork 官方跳终端语义，见 §4.1）。
+数据走 `session-hud:trellis-panel`（invoke，payload 严格单键 `{cwd}`，
 activity 侧 `readHudTaskPanel` 复用共享 per-root 遍历 + `listArchivedTasks`，
 active 全量 + 归档 newest-first 截 8，cwd 过 `isTrustedTrellisCwd`）；
 跳转走 `session-hud:open-trellis-task`（send，payload 严格双键，taskPath 须以
@@ -464,8 +467,9 @@ entry.id 直接当外部工具记录 id 用的代码都会静默失配（HUD 徽
   implement.md 读取（存在或 ENOENT）与 task.json 同轮共享 per-round
   `taskReads` 缓存（同任务去重，+1 readFile/轮）；无 .trellis 根时
   零新增 IO；parallelCount 的 30s root summary **不**读 implement.md。
-- **HUD Trellis 详情行**（点击展开，取代 hover tooltip）：点 chip 在
-  该会话行下方插入 `.trellis-detail` 弹性行，显示任务名 + 引导行。
+- **HUD Trellis 面板高度**（09-27 hud-trellis-icon-entry 起 chip 纯信息，
+  面板由 pin 旁 trellis 图标按钮打开）：面板在会话行下方插入
+  `.trellis-task-panel` 弹性块，显示任务名 + 引导行 + 任务列表。
   三个硬约束：① **高度双轨制**——`computeHudHeight(rowCount,
   detailExtra)` 只认固定行高×34px（09-27 重设计），弹性展开高度必须由渲染层实测
   （`offsetHeight`+margin）经 `session-hud:set-trellis-detail-height`
@@ -496,26 +500,27 @@ entry.id 直接当外部工具记录 id 用的代码都会静默失配（HUD 徽
 - **HUD 全局字号重设计（09-27 hud-panel-readability）**：字号一律引
   `:root` token（`--hud-fs-main: 14px` / `--hud-fs-sub: 12px` /
   `--hud-fs-badge: 11px`，style 测试守卫零裸值）；行高 34，宽度常量
-  270/215/355/290（普通/紧凑/带标签/带标签紧凑）。**整面触发**：HUD
-  容器空白点击即 toggle 面板，锚定 expanded 中**最近活跃**的 **cwd
-  承载**会话（orderedIds 最新在前，取第一个有 cwd 者——**不要求绑定**，
-  09-27 hud-panel-entry 起）；会话行/pin/面板内容区
-  （`trellis-task-panel` 整块）是交互面，不参与 toggle——面板内容
-  点击不得误关自身。**行点击统一语义（09-27 hud-click-semantics；
-  hud-panel-entry 与绑定解耦）**：会话行**单击** = 清完成铃铛 +
-  `ackCompletion`（fire-and-forget，"注意到
-  了"语义，与开面板不冲突）后 toggle 面板锚定该行（**不要求 trellis
-  绑定**——绑定随任务归档消失，面板数据本就从磁盘读；fetch 答
-  `missing`（cwd 无 .trellis）时面板自动关，零残留，非 trellis 项目
-  单击无可见副作用）；**双击** = 跳
-  终端的**唯一**入口（`focusSession`，不分有无绑定），跳转顺手关掉开着
-  的面板，不重复未读清理（单击已触发）；
-  `canFocus=false` 行双击给不可用反馈。**面板存活（hud-panel-entry）**：
-  开着的面板只要求 owner session 仍是 expanded 行，**不要求**
+  270/215/355/290（普通/紧凑/带标签/带标签紧凑）；行右侧
+  `padding-right: 44px` 为两个悬浮角按钮（pin + trellis 图标）留位。
+  **入口收敛（09-27 hud-trellis-icon-entry）**：面板唯一入口是 pin
+  按钮旁的**常驻 trellis 图标按钮**（`createTrellisToggleButton`），
+  单击 = `toggleTrellisPanel(lastBoundExpandedSession())`——锚定
+  expanded 中**最近活跃**的 **cwd 承载**会话（orderedIds 最新在前，
+  取第一个有 cwd 者——**不要求绑定**，hud-panel-entry 起解耦）；无
+  cwd 锚点时点击无操作；面板开着时按钮 `.active` 高亮；tooltip
+  `sessionHudTrellisToggleTooltip` ×7 语言。**行点击回归 fork 官方**：
+  会话行**单击** = `unreadSessions.delete` → `render()` → `canFocus` ?
+  `focusSession`（跳转顺手关掉开着的面板——跳走即离开面板语境） :
+  `showSessionFeedback`（不可聚焦反馈）→ fire-and-forget
+  `ackCompletion`（"注意到了"语义）；**不开面板**。**双击无独立语义**
+  （无 dblclick handler，两次单击的自然结果）；HUD 容器**空白点击
+  不触发面板**；trellis chip 纯信息（渲染 + title tooltip，无 click
+  listener、无 active 态）。**面板存活（hud-panel-entry）**：开着的
+  面板只要求 owner session 仍是 expanded 行，**不要求**
   `owner.trellis` 绑定——任务归档（pointer 清空）后列表继续从磁盘
-  服务；owner 会话本身消失才自动关。折叠行（"其他 N 个"）保留单击
-  openDashboard，不参与本语义。面板底部 `trellis-panel-hint` 常驻双击
-  提示（`sessionHudTrellisPanelDblclickHint` ×7 语言，静态非交互）。
+  服务；owner 会话本身消失才自动关；fetch 答 `missing`（cwd 无
+  .trellis）时面板自动关，零残留。折叠行（"其他 N 个"）保留单击
+  openDashboard，不参与本语义。
 - detailExtraPx 只能来自渲染层实测，main 侧不预测、不缓存跨快照
 - 单向流：renderer 实测 → IPC → main 重算 bounds → setBounds
 - extra=0 时公式与旧版完全一致（无展开即零行为变化，向后兼容）

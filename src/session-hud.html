@@ -65,14 +65,16 @@ body { padding: 2px 3px 8px; }
   position: relative;
 }
 
+/* Two floating corner buttons (pin + trellis toggle) share this strip; rows
+   reserve space so neither covers the right-side chips. */
 .hud.has-pin .row {
-  padding-right: 28px;
+  padding-right: 44px;
 }
 
-.pin-btn {
+.pin-btn,
+.trellis-btn {
   position: absolute;
   top: 4px;
-  right: 4px;
   width: 16px;
   height: 16px;
   padding: 0;
@@ -89,7 +91,14 @@ body { padding: 2px 3px 8px; }
   transition: opacity 100ms ease, background 100ms ease, color 100ms ease;
 }
 
-.pin-btn:hover {
+.pin-btn { right: 4px; }
+
+/* 09-27 hud-trellis-icon-entry: the trellis panel's only entry, beside the
+   pin; highlighted while its panel is open. */
+.trellis-btn { right: 24px; }
+
+.pin-btn:hover,
+.trellis-btn:hover {
   opacity: 1;
   background: rgba(0, 0, 0, 0.06);
 }
@@ -99,8 +108,14 @@ body { padding: 2px 3px 8px; }
   color: #f59e0b;
 }
 
+.trellis-btn.active {
+  opacity: 1;
+  color: var(--done);
+}
+
 @media (prefers-color-scheme: dark) {
-  .pin-btn:hover {
+  .pin-btn:hover,
+  .trellis-btn:hover {
     background: rgba(255, 255, 255, 0.10);
   }
 }
@@ -336,13 +351,6 @@ body { padding: 2px 3px 8px; }
   cursor: pointer;
   text-decoration: underline;
 }
-/* 09-27 hud-click-semantics: static footer hint (double-click = jump);
-   same muted weight as .trellis-panel-all but not interactive. */
-.trellis-panel-hint {
-  font-size: var(--hud-fs-sub);
-  opacity: 0.6;
-  margin-top: 4px;
-}
 
 @media (prefers-color-scheme: dark) {
   .chip-thinking { background: rgba(99, 102, 241, 0.20); color: #818cf8; }
@@ -425,14 +433,6 @@ body { padding: 2px 3px 8px; }
   .unread-bell svg {
     animation: none;
   }
-}
-.trellis-chip {
-  cursor: pointer;
-}
-.trellis-chip-active {
-  background: #2f6feb;
-  border-color: #2f6feb;
-  color: #fff;
 }
 .trellis-detail {
   display: flex;

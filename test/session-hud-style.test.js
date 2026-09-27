@@ -174,8 +174,8 @@ describe("session HUD visual shell", () => {
     assert.match(sessionHudHtml, /\.hud\s*\{[\s\S]*background:\s*var\(--hud-bg\);[\s\S]*\}/);
   });
 
-  it("reserves row-level space for the auto-hide pin button", () => {
-    assert.match(sessionHudHtml, /\.hud\.has-pin\s+\.row\s*\{[\s\S]*padding-right:\s*28px;[\s\S]*\}/);
+  it("reserves row-level space for the two floating corner buttons (pin + trellis toggle)", () => {
+    assert.match(sessionHudHtml, /\.hud\.has-pin\s+\.row\s*\{[\s\S]*padding-right:\s*44px;[\s\S]*\}/);
     assert.doesNotMatch(sessionHudHtml, /\.hud\.has-pin\s+\.row\s+\.right\s*\{[\s\S]*padding-right:/);
   });
 
@@ -337,7 +337,7 @@ describe("HUD global type scale (09-27 hud-panel-readability)", () => {
   it("sources every font-size from the tokens — no bare px values left", () => {
     assert.doesNotMatch(sessionHudHtml, /font-size:\s*\d/);
     const refs = sessionHudHtml.match(/font-size:\s*var\(--hud-fs-(?:main|sub|badge)\)/g) || [];
-    assert.ok(refs.length >= 12, `expected >= 12 token-referenced font-sizes, got ${refs.length}`);
+    assert.ok(refs.length >= 11, `expected >= 11 token-referenced font-sizes, got ${refs.length}`);
   });
 
   it("grew the row height, panel cap and trellis dot with the type scale", () => {
@@ -355,5 +355,31 @@ describe("HUD trellis detail command line (09-27 hud-process-awareness)", () => 
     // (guarded here so refactors keep the conditional).
     assert.match(sessionHudRenderer, /if \(info\.command\)/);
     assert.match(sessionHudRenderer, /lines\.slice\(2\)/);
+  });
+});
+
+describe("HUD panel entry is the trellis icon button only (09-27 hud-trellis-icon-entry)", () => {
+  it("renders the dedicated toggle button beside the pin", () => {
+    assert.match(sessionHudRenderer, /function createTrellisToggleButton\(\)/);
+    assert.match(sessionHudRenderer, /toggleTrellisPanel\(anchor\)/);
+    assert.match(sessionHudRenderer, /sessionHudTrellisToggleTooltip/);
+    assert.match(sessionHudHtml, /\.trellis-btn\s*\{/);
+    assert.match(sessionHudHtml, /\.trellis-btn\.active\s*\{/);
+  });
+
+  it("keeps rows on the official semantics — no dblclick handler, no blank-space toggle, no chip entry", () => {
+    // Row single-click is the fork-official jump; double-click has no
+    // separate handler, HUD blank space opens nothing, and the trellis chip
+    // is informational only (no click listener, no active highlight).
+    assert.doesNotMatch(sessionHudRenderer, /addEventListener\("dblclick"/);
+    assert.doesNotMatch(sessionHudRenderer, /onHudContainerClick|isHudInteractiveTarget|HUD_INTERACTIVE_CLASS_RE/);
+    assert.doesNotMatch(sessionHudRenderer, /trellis-chip-active/);
+    assert.doesNotMatch(sessionHudHtml, /trellis-chip-active/);
+    assert.doesNotMatch(sessionHudHtml, /\.trellis-chip\s*\{\s*cursor:\s*pointer/);
+  });
+
+  it("drops the panel footer dblclick hint everywhere", () => {
+    assert.doesNotMatch(sessionHudRenderer, /trellis-panel-hint/);
+    assert.doesNotMatch(sessionHudHtml, /trellis-panel-hint/);
   });
 });
