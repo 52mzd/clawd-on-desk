@@ -124,6 +124,8 @@ function createHarness(options = {}) {
     sendToSettings: (channel, payload) => progress.push([channel, payload]),
     // Phase-5 digest source for the scan payload (see withActiveTasks).
     ...("getActivityByProject" in options ? { getActivityByProject: options.getActivityByProject } : {}),
+    // 09-28 recency reader for the scan order (see sortScanByRecency).
+    ...("readRootRecencies" in options ? { readRootRecencies: options.readRootRecencies } : {}),
     // The trust gate is fail-closed in production; these tests exercise the
     // handler bodies, so they opt in with a permissionless guard. Passing
     // `isTrustedEvent: null` explicitly keeps the guard absent.
@@ -206,6 +208,47 @@ describe("trellis IPC registration", () => {
     assert.deepStrictEqual(result.projects.map((p) => p.path), [projectPath]);
     assert.strictEqual(h.cli.calls.fetchRemoteChannels, 1);
     assert.strictEqual(result.projects[0].platforms[0], "claude-code");
+  });
+
+  it("scan lists projects, scans and roots newest-touched first (09-28 recency order)", async () => {
+    const rootA = makeTmpDir();
+    const alpha = makeProject(rootA, "alpha");
+    const rootB = makeTmpDir();
+    const beta = makeProject(rootB, "beta");
+    const readRootRecencies = async (trellisDirs) => {
+      const map = new Map();
+      for (const dir of trellisDirs) {
+        map.set(dir, dir === path.join(beta, ".trellis") ? 200 : 100);
+      }
+      return map;
+    };
+    const h = createHarness({ roots: [rootA, rootB], readRootRecencies });
+    const result = await h.ipcMain.invoke("settings:trellis-scan");
+    assert.strictEqual(result.status, "ok");
+    // Storage order is rootA/alpha first; the recency order flips both the
+    // root-level arrays and the project list.
+    assert.deepStrictEqual(result.projects.map((p) => p.path), [beta, alpha]);
+    assert.deepStrictEqual(result.roots, [rootB, rootA]);
+    assert.deepStrictEqual(result.scans.map((s) => s.root), [rootB, rootA]);
+  });
+
+  it("scan keeps the stored order when the recency reader throws or is absent", async () => {
+    const root = makeTmpDir();
+    makeProject(root, "alpha");
+    makeProject(root, "beta");
+    const plain = createHarness({ roots: [root] });
+    const plainResult = await plain.ipcMain.invoke("settings:trellis-scan");
+    const throwing = createHarness({
+      roots: [root],
+      readRootRecencies: async () => { throw new Error("boom"); },
+    });
+    const throwingResult = await throwing.ipcMain.invoke("settings:trellis-scan");
+    assert.strictEqual(throwingResult.status, "ok");
+    assert.deepStrictEqual(
+      throwingResult.projects.map((p) => p.path),
+      plainResult.projects.map((p) => p.path),
+      "a throwing reader must degrade to the stored order, not fail the scan"
+    );
   });
 
   it("ships the platform catalog so the renderer needs no local copy", async () => {

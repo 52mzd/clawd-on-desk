@@ -57,6 +57,12 @@ class FakeElement {
     });
     return child;
   }
+  // Standard DOM live count — createTrellisPanel's "list has content" gate
+  // reads it; without the getter the gate sees undefined and always appends
+  // the empty hint, diverging the vm DOM from the real one.
+  get childElementCount() {
+    return this.children.length;
+  }
   replaceChildren(...children) {
     this.children = children;
     for (const child of children) {
@@ -281,10 +287,12 @@ async function loadHud(sessions, openResult = { status: "ok" }, panelResult = nu
       openCalls.push(["getTrellisPanel", payload]);
       if (typeof panelResult === "function") return panelResult(payload);
       if (panelResult) return panelResult;
-      return { status: "ok", active: [
-        { taskPath: ".trellis/tasks/09-27-x", title: "Task X", phase: "execute", progress: { done: 1, total: 3 } },
-      ], archived: [
-        { taskPath: ".trellis/tasks/archive/2026-09/09-20-old", title: "Old", completedAt: "2026-09-20T10:00:00.000Z" },
+      return { status: "ok", projects: [
+        { cwd: "/proj", name: "proj", active: [
+          { taskPath: ".trellis/tasks/09-27-x", title: "Task X", phase: "execute", progress: { done: 1, total: 3 } },
+        ], archived: [
+          { taskPath: ".trellis/tasks/archive/2026-09/09-20-old", title: "Old", completedAt: "2026-09-20T10:00:00.000Z" },
+        ] },
       ] };
     },
     openTrellisTask: (payload) => { openCalls.push(["openTrellisTask", payload]); },
@@ -692,6 +700,62 @@ test("HUD trellis icon button is the sole panel entry; panel rows jump to the da
   assert.equal(byCls(root, "trellis-task-panel").length, 0, "second icon click closes");
   assert.ok(!byCls(root, "trellis-btn")[0].classList.contains("active"),
     "closing the panel drops the highlight");
+});
+
+test("HUD trellis panel renders one section per project; rows jump with their own cwd", async () => {
+  const { root, openCalls } = await loadHud([
+    { id: "s1", agentId: "claude-code", cwd: "/proj", state: "working", trellis:
+      { taskPath: ".trellis/tasks/09-27-cur", title: "Current", phase: "execute", progress: { done: 1, total: 2 }, parallelCount: 1 } },
+  ], { status: "ok" }, { status: "ok", projects: [
+    { cwd: "/proj", name: "proj", active: [
+      { taskPath: ".trellis/tasks/09-27-x", title: "Task X", phase: "execute", progress: { done: 1, total: 3 } },
+    ], archived: [] },
+    { cwd: "/other/app", name: "app", active: [], archived: [
+      { taskPath: ".trellis/tasks/archive/2026-09/09-20-old", title: "Old", completedAt: "2026-09-20T10:00:00.000Z" },
+    ] },
+  ] });
+  const byCls = (el, cls) => {
+    const out = [];
+    if (el.classList && el.classList.contains(cls)) out.push(el);
+    for (const child of (el.children || [])) out.push(...byCls(child, cls));
+    return out;
+  };
+  const btn = byCls(root, "trellis-btn")[0];
+  await btn.dispatch("click");
+  await flush();
+  const heads = byCls(root, "trellis-panel-project");
+  assert.deepEqual(heads.map((el) => el.textContent), ["proj", "app"],
+    "one project section header per project, anchor first");
+  assert.strictEqual(heads[1].title, "/other/app", "the full cwd rides the section header tooltip");
+  const rows = byCls(root, "trellis-panel-row");
+  assert.strictEqual(rows.length, 2);
+  (rows[1].dispatch ? rows[1].dispatch("click") : rows[1].click());
+  assert.ok(openCalls.some((c) => c[0] === "openTrellisTask"
+    && c[1] && c[1].taskPath === ".trellis/tasks/archive/2026-09/09-20-old"
+    && c[1].cwd === "/other/app"),
+    "a row from the second project's section jumps with THAT project's cwd, not the anchor's");
+});
+
+test("HUD trellis panel header renders the workflow-state line when no command exists (09-28)", async () => {
+  const { root } = await loadHud([
+    { id: "s1", agentId: "claude-code", cwd: "/proj", state: "working", trellis:
+      { taskPath: ".trellis/tasks/09-27-cur", title: "Current", phase: "execute", progress: { done: 1, total: 2 }, parallelCount: 1,
+        workflowStatus: "planning", workflowNextAction: "Load `trellis-brainstorm`; stay in planning" } },
+  ]);
+  const byCls = (el, cls) => {
+    const out = [];
+    if (el.classList && el.classList.contains(cls)) out.push(el);
+    for (const child of (el.children || [])) out.push(...byCls(child, cls));
+    return out;
+  };
+  await byCls(root, "trellis-btn")[0].dispatch("click");
+  await flush();
+  const guides = byCls(byCls(root, "trellis-task-panel")[0], "trellis-detail-guide");
+  assert.strictEqual(guides.length, 2, "hint row plus the ws-only third row");
+  assert.strictEqual(guides[0].textContent, "step 1/2", "the step hint keeps the second line");
+  assert.strictEqual(guides[1].textContent,
+    "planning — Load `trellis-brainstorm`; stay in planning",
+    "ws-only renders 'Status — Next-Action' passthrough (no command, no i18n key)");
 });
 
 test("HUD trellis panel outlives its binding; closes when the owner session goes", async () => {

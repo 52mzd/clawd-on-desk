@@ -7,7 +7,8 @@
 // confined to `<projectRoot>/.trellis/`; this module never writes, spawns,
 // or touches the network. One addition (09-27 hud-process-awareness): the
 // bound session's Claude Code transcript tail is read (open/stat/read, a
-// bounded ≤512KB window per bound claude session per round) from
+// widening tail ladder per bound claude session per round — 512KB start,
+// 8MB cap, widened only while no signal is found) from
 // `~/.claude/projects/` for process-level HUD hints — still read-only.
 //
 // Polling shape (design D3): a self-scheduling setTimeout chain modelled on
@@ -430,7 +431,16 @@ function createTrellisActivity(options) {
   // this session) — extraction ONLY accepts those two message shapes,
   // never a raw substring scan over the whole file. Any drift (rotated
   // file, format change, tail half-line) degrades to null silently.
-  const TRACE_TAIL_BYTES = 512 * 1024;
+  // 09-28 hud-multi-project-audit: a fixed 512KB tail window loses the
+  // user-turn boundary once one agent turn of large tool output exceeds it
+  // (measured: 1.17MB of output on this repo's own 8.7MB session pushed the
+  // latest workflow-state attachment out of the window). Ladder instead:
+  // start small so the common case stays one 512KB read per round, widen
+  // only while every signal is null, stop at the first window where either
+  // signal family hits — command line and workflow-state attachment are
+  // written adjacent in the same user turn, so a larger window cannot
+  // split them apart.
+  const TRACE_TAIL_STEPS = [512, 1024, 2048, 4096, 8192]; // KB
   const TRACE_COMMAND_RE = /<command-name>\s*\/?trellis[:-]([A-Za-z0-9-]+)/;
   const TRACE_WS_MARKER = "UserPromptSubmit hook additional context: <workflow-state>";
   const TRACE_STATUS_RE = /^Status:\s*(\S+)\s*$/m;
@@ -529,15 +539,17 @@ function createTrellisActivity(options) {
       try {
         const file = path.join(homeDirFn(), ".claude", "projects",
           claudeProjectsDirName(session.cwd), `${rawId}.jsonl`);
-        const tail = await readTail(file, TRACE_TAIL_BYTES);
-        if (!tail) return null;
-        // The first segment after the byte-window split may be a
-        // write-in-progress half line — drop it before parsing.
-        const nl = tail.indexOf("\n");
-        const body = nl === -1 ? "" : tail.slice(nl + 1);
-        const trace = extractSessionTrace(body);
-        if (!trace.command && !trace.workflowStatus && !trace.workflowNextAction) return null;
-        return trace;
+        for (const kb of TRACE_TAIL_STEPS) {
+          const tail = await readTail(file, kb * 1024);
+          if (!tail) continue;
+          // The first segment after the byte-window split may be a
+          // write-in-progress half line — drop it before parsing.
+          const nl = tail.indexOf("\n");
+          const body = nl === -1 ? "" : tail.slice(nl + 1);
+          const trace = extractSessionTrace(body);
+          if (trace.command || trace.workflowStatus || trace.workflowNextAction) return trace;
+        }
+        return null;
       } catch {
         return null; // ENOENT / rotated / unreadable — silent degrade
       }
@@ -1432,17 +1444,24 @@ function createTrellisActivity(options) {
   }
 
   async function readActiveList() {
-    const tasks = [];
     // One cwd per root: a registered project root and a session cwd deep
     // inside it both resolve the same root — without this guard each task
     // would be listed once per source (readArchiveList's rootToCwd twin).
+    const resolved = [];
     const seenRoots = new Set();
     for (const cwd of collectKnownRootCwds()) {
       const isPersisted = persistedRoots.has(normalizeRootPath(cwd));
       const root = isPersisted ? persistedRootDir(cwd) : await findTrellisRoot(cwd);
-      if (!root) continue;
-      if (seenRoots.has(root)) continue;
+      if (!root || seenRoots.has(root)) continue;
       seenRoots.add(root);
+      resolved.push({ root, cwd });
+    }
+    // Recency order (09-28): the dashboard's per-project grouping follows
+    // this traversal, so the newest-touched project's tasks come first.
+    const recencies = await readRootRecencies(resolved.map((entry) => entry.root));
+    resolved.sort((a, b) => (recencies.get(b.root) || 0) - (recencies.get(a.root) || 0));
+    const tasks = [];
+    for (const { root, cwd } of resolved) {
       const collected = await collectActiveTasksInRoot(root, cwd);
       tasks.push(...collected);
       if (tasks.length >= ACTIVE_LIST_MAX) break;
@@ -1450,37 +1469,68 @@ function createTrellisActivity(options) {
     return { status: "ok", tasks: tasks.slice(0, ACTIVE_LIST_MAX) };
   }
 
-  // 09-27 hud-task-panel-jump: one-shot read of a single project's task
-  // overview for the HUD panel. Trust surface identical to readTaskDetail
-  // (live session cwd ∪ persisted roots ∪ positively-cached roots); the
-  // active part reuses the shared per-root walker, the archived part the
-  // shared archive traversal, newest-first capped at 8. Read-only, never
-  // cached — one fetch per panel open.
-  const HUD_PANEL_ARCHIVE_MAX = 8;
+  // 09-27 hud-task-panel-jump / 09-28 hud-multi-project-audit: one-shot read
+  // of the task overview for the HUD panel. The panel lists EVERY known
+  // project in recency order (newest-touched first; the anchor cwd's root
+  // is merely guaranteed a slot) — same trust surface as
+  // readArchiveList/readActiveList (registered roots ∪ cwds that positively
+  // resolved a root). Caps keep the HUD panel bounded: ≤5 projects, ≤3
+  // archived rows per project. The active part reuses the shared per-root
+  // walker, the archived part the shared archive traversal. Read-only,
+  // never cached — one fetch per panel open.
+  const HUD_PANEL_PROJECT_MAX = 5;
+  const HUD_PANEL_ARCHIVE_MAX = 3;
 
-  async function readHudTaskPanel(cwd) {
-    if (!isTrustedTrellisCwd(cwd)) return { status: "missing" };
-    const root = persistedRoots.has(normalizeRootPath(cwd))
-      ? persistedRootDir(cwd)
-      : await findTrellisRoot(cwd);
-    if (!root) return { status: "missing" };
-    const active = await collectActiveTasksInRoot(root, cwd);
-    const archived = listArchivedTasks(syncFs, path.join(root, "tasks", "archive"))
-      .sort((a, b) => {
-        const am = a.completedAtMs;
-        const bm = b.completedAtMs;
-        if (am === null && bm === null) return 0;
-        if (am === null) return 1;
-        if (bm === null) return -1;
-        return bm - am;
-      })
-      .slice(0, HUD_PANEL_ARCHIVE_MAX)
-      .map((entry) => ({
-        taskPath: `.trellis/tasks/archive/${entry.month}/${entry.name}`,
-        title: entry.title || entry.name,
-        completedAt: entry.completedAt,
-      }));
-    return { status: "ok", active, archived };
+  async function readHudTaskPanel(anchorCwd) {
+    // One cwd per root (readActiveList's seenRoots twin): a registered
+    // project root and a session cwd inside it both resolve the same root.
+    const seenRoots = new Set();
+    const roots = [];
+    if (typeof anchorCwd === "string" && anchorCwd.trim() && isTrustedTrellisCwd(anchorCwd)) {
+      const anchorRoot = persistedRoots.has(normalizeRootPath(anchorCwd))
+        ? persistedRootDir(anchorCwd)
+        : await findTrellisRoot(anchorCwd);
+      if (anchorRoot) {
+        seenRoots.add(anchorRoot);
+        roots.push({ root: anchorRoot, cwd: anchorCwd });
+      }
+    }
+    for (const cwd of collectKnownRootCwds()) {
+      const root = persistedRoots.has(normalizeRootPath(cwd))
+        ? persistedRootDir(cwd)
+        : await findTrellisRoot(cwd);
+      if (!root || seenRoots.has(root)) continue;
+      seenRoots.add(root);
+      roots.push({ root, cwd });
+    }
+    if (!roots.length) return { status: "missing" };
+    // Recency order (09-28): newest-touched project first, everywhere the
+    // panel lists projects. The anchor session's project usually IS the
+    // freshest, but a stale anchor must not outrank a project the user just
+    // worked in — the anchor only guarantees membership, never position.
+    const recencies = await readRootRecencies(roots.map((entry) => entry.root));
+    roots.sort((a, b) => (recencies.get(b.root) || 0) - (recencies.get(a.root) || 0));
+    const projects = [];
+    for (const { root, cwd } of roots.slice(0, HUD_PANEL_PROJECT_MAX)) {
+      const active = await collectActiveTasksInRoot(root, cwd);
+      const archived = listArchivedTasks(syncFs, path.join(root, "tasks", "archive"))
+        .sort((a, b) => {
+          const am = a.completedAtMs;
+          const bm = b.completedAtMs;
+          if (am === null && bm === null) return 0;
+          if (am === null) return 1;
+          if (bm === null) return -1;
+          return bm - am;
+        })
+        .slice(0, HUD_PANEL_ARCHIVE_MAX)
+        .map((entry) => ({
+          taskPath: `.trellis/tasks/archive/${entry.month}/${entry.name}`,
+          title: entry.title || entry.name,
+          completedAt: entry.completedAt,
+        }));
+      projects.push({ cwd, name: path.basename(path.dirname(root)), active, archived });
+    }
+    return { status: "ok", projects };
   }
 
   // Roots whose .trellis directory was resolved from a live session cwd
@@ -1494,6 +1544,41 @@ function createTrellisActivity(options) {
       if (entry && entry.root) roots.add(entry.root);
     }
     return [...roots];
+  }
+
+  // ── Per-root recency (09-28 hud-multi-project-audit) ───────────────────
+  // The newest of two signals: the max last_seen_at across a root's session
+  // pointers (the Trellis CLI refreshes that stamp on every interaction),
+  // and the sessions directory's mtime. The second signal matters because
+  // the CLI empties the directory when a session ends — measured 09-28:
+  // freshly-worked projects (write-notes-like-deepseek, vlc-android) had
+  // EMPTY sessions dirs with fresh mtimes, ranking dead-last on pointer
+  // content alone. Together they are a durable, restart-proof proxy for
+  // "which project was touched last". Roots with neither signal answer 0 —
+  // under the callers' stable sorts they keep their incoming order at the
+  // tail. Root argument is the `.trellis` dir (this module's root
+  // convention, same as rootCache / knownRoots).
+  async function readRootRecencies(roots) {
+    const out = new Map();
+    for (const root of Array.isArray(roots) ? roots : []) {
+      if (typeof root !== "string" || !root) continue;
+      const sessionsDir = path.join(root, ".runtime", "sessions");
+      // Directory mtime: pointer creation/cleanup touches it even when no
+      // pointer content survives (one extra stat per root).
+      const st = await statQuiet(sessionsDir);
+      let best = st && Number.isFinite(st.mtimeMs) ? st.mtimeMs : 0;
+      const entries = await readdirQuiet(sessionsDir);
+      if (entries) {
+        for (const name of entries) {
+          if (!name.endsWith(".json")) continue;
+          const pointer = await readJsonObject(path.join(sessionsDir, name));
+          const seenAt = pointer.ok ? Date.parse(pointer.value.last_seen_at) : NaN;
+          if (Number.isFinite(seenAt) && seenAt > best) best = seenAt;
+        }
+      }
+      out.set(root, best);
+    }
+    return out;
   }
 
   // Phase-5 read for the Settings → Trellis tab: active (planning /
@@ -1515,6 +1600,7 @@ function createTrellisActivity(options) {
     getByProject,
     getKnownRoots,
     setPersistedRoots,
+    readRootRecencies,
     resolveProjectRoot,
     isDirectProjectRoot,
     listChildProjectRoots,

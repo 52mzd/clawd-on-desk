@@ -347,14 +347,24 @@ describe("HUD global type scale (09-27 hud-panel-readability)", () => {
   });
 });
 
-describe("HUD trellis detail command line (09-27 hud-process-awareness)", () => {
+describe("HUD trellis detail command line (09-27 hud-process-awareness, 09-28 ws-only)", () => {
   it("wires the process-level command row through the i18n key", () => {
     assert.match(sessionHudRenderer, /sessionHudTrellisCommand/);
-    // The command line is a third title segment (lines.slice(2)) — absent
-    // command → the title stays byte-identical to the pre-09-27 shape
-    // (guarded here so refactors keep the conditional).
-    assert.match(sessionHudRenderer, /if \(info\.command\)/);
+    // The command line is a third title segment (lines.slice(2)); the
+    // command branch keeps the legacy i18n wording when a marker exists.
+    assert.match(sessionHudRenderer, /if \(info\.command\) \{/);
     assert.match(sessionHudRenderer, /lines\.slice\(2\)/);
+  });
+
+  it("renders the row from workflow-state signals alone when no command exists", () => {
+    // 09-28 hud-multi-project-audit: current Claude Code transcripts carry
+    // no command marker at all, so the gate is any signal; ws-only renders
+    // "Status — Next-Action" passthrough (no i18n key, non-interpreted).
+    assert.match(
+      sessionHudRenderer,
+      /if \(info\.command \|\| info\.workflowStatus \|\| info\.workflowNextAction\) \{/
+    );
+    assert.match(sessionHudRenderer, /info\.workflowStatus \|\| ""\} — /);
   });
 });
 

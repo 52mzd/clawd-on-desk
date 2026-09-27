@@ -313,6 +313,17 @@ body { padding: 2px 3px 8px; }
   overflow-y: auto;
 }
 .trellis-panel-list { margin-top: 3px; }
+/* Project section header (09-28 hud-multi-project-audit): one per project,
+   visually above the per-project active/done group heads. */
+.trellis-panel-project {
+  font-size: var(--hud-fs-badge);
+  font-weight: 700;
+  opacity: 0.9;
+  margin-top: 6px;
+  padding-bottom: 1px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+}
+.trellis-panel-project:first-child { margin-top: 1px; }
 .trellis-panel-head {
   font-size: var(--hud-fs-badge);
   font-weight: 600;
