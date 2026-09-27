@@ -199,7 +199,7 @@ function isoAgo(clockNow, msAgo) {
   return new Date(clockNow - msAgo).toISOString();
 }
 
-function makeHarness({ sessions = new Map(), getLiveSessions = null } = {}) {
+function makeHarness({ sessions = new Map(), getLiveSessions = null, extra = {} } = {}) {
   const fakeFs = makeFakeFs();
   const timers = makeFakeTimers();
   const clock = { now: 1758000000000 };
@@ -209,6 +209,7 @@ function makeHarness({ sessions = new Map(), getLiveSessions = null } = {}) {
   const phaseTransitions = [];
   const activity = createTrellisActivity({
     state: { sessions },
+    ...extra,
     ...(getLiveSessions ? { getLiveSessions } : {}),
     fs: fakeFs.fsApi,
     syncFs: fakeFs.syncApi,
@@ -250,6 +251,163 @@ function pointerPayload({ platform, currentTask, seenAgoMs = 5 * 60 * 1000, cloc
 const IN_PROGRESS_TASK = { title: "Trellis 流程感知", status: "in_progress", subtasks: [] };
 
 // ── pointer binding (design D1) ──
+
+describe("trellis-activity process-level trace", () => {
+  const RAW_ID = "f0fb3c8b-247f-4322-a63b-059047d13796";
+
+  function attachmentLine(status, nextAction) {
+    const content = `<system-reminder>\nUserPromptSubmit hook additional context: <workflow-state>\nStatus: ${status}\nNext-Action: ${nextAction}\n</workflow-state>\n</system-reminder>`;
+    return JSON.stringify({ type: "attachment", rendered: [{ content }] });
+  }
+
+  function commandLine(name) {
+    return JSON.stringify({
+      type: "user",
+      message: { role: "user", content: [{ type: "text", text: `<command-message>trellis-${name}</command-message>\n<command-name>/trellis-${name}</command-name>` }] },
+    });
+  }
+
+  function decoyAssistantLine() {
+    // Same literals inside assistant thinking/text — the extraction must
+    // never accept them (observed on the real f0fb3c8b session).
+    return JSON.stringify({
+      type: "assistant",
+      message: { content: [
+        { type: "thinking", thinking: "<workflow-state>\nStatus: fake\nNext-Action: decoy step" },
+        { type: "text", text: "<command-name>/trellis-meta</command-name>" },
+      ] },
+    });
+  }
+
+  function makeTraceHarness(tailText) {
+    const readTailCalls = [];
+    let round = 0;
+    const tails = Array.isArray(tailText) ? tailText : [tailText];
+    const h = makeHarness({
+      sessions: new Map([[RAW_ID, { agentId: "claude-code", cwd: CWD }]]),
+      extra: {
+        homedir: () => "/home/tester",
+        readTail: async (filePath, maxBytes) => {
+          readTailCalls.push({ filePath, maxBytes, round });
+          const text = tails[Math.min(round, tails.length - 1)];
+          round += 1;
+          return text;
+        },
+      },
+    });
+    return { h, readTailCalls };
+  }
+
+  function seedBinding(h) {
+    addTask(h.fakeFs, "09-27-t", IN_PROGRESS_TASK, { prd: true });
+    addPointer(
+      h.fakeFs,
+      `claude_${RAW_ID}.json`,
+      pointerPayload({ platform: "claude", currentTask: ".trellis/tasks/09-27-t", clockNow: h.clock.now })
+    );
+  }
+
+  it("extracts the latest trellis command and workflow step for a bound claude-code session", async () => {
+    const tail = [
+      "truncated-half-line-garbage", // dropped: first segment after the byte-window split
+      commandLine("brainstorm"),
+      attachmentLine("planning", "ask the single highest-value question"),
+      decoyAssistantLine(),
+      attachmentLine("in_progress", "dispatch trellis-implement"),
+      JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text: "继续" }] } }),
+    ].join("\n");
+    const { h, readTailCalls } = makeTraceHarness(tail);
+    seedBinding(h);
+
+    h.activity.start();
+    await h.timers.runDue();
+
+    const info = h.activity.getTrellisInfo(RAW_ID);
+    assert.strictEqual(info.phase, "execute");
+    assert.strictEqual(info.command, "brainstorm", "latest trellis command wins");
+    assert.strictEqual(info.workflowStatus, "in_progress", "latest workflow-state block wins");
+    assert.strictEqual(info.workflowNextAction, "dispatch trellis-implement");
+    // Shape-anchored extraction: the assistant decoys never leak through.
+    assert.notEqual(info.workflowStatus, "fake");
+    assert.notEqual(info.command, "meta");
+    // The transcript path mirrors Claude Code's sanitized-cwd convention.
+    assert.strictEqual(readTailCalls.length, 1);
+    // /proj/app sanitizes to "-proj-app" (slash → "-", rest of [A-Za-z0-9.-] → "-").
+    assert.strictEqual(readTailCalls[0].filePath,
+      `/home/tester/.claude/projects/-proj-app/${RAW_ID}.jsonl`);
+    assert.strictEqual(readTailCalls[0].maxBytes, 512 * 1024);
+  });
+
+  it("degrades to absent fields when the command falls outside the tail window", async () => {
+    const tail = [
+      "garbage-head",
+      attachmentLine("in_progress", "keep implementing"),
+    ].join("\n");
+    const { h } = makeTraceHarness(tail);
+    seedBinding(h);
+
+    h.activity.start();
+    await h.timers.runDue();
+
+    const info = h.activity.getTrellisInfo(RAW_ID);
+    assert.strictEqual(info.command, undefined);
+    assert.strictEqual(info.workflowStatus, "in_progress");
+  });
+
+  it("returns the plain binding when the transcript is missing or unreadable", async () => {
+    const { h } = makeTraceHarness(null);
+    // readTail returns null (ENOENT semantics) — binding itself unaffected.
+    const h2 = makeHarness({
+      sessions: new Map([[RAW_ID, { agentId: "claude-code", cwd: CWD }]]),
+      extra: { homedir: () => "/home/tester", readTail: async () => null },
+    });
+    seedBinding(h2);
+    h2.activity.start();
+    await h2.timers.runDue();
+    const info = h2.activity.getTrellisInfo(RAW_ID);
+    assert.strictEqual(info.phase, "execute");
+    assert.strictEqual(info.command, undefined);
+    assert.strictEqual(info.workflowStatus, undefined);
+  });
+
+  it("never reads the transcript for non-claude-code sessions", async () => {
+    const readTailCalls = [];
+    const h = makeHarness({
+      sessions: new Map([["pi:01a0b040-370d-70b0-8e1a-9c8626dfd17e", { agentId: "pi", cwd: CWD }]]),
+      extra: {
+        homedir: () => "/home/tester",
+        readTail: async () => { readTailCalls.push(1); return ""; },
+      },
+    });
+    addTask(h.fakeFs, "09-27-t", IN_PROGRESS_TASK, { prd: true });
+    addPointer(
+      h.fakeFs,
+      "pi_01a0b040-370d-70b0-8e1a-9c8626dfd17e.json",
+      pointerPayload({ platform: "pi", currentTask: ".trellis/tasks/09-27-t", clockNow: h.clock.now })
+    );
+    h.activity.start();
+    await h.timers.runDue();
+    assert.strictEqual(h.activity.getTrellisInfo("pi:01a0b040-370d-70b0-8e1a-9c8626dfd17e").phase, "execute");
+    assert.deepStrictEqual(readTailCalls, [], "pi sessions never touch the claude transcript");
+  });
+
+  it("notifies again when the workflow step changes across rounds", async () => {
+    const { h } = makeTraceHarness([
+      ["garbage-head", commandLine("brainstorm"), attachmentLine("planning", "ask a question")].join("\n"),
+      ["garbage-head", commandLine("brainstorm"), attachmentLine("planning", "write the PRD")].join("\n"),
+    ]);
+    seedBinding(h);
+    h.activity.start();
+    await h.timers.runDue();
+    assert.deepStrictEqual(h.updates, [[RAW_ID]]);
+
+    h.clock.now += 6000;
+    await h.timers.runDue();
+    assert.deepStrictEqual(h.updates, [[RAW_ID], [RAW_ID]],
+      "a workflowNextAction change must re-emit the snapshot");
+    assert.strictEqual(h.activity.getTrellisInfo(RAW_ID).workflowNextAction, "write the PRD");
+  });
+});
 
 describe("trellis-activity pointer binding", () => {
   it("binds a pi session through its namespaced id (prefix stripped)", async () => {

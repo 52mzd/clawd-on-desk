@@ -391,7 +391,22 @@ bubble 回退 taskPath）。title 读取复用 readTaskInfo（归档后从归档
 
 `TrellisInfo = { taskPath, title, phase: plan|execute|check|finish|done,
                  progress: {done,total}|null, parallelCount,
-                 nextStep?: string }`
+                 nextStep?: string,
+                 command?: string, workflowStatus?: string, workflowNextAction?: string }`
+
+**过程级 trace（09-27 hud-process-awareness）**：绑定会话额外扫其 Claude Code
+transcript 尾部（`~/.claude/projects/<sanitized-cwd>/<raw-id>.jsonl`，尾窗
+`TRACE_TAIL_BYTES = 512KB`，`opts.readTail` 可注入、缺省 open/stat/read 只读实现），
+提取两个**形状锚定**信号（Measured on 2026-09-27，本仓 f0fb3c8b 会话实测）：
+指令 = `type:"user"` 行 content 项 text 里的 `<command-name>/trellis-xxx</command-name>`；
+步骤 = `type:"attachment"` 行 `rendered[].content` 中以
+`<system-reminder>\nUserPromptSubmit hook additional context: <workflow-state>` 开头的块内
+`Status:` / `Next-Action:` 行（截 80 code points）。红线与降级：仅 `agentId ===
+"claude-code"` 的**已绑定**会话扫（zcode 虽归 claude 指针平台但无 transcript）；assistant
+thinking/text 可能含同样字样（实测存在）——绝不做全文件裸子串匹配；文件缺失/格式漂移/
+指令落在尾窗外 → 三字段缺省，HUD 与改动前逐字节一致；per-round `traceReads` 缓存
+（每轮每会话 1 次 readTail）；`trellisInfoEqual` 含三字段比较（否则指令/步骤变化不触发
+snapshot 重发）。
 
 `check` 是推导相而非真信号：task.json 的 status 只有
 planning / in_progress / completed，`check` = **in_progress 且

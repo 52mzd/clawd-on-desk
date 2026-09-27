@@ -5,7 +5,10 @@
 // detects phase transitions and notifies the host. All disk access is
 // strictly read-only (readFile / stat / readdir only — design D7) and
 // confined to `<projectRoot>/.trellis/`; this module never writes, spawns,
-// or touches the network.
+// or touches the network. One addition (09-27 hud-process-awareness): the
+// bound session's Claude Code transcript tail is read (open/stat/read, a
+// bounded ≤512KB window per bound claude session per round) from
+// `~/.claude/projects/` for process-level HUD hints — still read-only.
 //
 // Polling shape (design D3): a self-scheduling setTimeout chain modelled on
 // src/claude-settings-watcher.js (scheduleHealthCheck L286-299 /
@@ -67,6 +70,10 @@ function createTrellisActivity(options) {
   // so tests can fake it without touching the async polling fs.
   const syncFs = opts.syncFs || require("fs");
   const nowFn = typeof opts.now === "function" ? opts.now : Date.now;
+  // Optional tail-read injection (09-27): tests fake it; production uses
+  // the default open/stat/read implementation below — read-only surface.
+  const readTailImpl = typeof opts.readTail === "function" ? opts.readTail : null;
+  const homeDirFn = typeof opts.homedir === "function" ? opts.homedir : require("os").homedir;
   const setTimeoutFn = opts.setTimeoutFn || setTimeout;
   const clearTimeoutFn = opts.clearTimeoutFn || clearTimeout;
   const onTrellisUpdate = typeof opts.onTrellisUpdate === "function" ? opts.onTrellisUpdate : null;
@@ -453,11 +460,140 @@ function createTrellisActivity(options) {
     return null;
   }
 
+  // ── Process-level trace (09-27 hud-process-awareness) ──────────────────
+  // Scans the TAIL of the bound session's Claude Code transcript for two
+  // shape-anchored signals (Measured on 2026-09-27, session f0fb3c8b of
+  // this very repo):
+  //   command — `<command-name>/trellis-xxx</command-name>` inside a
+  //             type:"user" line's message.content item text;
+  //   step    — the `<workflow-state>` block inside a type:"attachment"
+  //             line's rendered[].content, which starts with
+  //             "<system-reminder>\nUserPromptSubmit hook additional
+  //             context: <workflow-state>".
+  // Assistant thinking/text may contain the same literals (observed on
+  // this session) — extraction ONLY accepts those two message shapes,
+  // never a raw substring scan over the whole file. Any drift (rotated
+  // file, format change, tail half-line) degrades to null silently.
+  const TRACE_TAIL_BYTES = 512 * 1024;
+  const TRACE_COMMAND_RE = /<command-name>\s*\/?trellis[:-]([A-Za-z0-9-]+)/;
+  const TRACE_WS_MARKER = "UserPromptSubmit hook additional context: <workflow-state>";
+  const TRACE_STATUS_RE = /^Status:\s*(\S+)\s*$/m;
+  const TRACE_NEXT_RE = /^Next-Action:\s*(.+)$/m;
+  const TRACE_NEXT_MAX = 80;
+
+  // Mirrors Claude Code's ~/.claude/projects/<sanitized-cwd>/ convention —
+  // same rule as the trellis channel projectKey: backslash/slash/underscore
+  // → "-", everything else outside [A-Za-z0-9.-] → "-".
+  function claudeProjectsDirName(cwd) {
+    return path.resolve(String(cwd || "")).replace(/[\\/_]/g, "-").replace(/[^A-Za-z0-9.-]/g, "-");
+  }
+
+  function truncateTraceText(text) {
+    const chars = Array.from(String(text || ""));
+    if (chars.length <= TRACE_NEXT_MAX) return chars.join("");
+    return chars.slice(0, TRACE_NEXT_MAX).join("").trimEnd() + "…";
+  }
+
+  function extractSessionTrace(bodyText) {
+    const out = { command: null, workflowStatus: null, workflowNextAction: null };
+    const lines = String(bodyText || "").split("\n");
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      const line = lines[i];
+      if (!line || line.length < 20) continue;
+      if (out.command !== null && out.workflowStatus !== null) break;
+      const maybeAttachment = out.workflowStatus === null && line.includes("attachment");
+      const maybeCommand = out.command === null && line.includes("<command-name>");
+      if (!maybeAttachment && !maybeCommand) continue;
+      let obj;
+      try {
+        obj = JSON.parse(line);
+      } catch {
+        continue; // tail half-line or corrupt row — skip silently
+      }
+      if (obj.type === "attachment" && out.workflowStatus === null) {
+        const rendered = obj.rendered;
+        if (Array.isArray(rendered)) {
+          for (const item of rendered) {
+            const content = item && typeof item.content === "string" ? item.content : "";
+            if (!content.includes(TRACE_WS_MARKER)) continue;
+            const block = content.slice(content.indexOf(TRACE_WS_MARKER) + TRACE_WS_MARKER.length);
+            const status = TRACE_STATUS_RE.exec(block);
+            if (status) out.workflowStatus = status[1];
+            const next = TRACE_NEXT_RE.exec(block);
+            if (next) out.workflowNextAction = truncateTraceText(next[1]);
+            break;
+          }
+        }
+      } else if (obj.type === "user" && out.command === null) {
+        const content = obj.message && obj.message.content;
+        const items = Array.isArray(content)
+          ? content
+          : (typeof content === "string" ? [{ text: content }] : []);
+        for (const item of items) {
+          const text = item && typeof item.text === "string" ? item.text : "";
+          const m = TRACE_COMMAND_RE.exec(text);
+          if (m) {
+            out.command = m[1];
+            break;
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  async function readTail(filePath, maxBytes) {
+    if (readTailImpl) return readTailImpl(filePath, maxBytes);
+    const st = await fs.stat(filePath);
+    const start = Math.max(0, st.size - maxBytes);
+    const len = st.size - start;
+    if (len <= 0) return "";
+    const handle = await fs.open(filePath, "r");
+    try {
+      const buf = Buffer.alloc(len);
+      const { bytesRead } = await handle.read(buf, 0, len, start);
+      return buf.subarray(0, bytesRead).toString("utf8");
+    } finally {
+      await handle.close();
+    }
+  }
+
+  async function readSessionTrace(session, traceReads) {
+    // "claude-code" specifically (not the trellis platform alias "claude"):
+    // zcode pointers also map to the claude platform, but only Claude Code
+    // writes ~/.claude/projects/ transcripts.
+    if (session.agentId !== "claude-code") return null;
+    const rawId = session.rawSessionId || session.sessionId;
+    if (typeof rawId !== "string" || !rawId) return null;
+    if (typeof session.cwd !== "string" || !session.cwd) return null;
+    if (traceReads.has(rawId)) return traceReads.get(rawId);
+    const entry = (async () => {
+      try {
+        const file = path.join(homeDirFn(), ".claude", "projects",
+          claudeProjectsDirName(session.cwd), `${rawId}.jsonl`);
+        const tail = await readTail(file, TRACE_TAIL_BYTES);
+        if (!tail) return null;
+        // The first segment after the byte-window split may be a
+        // write-in-progress half line — drop it before parsing.
+        const nl = tail.indexOf("\n");
+        const body = nl === -1 ? "" : tail.slice(nl + 1);
+        const trace = extractSessionTrace(body);
+        if (!trace.command && !trace.workflowStatus && !trace.workflowNextAction) return null;
+        return trace;
+      } catch {
+        return null; // ENOENT / rotated / unreadable — silent degrade
+      }
+    })();
+    traceReads.set(rawId, entry);
+    return entry;
+  }
+
   async function refreshBindings(bound) {
     const taskReads = new Map(); // abs task dir → Promise<taskInfo|null>
+    const traceReads = new Map(); // raw session id → Promise<trace|null> (per round)
     const nextResolved = new Map(); // sessionId → { info, absDir } | null
     for (const { session, root } of bound) {
-      nextResolved.set(session.sessionId, await resolveSessionTrellis(session, root, taskReads));
+      nextResolved.set(session.sessionId, await resolveSessionTrellis(session, root, taskReads, traceReads));
     }
 
     // Diff against the previous round: only genuinely changed sessions are
@@ -513,6 +649,9 @@ function createTrellisActivity(options) {
       && (a.progress ? a.progress.total : null) === (b.progress ? b.progress.total : null)
       && (a.nextStep || null) === (b.nextStep || null)
       && (a.parent || null) === (b.parent || null)
+      && (a.command || null) === (b.command || null)
+      && (a.workflowStatus || null) === (b.workflowStatus || null)
+      && (a.workflowNextAction || null) === (b.workflowNextAction || null)
     );
   }
 
@@ -585,7 +724,7 @@ function createTrellisActivity(options) {
     }
   }
 
-  async function resolveSessionTrellis(session, root, taskReads) {
+  async function resolveSessionTrellis(session, root, taskReads, traceReads) {
     const key = sessionPointerKey(session.agentId, session.rawSessionId || session.sessionId);
     if (!key) return null;
     const platform = trellisPlatformFor(session.agentId);
@@ -625,6 +764,14 @@ function createTrellisActivity(options) {
     };
     if (task.nextStep) info.nextStep = task.nextStep;
     if (task.parent) info.parent = task.parent;
+    // Process-level hints (09-27): absent trace → absent fields → the HUD
+    // renders exactly as before.
+    const trace = traceReads ? await readSessionTrace(session, traceReads) : null;
+    if (trace) {
+      if (trace.command) info.command = trace.command;
+      if (trace.workflowStatus) info.workflowStatus = trace.workflowStatus;
+      if (trace.workflowNextAction) info.workflowNextAction = trace.workflowNextAction;
+    }
     return {
       info,
       // Transition history is keyed by the pointer's task ref, not by the

@@ -50,8 +50,16 @@ function createTrellisDetailRow(session) {
   row.appendChild(title);
   const guide = document.createElement("div");
   guide.className = "trellis-detail-guide";
-  guide.textContent = lines.slice(1).join(" ");
+  guide.textContent = lines[1] || "";
   row.appendChild(guide);
+  // The command/step line (when present) is its own row; height flows
+  // through the §4.1 measured-report contract unchanged.
+  if (lines.length > 2) {
+    const command = document.createElement("div");
+    command.className = "trellis-detail-guide trellis-detail-command";
+    command.textContent = lines.slice(2).join(" ");
+    row.appendChild(command);
+  }
   return row;
 }
 
@@ -262,12 +270,21 @@ function trellisChipInfo(session) {
       .replace("{done}", String(Math.max(0, Math.trunc(Number(info.progress && info.progress.done) || 0))))
       .replace("{total}", String(Math.max(0, Math.trunc(Number(info.progress && info.progress.total) || 0))));
   }
+  // Process-level hint (09-27 hud-process-awareness): the latest trellis
+  // command from the session transcript, optionally with the workflow
+  // Next-Action step. Absent → the title stays byte-identical to before.
+  let title = t("sessionHudTrellisTooltip")
+    .replace("{title}", info.title || info.taskPath || "")
+    .replace("{phase}", t(phase.key)) + (hint ? "\n" + hint : "");
+  if (info.command) {
+    let commandLine = t("sessionHudTrellisCommand").replace("{command}", info.command);
+    if (info.workflowNextAction) commandLine += ` — ${info.workflowNextAction}`;
+    title += "\n" + commandLine;
+  }
   return {
     label,
     cls: phase.cls,
-    title: t("sessionHudTrellisTooltip")
-      .replace("{title}", info.title || info.taskPath || "")
-      .replace("{phase}", t(phase.key)) + (hint ? "\n" + hint : ""),
+    title,
   };
 }
 
