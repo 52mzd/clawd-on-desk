@@ -36,7 +36,15 @@ const IDENTITY_OVERRIDES = new Map(Object.entries({
   "yldzfurkann0@gmail.com": "xfurqan0",
   "shiji.shi@taobao.com": "brantshin",
   "vonsdite@gmail.com": "VonSdite",
-  "52mzd@users.noreply.github.com": "52mzd",
+  "52mzd@users.noreply.github.com": null,
+  // fork-only exclusions (32c45083 follow-up): the fork's release window spans
+  // official post-v1.1.0 commits whose authors upstream has not registered
+  // yet (wait for upstream), plus this fork's own committer identities —
+  // no upstream PR, no contributor-wall entry.
+  "dae@mac-studio.local": null,
+  "200491821+hanzhe-one@users.noreply.github.com": null,
+  "gzx2369563025@gmail.com": null,
+  "s.jin1448@gmail.com": null,
 }));
 
 function parseVersion(value) {

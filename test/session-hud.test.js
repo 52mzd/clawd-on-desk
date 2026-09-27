@@ -89,13 +89,13 @@ describe("session HUD geometry", () => {
 
     assert.strictEqual(result.flippedAbove, true);
     assert.deepStrictEqual(result.contentBounds, {
-      x: 240,
+      x: 225,
       y: 520 - constants.HUD_HEIGHT - constants.HUD_PET_GAP,
       width: constants.HUD_WIDTH,
       height: constants.HUD_HEIGHT,
     });
     assert.deepStrictEqual(result.bounds, {
-      x: 240 - constants.HUD_WINDOW_SHELL.left,
+      x: 225 - constants.HUD_WINDOW_SHELL.left,
       y: 520 - constants.HUD_HEIGHT - constants.HUD_PET_GAP - constants.HUD_WINDOW_SHELL.top,
       width: constants.HUD_WIDTH + constants.HUD_WINDOW_SHELL.left + constants.HUD_WINDOW_SHELL.right,
       height: constants.HUD_HEIGHT + constants.HUD_WINDOW_SHELL.top + constants.HUD_WINDOW_SHELL.bottom,
@@ -355,6 +355,14 @@ describe("session HUD layout", () => {
     );
     assert.strictEqual(computeHudHeight(0), constants.HUD_ROW_HEIGHT);
     assert.strictEqual(computeHudHeight(-1), constants.HUD_ROW_HEIGHT);
+    // 09-27 hud-panel-readability: the constants above are expressed via
+    // `constants.*`, which would silently pass a regression — pin the actual
+    // values (type scale 14/12/11px → 34px rows, widths grew ~12.5%).
+    assert.strictEqual(constants.HUD_ROW_HEIGHT, 34);
+    assert.strictEqual(constants.HUD_WIDTH, 270);
+    assert.strictEqual(constants.HUD_WIDTH_COMPACT, 215);
+    assert.strictEqual(constants.HUD_WIDTH_LABELS, 355);
+    assert.strictEqual(constants.HUD_WIDTH_LABELS_COMPACT, 290);
   });
 
   it("counts one quota coin per (source, provider) with drawable buckets", () => {
@@ -543,7 +551,7 @@ describe("session HUD auto-hide helpers", () => {
   it("computeAutoHideHotZone collects pet + expected HUD bounds, skips invalid", () => {
     const z1 = computeAutoHideHotZone({
       petHitRect: { left: 0, top: 0, right: 80, bottom: 80 },
-      expectedHudContentBounds: { x: 0, y: 90, width: 240, height: 28 },
+      expectedHudContentBounds: { x: 0, y: 90, width: 270, height: 34 },
       pad: 24,
     });
     assert.strictEqual(z1.rects.length, 2);
@@ -567,7 +575,7 @@ describe("session HUD auto-hide helpers", () => {
   it("pointInHotZone treats union of expanded rects", () => {
     const zone = computeAutoHideHotZone({
       petHitRect: { left: 0, top: 0, right: 80, bottom: 80 },
-      expectedHudContentBounds: { x: 0, y: 100, width: 240, height: 28 },
+      expectedHudContentBounds: { x: 0, y: 100, width: 270, height: 34 },
       pad: 24,
     });
     assert.strictEqual(pointInHotZone({ x: 40, y: 40 }, zone), true); // pet

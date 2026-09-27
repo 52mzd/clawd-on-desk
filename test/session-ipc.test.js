@@ -135,6 +135,13 @@ function createHarness(overrides = {}) {
       calls.push(["getTrellisTaskDoc", payload]);
       return { status: "ok", name: payload.doc, size: 3, truncated: false, content: "abc" };
     }),
+    getTrellisHudPanel: overrides.getTrellisHudPanel || ((cwd) => {
+      calls.push(["getTrellisHudPanel", cwd]);
+      return { status: "ok", active: [], archived: [] };
+    }),
+    openTrellisTask: overrides.openTrellisTask || ((payload) => {
+      calls.push(["openTrellisTask", payload]);
+    }),
     getTrellisSpecTree: overrides.getTrellisSpecTree || ((payload) => {
       calls.push(["getTrellisSpecTree", payload]);
       return { status: "ok", files: [{ relPath: "index.md", group: "spec" }], truncated: false };
@@ -228,12 +235,14 @@ test("session IPC registers owned channels and disposes them", () => {
     "dashboard:trellis-task-doc",
     "session-hud:get-i18n",
     "session-hud:open-session-folder",
+    "session-hud:trellis-panel",
     "session:ack-completion",
   ]);
   assert.deepStrictEqual([...ipcMain.listeners.keys()].sort(), [
     "dashboard:focus-session",
     "session-hud:focus-session",
     "session-hud:open-dashboard",
+    "session-hud:open-trellis-task",
     "session-hud:set-pinned",
     "session-hud:set-trellis-detail-height",
     "settings:open-dashboard",
@@ -982,4 +991,33 @@ test("main forwards dashboard open source options into session IPC", () => {
     true,
     "main.js should preserve dashboard open options when wiring session IPC"
   );
+});
+
+
+test("trellis-panel accepts exactly {cwd} and reaches the owner", async () => {
+    const { ipcMain, calls } = createHarness();
+    const bad = [null, {}, { cwd: "" }, { cwd: 3 }, { cwd: "/p", extra: 1 }];
+    for (const payload of bad) {
+      const r = await ipcMain.invoke("session-hud:trellis-panel", payload);
+      assert.deepStrictEqual(r, { status: "invalid" }, `invalid for ${JSON.stringify(payload)}`);
+    }
+    assert.deepStrictEqual(calls.filter((c) => c[0] === "getTrellisHudPanel"), [],
+      "invalid payloads never reach the owner");
+    const ok = await ipcMain.invoke("session-hud:trellis-panel", { cwd: "/proj" });
+    assert.strictEqual(ok.status, "ok");
+    assert.deepStrictEqual(calls.filter((c) => c[0] === "getTrellisHudPanel"), [["getTrellisHudPanel", "/proj"]]);
+});
+
+test("open-trellis-task rejects malformed payloads silently", async () => {
+    const { ipcMain, calls } = createHarness();
+    for (const payload of [null, {}, { taskPath: ".trellis/tasks/a" }, { cwd: "/p", taskPath: "/etc/passwd" },
+      { cwd: "/p", taskPath: "", x: 1 }]) {
+      ipcMain.send("session-hud:open-trellis-task", payload);
+    }
+    assert.deepStrictEqual(calls.filter((c) => c[0] === "openTrellisTask"), [],
+      "malformed jumps never reach the owner");
+    ipcMain.send("session-hud:open-trellis-task", { cwd: "/p", taskPath: ".trellis/tasks/a" });
+    ipcMain.send("session-hud:open-trellis-task", { cwd: "/p", taskPath: "" });
+    assert.equal(calls.filter((c) => c[0] === "openTrellisTask").length, 2,
+      "view-only empty taskPath is a legal jump");
 });

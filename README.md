@@ -29,22 +29,6 @@
   <img src="assets/hero.gif" alt="Clawd on Desk — a pixel desktop pet that reacts to your AI coding agent in real time. Animated demo: the crab cycles through sleeping, thinking while the model reads the codebase, typing as edit/bash tools run, grooving for one subagent, juggling when multiple subagents run, raising a permission bubble, and celebrating when 14 files / 312 tests are complete. Works with Claude Code, Codex, Cursor, Copilot, Gemini, Antigravity, Qwen, CodeWhale, Pi, OMP, OpenClaw and more.">
 </p>
 
-> **This is a fork.** Based on the latest upstream
-> [rullerzhou-afk/clawd-on-desk](https://github.com/rullerzhou-afk/clawd-on-desk).
->
-> **What this fork adds — Trellis workflow integration:**
-> - **Dashboard task view** — browse tasks across registered projects: phase grouping,
->   progress and checklist, task tree, spec map, and archive
-> - **Settings → Trellis** — register project roots, install/upgrade wizard with a real
->   dry-run preview of `trellis update`
-> - **Pet state feedback** — parallel-task juggling, a planning wizard hat, phase-transition
->   bubbles, and a completion celebration
-> - **HUD task badge** — the Trellis task bound to each live session, clickable to expand
->   an inline detail row
->
-> Authoritative documentation lives in `docs/project/trellis-settings-panel.md`.
-> The license remains the upstream AGPL-3.0.
-
 Clawd lives on your desktop and reacts to what your AI coding agent is doing — in real time. Start a long task, walk away, come back when the crab tells you it's done.
 
 Thinking when you prompt, typing when tools run, grooving or juggling for subagents, reviewing permissions, celebrating when tasks complete, sleeping when you step away. Ships with three built-in themes: **Clawd** (pixel crab), **Calico** (三花猫), and **Cloudling** (云宝), with full support for custom themes and imported Codex Pet animation packs. An optional official theme, **Hash Sage** (哈希仙人), can be downloaded from Settings → Theme.
@@ -418,8 +402,6 @@ Thanks to everyone who has helped make Clawd better:
     <td align="center" valign="top" width="110"><a href="https://github.com/mantertius"><img src="https://github.com/mantertius.png" width="50" style="border-radius:50%" /><br /><sub>mantertius</sub></a></td>
     <td align="center" valign="top" width="110"><a href="https://github.com/VonSdite"><img src="https://github.com/VonSdite.png" width="50" style="border-radius:50%" /><br /><sub>VonSdite</sub></a></td>
     <td align="center" valign="top" width="110"><a href="https://github.com/sunnyswag"><img src="https://github.com/sunnyswag.png" width="50" style="border-radius:50%" /><br /><sub>sunnyswag</sub></a></td>
-    <td align="center" valign="top" width="110"><a href="https://github.com/52mzd"><img src="https://github.com/52mzd.png" width="50" style="border-radius:50%" /><br /><sub>52mzd</sub></a></td>
-    <td align="center" valign="top" width="110"><a href="https://github.com/hanzhe-one"><img src="https://github.com/hanzhe-one.png" width="50" style="border-radius:50%" /><br /><sub>hanzhe-one</sub></a></td>
   </tr>
 </table>
 

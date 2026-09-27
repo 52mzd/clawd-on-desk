@@ -96,6 +96,9 @@ tools/calico-*
 
 # Internal pipeline tools (not for distribution)
 tools/chroma_key.py
+
+# RLM sandbox scratch (local model cache)
+.rlm/
 tools/fix_gray_bleed.py
 tools/rebuild_apng.py
 tools/check_dark.py
@@ -154,11 +157,6 @@ scripts/manual/*
 
 # Local agent/skill definitions (machine-specific)
 .agents/
-# Trellis workflow framework, personal agent config, local sandbox scratch
-.trellis/
-.pi/
-.rlm/
-skills-lock.json
 
 # Local git worktrees used for PR review
 .worktrees/

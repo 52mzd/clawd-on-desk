@@ -25,39 +25,190 @@ function isHudSession(session) {
 
 // Native title tooltips never appear in the HUD host (non-activating
 // transparent window suppresses macOS help tags), and floating hover cards
-// are cramped. Click the trellis chip to expand the HUD with an inline
-// detail row under the session line instead.
-const trellisExpandedSessions = new Set();
+// are cramped. 09-27 hud-trellis-icon-entry: the trellis chip is purely
+// informational (label + title tooltip); the panel below the session rows
+// (project-scoped task list) opens from the dedicated icon button beside
+// the pin — see createTrellisToggleButton.
+const trellisPanel = {
+  open: false,
+  sessionId: null,
+  cwd: null,
+  loading: false,
+  result: null,
+};
 
-function toggleTrellisDetail(sessionId) {
-  if (trellisExpandedSessions.has(sessionId)) {
-    trellisExpandedSessions.delete(sessionId);
-  } else {
-    trellisExpandedSessions.add(sessionId);
+function closeTrellisPanel() {
+  trellisPanel.open = false;
+  trellisPanel.sessionId = null;
+  trellisPanel.cwd = null;
+  trellisPanel.loading = false;
+  trellisPanel.result = null;
+}
+
+function toggleTrellisPanel(session) {
+  if (trellisPanel.open && trellisPanel.sessionId === session.id) {
+    closeTrellisPanel();
+    render();
+    return;
+  }
+  trellisPanel.open = true;
+  trellisPanel.sessionId = session.id;
+  const nextCwd = typeof session.cwd === "string" ? session.cwd : null;
+  if (!nextCwd) {
+    closeTrellisPanel();
+    render();
+    return;
+  }
+  const needsFetch = trellisPanel.cwd !== nextCwd || !trellisPanel.result;
+  trellisPanel.cwd = nextCwd;
+  if (needsFetch) {
+    trellisPanel.loading = true;
+    trellisPanel.result = null;
+    render();
+    if (window.sessionHudAPI && typeof window.sessionHudAPI.getTrellisPanel === "function") {
+      window.sessionHudAPI.getTrellisPanel({ cwd: nextCwd }).then((result) => {
+        // A close or a different project won the race — drop the stale fetch.
+        if (!trellisPanel.open || trellisPanel.cwd !== nextCwd || !trellisPanel.loading) return;
+        trellisPanel.loading = false;
+        trellisPanel.result = result && typeof result === "object" ? result : { status: "error" };
+        // A cwd with no resolvable .trellis root answers "missing" — the
+        // click was on a non-trellis project, leave nothing behind.
+        if (trellisPanel.result.status === "missing") {
+          closeTrellisPanel();
+        }
+        render();
+      }).catch(() => {
+        if (!trellisPanel.open || trellisPanel.cwd !== nextCwd || !trellisPanel.loading) return;
+        trellisPanel.loading = false;
+        trellisPanel.result = { status: "error" };
+        render();
+      });
+    } else {
+      trellisPanel.loading = false;
+      trellisPanel.result = { status: "error" };
+    }
   }
   render();
 }
 
-function createTrellisDetailRow(session) {
+// 09-27 hud-trellis-icon-entry: anchors the trellis icon button's toggle to
+// the most recent cwd-bearing session — the panel's ONLY entry now.
+function lastBoundExpandedSession() {
+  const sessions = orderedHudSessions(snapshot);
+  const { expanded } = splitHudLayout(sessions);
+  // orderedIds is newest-first (sessionUpdatedAtComparator sorts desc), so
+  // the FIRST cwd-bearing session in `expanded` is the most recently active
+  // one. Binding is NOT required here — the panel fetch decides via the
+  // "missing" answer whether the cwd has a .trellis at all.
+  return expanded.find((session) =>
+    session && typeof session.cwd === "string" && session.cwd
+  ) || null;
+}
+
+function trellisPanelTaskRow(entry, archived) {
   const row = document.createElement("div");
-  row.className = "trellis-detail";
-  const info = trellisChipInfo(session);
-  if (!info) return row;
-  const lines = String(info.title || "").split("\n");
-  const title = document.createElement("div");
-  title.className = "trellis-detail-title";
-  title.textContent = lines[0] || "";
-  row.appendChild(title);
-  const guide = document.createElement("div");
-  guide.className = "trellis-detail-guide";
-  guide.textContent = lines.slice(1).join(" ");
-  row.appendChild(guide);
+  row.className = "trellis-panel-row";
+  const dot = document.createElement("span");
+  const phase = !archived && entry.phase ? String(entry.phase) : "done";
+  dot.className = `trellis-dot trellis-dot-${phase}`;
+  row.appendChild(dot);
+  const label = document.createElement("span");
+  label.className = "trellis-panel-row-title";
+  label.textContent = entry.title || entry.taskPath;
+  label.title = entry.title || entry.taskPath;
+  row.appendChild(label);
+  const side = document.createElement("span");
+  side.className = "trellis-panel-row-side";
+  if (archived) {
+    side.textContent = typeof entry.completedAt === "string" ? entry.completedAt.slice(5, 10) : "";
+  } else if (entry.progress && Number.isFinite(Number(entry.progress.total)) && Number(entry.progress.total) > 0) {
+    side.textContent = `${Math.max(0, Math.trunc(Number(entry.progress.done) || 0))}/${Math.trunc(Number(entry.progress.total))}`;
+  }
+  row.appendChild(side);
+  if (typeof entry.taskPath === "string" && entry.taskPath) {
+    row.addEventListener("click", () => {
+      if (window.sessionHudAPI && typeof window.sessionHudAPI.openTrellisTask === "function") {
+        window.sessionHudAPI.openTrellisTask({ taskPath: entry.taskPath, cwd: trellisPanel.cwd });
+      }
+    });
+  }
   return row;
+}
+
+function createTrellisPanel(session) {
+  const panel = document.createElement("div");
+  panel.className = "trellis-task-panel";
+  const info = trellisChipInfo(session);
+  if (info) {
+    const lines = String(info.title || "").split("\n");
+    const title = document.createElement("div");
+    title.className = "trellis-detail-title";
+    title.textContent = lines[0] || "";
+    panel.appendChild(title);
+    const guide = document.createElement("div");
+    guide.className = "trellis-detail-guide";
+    guide.textContent = lines[1] || "";
+    panel.appendChild(guide);
+    if (lines.length > 2) {
+      const command = document.createElement("div");
+      command.className = "trellis-detail-guide";
+      command.textContent = lines.slice(2).join(" ");
+      panel.appendChild(command);
+    }
+  }
+  const list = document.createElement("div");
+  list.className = "trellis-panel-list";
+  if (trellisPanel.loading) {
+    const hint = document.createElement("div");
+    hint.className = "trellis-detail-guide";
+    hint.textContent = t("sessionHudTrellisPanelLoading");
+    list.appendChild(hint);
+  } else if (!trellisPanel.result || trellisPanel.result.status !== "ok") {
+    const hint = document.createElement("div");
+    hint.className = "trellis-detail-guide";
+    hint.textContent = t("sessionHudTrellisPanelEmpty");
+    list.appendChild(hint);
+  } else {
+    const active = Array.isArray(trellisPanel.result.active) ? trellisPanel.result.active : [];
+    const archived = Array.isArray(trellisPanel.result.archived) ? trellisPanel.result.archived : [];
+    if (active.length || archived.length) {
+      if (active.length) {
+        const head = document.createElement("div");
+        head.className = "trellis-panel-head";
+        head.textContent = t("sessionHudTrellisPanelActive");
+        list.appendChild(head);
+        for (const entry of active) list.appendChild(trellisPanelTaskRow(entry, false));
+      }
+      if (archived.length) {
+        const head = document.createElement("div");
+        head.className = "trellis-panel-head";
+        head.textContent = t("sessionHudTrellisPanelDone");
+        list.appendChild(head);
+        for (const entry of archived) list.appendChild(trellisPanelTaskRow(entry, true));
+      }
+    } else {
+      const hint = document.createElement("div");
+      hint.className = "trellis-detail-guide";
+      hint.textContent = t("sessionHudTrellisPanelEmpty");
+      list.appendChild(hint);
+    }
+  }
+  panel.appendChild(list);
+  const all = document.createElement("div");
+  all.className = "trellis-panel-all";
+  all.textContent = t("sessionHudTrellisPanelAll");
+  all.addEventListener("click", () => {
+    if (window.sessionHudAPI && typeof window.sessionHudAPI.openTrellisTask === "function") {
+      window.sessionHudAPI.openTrellisTask({ taskPath: "", cwd: trellisPanel.cwd });
+    }
+  });
+  panel.appendChild(all);
+  return panel;
 }
 
 function reportTrellisDetailHeight() {
   const measure = () => {
-    const rows = document.querySelectorAll(".trellis-detail");
+    const rows = document.querySelectorAll(".trellis-detail, .trellis-task-panel");
     let total = 0;
     for (const row of rows) total += row.offsetHeight + 4; // 2px margin top + bottom
     if (window.sessionHudAPI && typeof window.sessionHudAPI.setTrellisDetailHeight === "function") {
@@ -262,12 +413,21 @@ function trellisChipInfo(session) {
       .replace("{done}", String(Math.max(0, Math.trunc(Number(info.progress && info.progress.done) || 0))))
       .replace("{total}", String(Math.max(0, Math.trunc(Number(info.progress && info.progress.total) || 0))));
   }
+  // Process-level hint (09-27 hud-process-awareness): the latest trellis
+  // command from the session transcript, optionally with the workflow
+  // Next-Action step. Absent → the title stays byte-identical to before.
+  let title = t("sessionHudTrellisTooltip")
+    .replace("{title}", info.title || info.taskPath || "")
+    .replace("{phase}", t(phase.key)) + (hint ? "\n" + hint : "");
+  if (info.command) {
+    let commandLine = t("sessionHudTrellisCommand").replace("{command}", info.command);
+    if (info.workflowNextAction) commandLine += ` — ${info.workflowNextAction}`;
+    title += "\n" + commandLine;
+  }
   return {
     label,
     cls: phase.cls,
-    title: t("sessionHudTrellisTooltip")
-      .replace("{title}", info.title || info.taskPath || "")
-      .replace("{phase}", t(phase.key)) + (hint ? "\n" + hint : ""),
+    title,
   };
 }
 
@@ -276,6 +436,9 @@ const FOCUS_UNAVAILABLE_SVG = `<svg width="11" height="11" viewBox="0 0 24 24" f
 const FOLDER_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h6l2 2h10v9H3z"/><path d="M3 7V5h6l2 2"/></svg>`;
 const PIN_SVG_FILLED = `<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M14 4l6 6-4 1-3 3 1 5-2 1-4-4-5 5-1-1 5-5-4-4 1-2 5 1 3-3 1-4z"/></svg>`;
 const PIN_SVG_OUTLINE = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M14 4l6 6-4 1-3 3 1 5-2 1-4-4-5 5-1-1 5-5-4-4 1-2 5 1 3-3 1-4z"/></svg>`;
+// Three-node tree/branch lines — the trellis workflow glyph, same stroke
+// family as PIN_SVG_OUTLINE so the two HUD corner buttons read as a pair.
+const TRELLIS_SVG = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="2.4"/><circle cx="5.5" cy="18.5" r="2.4"/><circle cx="18.5" cy="18.5" r="2.4"/><path d="M12 7.5V11"/><path d="M12 11l-5 5"/><path d="M12 11l5 5"/></svg>`;
 
 function updateUnread(sessions) {
   const now = Date.now();
@@ -410,14 +573,12 @@ function createRowForSession(session, now) {
     chip.className = `trellis-chip ${trellisInfo.cls}`;
     chip.textContent = trellisInfo.label;
     // Native title tooltips never show in the HUD host (non-activating
-    // transparent window suppresses system help tags on macOS). Click the
-    // chip to expand the HUD with an inline detail row under this line.
+    // transparent window suppresses system help tags on macOS), so the
+    // phase/progress/command context rides this title. The chip is
+    // informational only (09-27 hud-trellis-icon-entry): clicks bubble to
+    // the row's official focus handler; the panel opens from the trellis
+    // icon button beside the pin.
     chip.title = trellisInfo.title;
-    chip.addEventListener("click", (event) => {
-      event.stopPropagation();
-      toggleTrellisDetail(session.id);
-    });
-    if (trellisExpandedSessions.has(session.id)) chip.classList.add("trellis-chip-active");
     right.appendChild(chip);
     hasRightContent = true;
   }
@@ -499,6 +660,13 @@ function createRowForSession(session, now) {
   row.appendChild(left);
   if (hasRightContent) row.appendChild(right);
 
+  // 09-27 hud-trellis-icon-entry: back to the fork-official single-click
+  // semantics — dismiss the unread bell, jump to the terminal (or explain
+  // why not), and ack the completion fire-and-forget. The trellis panel
+  // moved to its own icon button; the jump keeps an open panel alive
+  // (09-28 hud-jump-keeps-panel) — the HUD anchor is unchanged and the
+  // panel's owner row stays expanded, so the panel is still there when
+  // the user comes back from the terminal.
   row.addEventListener("click", () => {
     unreadSessions.delete(session.id);
     if (canFocus) {
@@ -507,9 +675,6 @@ function createRowForSession(session, now) {
     } else {
       showSessionFeedback(session.id, focusUnavailableTooltip(session));
     }
-    // Fire-and-forget: the row click's primary intent is focus / unread
-    // dismissal. ack failure shouldn't block the UI — the next snapshot
-    // will reconcile the lifecycle flag.
     if (window.sessionHudAPI && typeof window.sessionHudAPI.ackCompletion === "function") {
       Promise.resolve(window.sessionHudAPI.ackCompletion(session.id)).catch((err) => {
         console.warn("ack completion threw:", err);
@@ -560,6 +725,25 @@ function createPinButton(pinned) {
   return btn;
 }
 
+// 09-27 hud-trellis-icon-entry: the trellis panel's ONLY entry — a permanent
+// icon button beside the pin. Row clicks are back to the fork-official jump
+// semantics, so the project task panel lives behind this button.
+function createTrellisToggleButton() {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = trellisPanel.open ? "trellis-btn active" : "trellis-btn";
+  btn.innerHTML = TRELLIS_SVG;
+  btn.title = t("sessionHudTrellisToggleTooltip");
+  btn.setAttribute("aria-label", t("sessionHudTrellisToggleTooltip"));
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    // No cwd-bearing session → nothing to anchor a panel to, no-op.
+    const anchor = lastBoundExpandedSession();
+    if (anchor) toggleTrellisPanel(anchor);
+  });
+  return btn;
+}
+
 function render() {
   const sessions = orderedHudSessions(snapshot);
   const currentIds = new Set(sessions.map((session) => session.id));
@@ -580,15 +764,21 @@ function render() {
 
   const now = Date.now();
   const { expanded, folded } = splitHudLayout(sessions);
-  const expandedIds = new Set(expanded.map((session) => session.id));
-  for (const sessionId of trellisExpandedSessions) {
-    if (!expandedIds.has(sessionId)) trellisExpandedSessions.delete(sessionId);
-  }
 
   for (const session of expanded) {
     hudEl.appendChild(createRowForSession(session, now));
-    if (trellisExpandedSessions.has(session.id)) {
-      hudEl.appendChild(createTrellisDetailRow(session));
+  }
+  // The panel lives BELOW all session rows (project-scoped, opened from the
+  // trellis icon button beside the pin). Its owner just has to still be an
+  // expanded row — an active-task binding is NOT required (the task may
+  // have been archived while the panel was open; the list keeps serving
+  // from disk).
+  if (trellisPanel.open) {
+    const owner = expanded.find((session) => session.id === trellisPanel.sessionId);
+    if (owner) {
+      hudEl.appendChild(createTrellisPanel(owner));
+    } else {
+      closeTrellisPanel();
     }
   }
   reportTrellisDetailHeight();
@@ -597,6 +787,7 @@ function render() {
   }
 
   hudEl.appendChild(createPinButton(snapshot.hudPinned === true));
+  hudEl.appendChild(createTrellisToggleButton());
 }
 
 function updateElapsedLabels() {

@@ -199,16 +199,14 @@ function isoAgo(clockNow, msAgo) {
   return new Date(clockNow - msAgo).toISOString();
 }
 
-function makeHarness({ sessions = new Map(), getLiveSessions = null } = {}) {
+function makeHarness({ sessions = new Map(), getLiveSessions = null, extra = {} } = {}) {
   const fakeFs = makeFakeFs();
   const timers = makeFakeTimers();
   const clock = { now: 1758000000000 };
   const updates = [];
-  const celebrations = [];
-  const aggregates = [];
-  const phaseTransitions = [];
   const activity = createTrellisActivity({
     state: { sessions },
+    ...extra,
     ...(getLiveSessions ? { getLiveSessions } : {}),
     fs: fakeFs.fsApi,
     syncFs: fakeFs.syncApi,
@@ -216,11 +214,8 @@ function makeHarness({ sessions = new Map(), getLiveSessions = null } = {}) {
     setTimeoutFn: timers.setTimeoutFn,
     clearTimeoutFn: timers.clearTimeoutFn,
     onTrellisUpdate: (ids) => updates.push(ids),
-    onCelebration: (taskPath) => celebrations.push(taskPath),
-    onPhaseTransition: (transition) => phaseTransitions.push(transition),
-    onAggregateChange: (aggregate) => aggregates.push(aggregate),
   });
-  return { fakeFs, timers, clock, updates, celebrations, aggregates, phaseTransitions, activity, sessions };
+  return { fakeFs, timers, clock, updates, activity, sessions };
 }
 
 function addTask(fake, taskName, taskJson, { prd = false, implementMd = null, root = PROJECT } = {}) {
@@ -250,6 +245,163 @@ function pointerPayload({ platform, currentTask, seenAgoMs = 5 * 60 * 1000, cloc
 const IN_PROGRESS_TASK = { title: "Trellis 流程感知", status: "in_progress", subtasks: [] };
 
 // ── pointer binding (design D1) ──
+
+describe("trellis-activity process-level trace", () => {
+  const RAW_ID = "f0fb3c8b-247f-4322-a63b-059047d13796";
+
+  function attachmentLine(status, nextAction) {
+    const content = `<system-reminder>\nUserPromptSubmit hook additional context: <workflow-state>\nStatus: ${status}\nNext-Action: ${nextAction}\n</workflow-state>\n</system-reminder>`;
+    return JSON.stringify({ type: "attachment", rendered: [{ content }] });
+  }
+
+  function commandLine(name) {
+    return JSON.stringify({
+      type: "user",
+      message: { role: "user", content: [{ type: "text", text: `<command-message>trellis-${name}</command-message>\n<command-name>/trellis-${name}</command-name>` }] },
+    });
+  }
+
+  function decoyAssistantLine() {
+    // Same literals inside assistant thinking/text — the extraction must
+    // never accept them (observed on the real f0fb3c8b session).
+    return JSON.stringify({
+      type: "assistant",
+      message: { content: [
+        { type: "thinking", thinking: "<workflow-state>\nStatus: fake\nNext-Action: decoy step" },
+        { type: "text", text: "<command-name>/trellis-meta</command-name>" },
+      ] },
+    });
+  }
+
+  function makeTraceHarness(tailText) {
+    const readTailCalls = [];
+    let round = 0;
+    const tails = Array.isArray(tailText) ? tailText : [tailText];
+    const h = makeHarness({
+      sessions: new Map([[RAW_ID, { agentId: "claude-code", cwd: CWD }]]),
+      extra: {
+        homedir: () => "/home/tester",
+        readTail: async (filePath, maxBytes) => {
+          readTailCalls.push({ filePath, maxBytes, round });
+          const text = tails[Math.min(round, tails.length - 1)];
+          round += 1;
+          return text;
+        },
+      },
+    });
+    return { h, readTailCalls };
+  }
+
+  function seedBinding(h) {
+    addTask(h.fakeFs, "09-27-t", IN_PROGRESS_TASK, { prd: true });
+    addPointer(
+      h.fakeFs,
+      `claude_${RAW_ID}.json`,
+      pointerPayload({ platform: "claude", currentTask: ".trellis/tasks/09-27-t", clockNow: h.clock.now })
+    );
+  }
+
+  it("extracts the latest trellis command and workflow step for a bound claude-code session", async () => {
+    const tail = [
+      "truncated-half-line-garbage", // dropped: first segment after the byte-window split
+      commandLine("brainstorm"),
+      attachmentLine("planning", "ask the single highest-value question"),
+      decoyAssistantLine(),
+      attachmentLine("in_progress", "dispatch trellis-implement"),
+      JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text: "继续" }] } }),
+    ].join("\n");
+    const { h, readTailCalls } = makeTraceHarness(tail);
+    seedBinding(h);
+
+    h.activity.start();
+    await h.timers.runDue();
+
+    const info = h.activity.getTrellisInfo(RAW_ID);
+    assert.strictEqual(info.phase, "execute");
+    assert.strictEqual(info.command, "brainstorm", "latest trellis command wins");
+    assert.strictEqual(info.workflowStatus, "in_progress", "latest workflow-state block wins");
+    assert.strictEqual(info.workflowNextAction, "dispatch trellis-implement");
+    // Shape-anchored extraction: the assistant decoys never leak through.
+    assert.notEqual(info.workflowStatus, "fake");
+    assert.notEqual(info.command, "meta");
+    // The transcript path mirrors Claude Code's sanitized-cwd convention.
+    assert.strictEqual(readTailCalls.length, 1);
+    // /proj/app sanitizes to "-proj-app" (slash → "-", rest of [A-Za-z0-9.-] → "-").
+    assert.strictEqual(readTailCalls[0].filePath,
+      `/home/tester/.claude/projects/-proj-app/${RAW_ID}.jsonl`);
+    assert.strictEqual(readTailCalls[0].maxBytes, 512 * 1024);
+  });
+
+  it("degrades to absent fields when the command falls outside the tail window", async () => {
+    const tail = [
+      "garbage-head",
+      attachmentLine("in_progress", "keep implementing"),
+    ].join("\n");
+    const { h } = makeTraceHarness(tail);
+    seedBinding(h);
+
+    h.activity.start();
+    await h.timers.runDue();
+
+    const info = h.activity.getTrellisInfo(RAW_ID);
+    assert.strictEqual(info.command, undefined);
+    assert.strictEqual(info.workflowStatus, "in_progress");
+  });
+
+  it("returns the plain binding when the transcript is missing or unreadable", async () => {
+    const { h } = makeTraceHarness(null);
+    // readTail returns null (ENOENT semantics) — binding itself unaffected.
+    const h2 = makeHarness({
+      sessions: new Map([[RAW_ID, { agentId: "claude-code", cwd: CWD }]]),
+      extra: { homedir: () => "/home/tester", readTail: async () => null },
+    });
+    seedBinding(h2);
+    h2.activity.start();
+    await h2.timers.runDue();
+    const info = h2.activity.getTrellisInfo(RAW_ID);
+    assert.strictEqual(info.phase, "execute");
+    assert.strictEqual(info.command, undefined);
+    assert.strictEqual(info.workflowStatus, undefined);
+  });
+
+  it("never reads the transcript for non-claude-code sessions", async () => {
+    const readTailCalls = [];
+    const h = makeHarness({
+      sessions: new Map([["pi:01a0b040-370d-70b0-8e1a-9c8626dfd17e", { agentId: "pi", cwd: CWD }]]),
+      extra: {
+        homedir: () => "/home/tester",
+        readTail: async () => { readTailCalls.push(1); return ""; },
+      },
+    });
+    addTask(h.fakeFs, "09-27-t", IN_PROGRESS_TASK, { prd: true });
+    addPointer(
+      h.fakeFs,
+      "pi_01a0b040-370d-70b0-8e1a-9c8626dfd17e.json",
+      pointerPayload({ platform: "pi", currentTask: ".trellis/tasks/09-27-t", clockNow: h.clock.now })
+    );
+    h.activity.start();
+    await h.timers.runDue();
+    assert.strictEqual(h.activity.getTrellisInfo("pi:01a0b040-370d-70b0-8e1a-9c8626dfd17e").phase, "execute");
+    assert.deepStrictEqual(readTailCalls, [], "pi sessions never touch the claude transcript");
+  });
+
+  it("notifies again when the workflow step changes across rounds", async () => {
+    const { h } = makeTraceHarness([
+      ["garbage-head", commandLine("brainstorm"), attachmentLine("planning", "ask a question")].join("\n"),
+      ["garbage-head", commandLine("brainstorm"), attachmentLine("planning", "write the PRD")].join("\n"),
+    ]);
+    seedBinding(h);
+    h.activity.start();
+    await h.timers.runDue();
+    assert.deepStrictEqual(h.updates, [[RAW_ID]]);
+
+    h.clock.now += 6000;
+    await h.timers.runDue();
+    assert.deepStrictEqual(h.updates, [[RAW_ID], [RAW_ID]],
+      "a workflowNextAction change must re-emit the snapshot");
+    assert.strictEqual(h.activity.getTrellisInfo(RAW_ID).workflowNextAction, "write the PRD");
+  });
+});
 
 describe("trellis-activity pointer binding", () => {
   it("binds a pi session through its namespaced id (prefix stripped)", async () => {
@@ -668,124 +820,6 @@ describe("trellis-activity gating & backoff", () => {
 });
 
 // ── phase transitions & celebrations (design D5) ──
-
-describe("trellis-activity phase transitions", () => {
-  function setupTask(h, taskJson) {
-    addTask(h.fakeFs, "task-a", taskJson);
-    addPointer(h.fakeFs, "pi_mine.json", pointerPayload({ platform: "pi", currentTask: ".trellis/tasks/task-a", clockNow: h.clock.now }));
-  }
-
-  it("seeds the first observation silently (no celebration on boot)", async () => {
-    const h = makeHarness({
-      sessions: new Map([["pi:mine", { agentId: "pi", cwd: CWD }]]),
-    });
-    setupTask(h, { title: "A", status: "completed", subtasks: [] });
-
-    h.activity.start();
-    await h.timers.runDue();
-
-    assert.strictEqual(h.activity.getTrellisInfo("pi:mine").phase, "finish");
-    assert.deepStrictEqual(h.celebrations, []);
-  });
-
-  it("does not celebrate planning → in_progress", async () => {
-    const h = makeHarness({
-      sessions: new Map([["pi:mine", { agentId: "pi", cwd: CWD }]]),
-    });
-    setupTask(h, { title: "A", status: "planning", subtasks: [] });
-    h.activity.start();
-    await h.timers.runDue();
-
-    addTask(h.fakeFs, "task-a", { title: "A", status: "in_progress", subtasks: [] });
-    await h.timers.runDue();
-
-    assert.strictEqual(h.activity.getTrellisInfo("pi:mine").phase, "execute");
-    assert.deepStrictEqual(h.celebrations, []);
-  });
-
-  it("celebrates in_progress → completed once with the relative task path", async () => {
-    const h = makeHarness({
-      sessions: new Map([["pi:mine", { agentId: "pi", cwd: CWD }]]),
-    });
-    setupTask(h, { title: "A", status: "in_progress", subtasks: [] });
-    h.activity.start();
-    await h.timers.runDue();
-
-    addTask(h.fakeFs, "task-a", { title: "A", status: "completed", subtasks: [] });
-    await h.timers.runDue();
-
-    assert.deepStrictEqual(h.celebrations, [".trellis/tasks/task-a"]);
-  });
-
-  it("suppresses a finish → done double-celebration within 10s but still updates", async () => {
-    const h = makeHarness({
-      sessions: new Map([["pi:mine", { agentId: "pi", cwd: CWD }]]),
-    });
-    setupTask(h, { title: "A", status: "in_progress", subtasks: [] });
-    h.activity.start();
-    await h.timers.runDue();
-
-    addTask(h.fakeFs, "task-a", { title: "A", status: "completed", subtasks: [] });
-    await h.timers.runDue();
-    assert.strictEqual(h.celebrations.length, 1);
-
-    // Archive move 5s later: phase becomes done, the second cheer is
-    // suppressed by the 10s window, but the diff notification still fires.
-    h.clock.now += 5 * 1000;
-    h.fakeFs.remove(path.join(PROJECT, ".trellis", "tasks", "task-a", "task.json"));
-    h.fakeFs.add(
-      path.join(PROJECT, ".trellis", "tasks", "archive", "2026-09", "task-a", "task.json"),
-      JSON.stringify({ title: "A", status: "completed", subtasks: [] })
-    );
-    const updatesBefore = h.updates.length;
-    await h.timers.runDue();
-
-    assert.strictEqual(h.activity.getTrellisInfo("pi:mine").phase, "done");
-    assert.strictEqual(h.celebrations.length, 1);
-    assert.strictEqual(h.updates.length, updatesBefore + 1);
-  });
-
-  it("celebrates the archive transition again once the window has passed", async () => {
-    const h = makeHarness({
-      sessions: new Map([["pi:mine", { agentId: "pi", cwd: CWD }]]),
-    });
-    setupTask(h, { title: "A", status: "in_progress", subtasks: [] });
-    h.activity.start();
-    await h.timers.runDue();
-
-    addTask(h.fakeFs, "task-a", { title: "A", status: "completed", subtasks: [] });
-    await h.timers.runDue();
-
-    h.clock.now += 11 * 1000;
-    h.fakeFs.remove(path.join(PROJECT, ".trellis", "tasks", "task-a", "task.json"));
-    h.fakeFs.add(
-      path.join(PROJECT, ".trellis", "tasks", "archive", "2026-09", "task-a", "task.json"),
-      JSON.stringify({ title: "A", status: "completed", subtasks: [] })
-    );
-    await h.timers.runDue();
-
-    assert.deepStrictEqual(h.celebrations, [".trellis/tasks/task-a", ".trellis/tasks/archive/2026-09/task-a"]);
-  });
-
-  it("drops the binding when the task vanishes without an archive copy", async () => {
-    const h = makeHarness({
-      sessions: new Map([["pi:mine", { agentId: "pi", cwd: CWD }]]),
-    });
-    setupTask(h, { title: "A", status: "in_progress", subtasks: [] });
-    h.activity.start();
-    await h.timers.runDue();
-    assert.ok(h.activity.getTrellisInfo("pi:mine"));
-
-    h.fakeFs.remove(path.join(PROJECT, ".trellis", "tasks", "task-a", "task.json"));
-    await h.timers.runDue();
-
-    assert.strictEqual(h.activity.getTrellisInfo("pi:mine"), null);
-    assert.deepStrictEqual(h.updates.at(-1), ["pi:mine"]);
-  });
-});
-
-// ── diff notifications (design D4) ──
-
 describe("trellis-activity diff notifications", () => {
   it("does not re-notify when nothing changed", async () => {
     const h = makeHarness({
@@ -871,164 +905,6 @@ describe("trellis-activity diff notifications", () => {
 });
 
 // ── onPhaseTransition (v3 lifecycle feedback) ──
-
-describe("trellis-activity onPhaseTransition", () => {
-  function setupBound(h, taskJson, extra = {}) {
-    addTask(h.fakeFs, "task-a", taskJson, extra);
-    addPointer(
-      h.fakeFs,
-      "pi_mine.json",
-      pointerPayload({ platform: "pi", currentTask: ".trellis/tasks/task-a", clockNow: h.clock.now })
-    );
-  }
-
-  it("seeds the first observation silently (no transition on boot)", async () => {
-    const h = makeHarness({
-      sessions: new Map([["pi:mine", { agentId: "pi", cwd: CWD }]]),
-    });
-    setupBound(h, { title: "A", status: "in_progress", subtasks: [] });
-    h.activity.start();
-    await h.timers.runDue();
-
-    assert.deepStrictEqual(h.phaseTransitions, []);
-  });
-
-  it("fires plan → execute with title and both phases", async () => {
-    const h = makeHarness({
-      sessions: new Map([["pi:mine", { agentId: "pi", cwd: CWD }]]),
-    });
-    setupBound(h, { title: "A", status: "planning", subtasks: [] });
-    h.activity.start();
-    await h.timers.runDue();
-
-    addTask(h.fakeFs, "task-a", { title: "A", status: "in_progress", subtasks: [] });
-    await h.timers.runDue();
-
-    assert.deepStrictEqual(h.phaseTransitions, [
-      { taskPath: ".trellis/tasks/task-a", title: "A", fromPhase: "plan", toPhase: "execute" },
-    ]);
-  });
-
-  it("stays silent when only non-phase facts change", async () => {
-    const h = makeHarness({
-      sessions: new Map([["pi:mine", { agentId: "pi", cwd: CWD }]]),
-    });
-    setupBound(
-      h,
-      { title: "A", status: "in_progress", subtasks: [] },
-      { implementMd: "- [ ] one\n- [ ] two" }
-    );
-    h.activity.start();
-    await h.timers.runDue();
-
-    addTask(
-      h.fakeFs,
-      "task-a",
-      { title: "A", status: "in_progress", subtasks: [] },
-      { implementMd: "- [x] one\n- [ ] two" }
-    );
-    await h.timers.runDue();
-
-    assert.deepStrictEqual(h.phaseTransitions, []);
-  });
-
-  it("fires execute → check when the checklist completes", async () => {
-    const h = makeHarness({
-      sessions: new Map([["pi:mine", { agentId: "pi", cwd: CWD }]]),
-    });
-    setupBound(
-      h,
-      { title: "A", status: "in_progress", subtasks: [] },
-      { implementMd: "- [ ] one" }
-    );
-    h.activity.start();
-    await h.timers.runDue();
-
-    addTask(
-      h.fakeFs,
-      "task-a",
-      { title: "A", status: "in_progress", subtasks: [] },
-      { implementMd: "- [x] one" }
-    );
-    await h.timers.runDue();
-
-    assert.deepStrictEqual(h.phaseTransitions, [
-      { taskPath: ".trellis/tasks/task-a", title: "A", fromPhase: "execute", toPhase: "check" },
-    ]);
-  });
-
-  it("fires → finish alongside the celebration (both channels)", async () => {
-    const h = makeHarness({
-      sessions: new Map([["pi:mine", { agentId: "pi", cwd: CWD }]]),
-    });
-    setupBound(h, { title: "A", status: "in_progress", subtasks: [] });
-    h.activity.start();
-    await h.timers.runDue();
-
-    addTask(h.fakeFs, "task-a", { title: "A", status: "completed", subtasks: [] });
-    await h.timers.runDue();
-
-    assert.strictEqual(h.phaseTransitions.length, 1);
-    assert.strictEqual(h.phaseTransitions[0].toPhase, "finish");
-    assert.deepStrictEqual(h.celebrations, [".trellis/tasks/task-a"]);
-  });
-
-  it("fires → done on the archive move (readTaskInfo fallback)", async () => {
-    const h = makeHarness({
-      sessions: new Map([["pi:mine", { agentId: "pi", cwd: CWD }]]),
-    });
-    setupBound(h, { title: "A", status: "in_progress", subtasks: [] });
-    h.activity.start();
-    await h.timers.runDue();
-
-    addTask(h.fakeFs, "task-a", { title: "A", status: "completed", subtasks: [] });
-    await h.timers.runDue();
-
-    h.clock.now += 11 * 1000;
-    h.fakeFs.remove(path.join(PROJECT, ".trellis", "tasks", "task-a", "task.json"));
-    h.fakeFs.add(
-      path.join(PROJECT, ".trellis", "tasks", "archive", "2026-09", "task-a", "task.json"),
-      JSON.stringify({ title: "A", status: "completed", subtasks: [] })
-    );
-    await h.timers.runDue();
-
-    assert.deepStrictEqual(h.phaseTransitions, [
-      { taskPath: ".trellis/tasks/task-a", title: "A", fromPhase: "execute", toPhase: "finish" },
-      { taskPath: ".trellis/tasks/archive/2026-09/task-a", title: "A", fromPhase: "finish", toPhase: "done" },
-    ]);
-  });
-
-  it("fires a title-less done transition when the pointer vanished with the archive move", async () => {
-    const h = makeHarness({
-      sessions: new Map([["pi:mine", { agentId: "pi", cwd: CWD }]]),
-    });
-    setupBound(h, { title: "A", status: "in_progress", subtasks: [] });
-    h.activity.start();
-    await h.timers.runDue();
-
-    addTask(h.fakeFs, "task-a", { title: "A", status: "completed", subtasks: [] });
-    await h.timers.runDue();
-
-    h.clock.now += 11 * 1000;
-    // task.py archive also deletes the session pointer: the binding is gone,
-    // so the done transition surfaces through the taskRelPaths fallback.
-    h.fakeFs.remove(path.join(PROJECT, ".trellis", ".runtime", "sessions", "pi_mine.json"));
-    h.fakeFs.remove(path.join(PROJECT, ".trellis", "tasks", "task-a", "task.json"));
-    h.fakeFs.add(
-      path.join(PROJECT, ".trellis", "tasks", "archive", "2026-09", "task-a", "task.json"),
-      JSON.stringify({ title: "A", status: "completed", subtasks: [] })
-    );
-    await h.timers.runDue();
-
-    assert.deepStrictEqual(h.phaseTransitions, [
-      { taskPath: ".trellis/tasks/task-a", title: "A", fromPhase: "execute", toPhase: "finish" },
-      { taskPath: ".trellis/tasks/task-a", title: null, fromPhase: null, toPhase: "done" },
-    ]);
-  });
-});
-
-// ── getByProject (phase 5 / R5 — Settings tab digest) ──
-
 describe("trellis-activity getByProject", () => {
   it("returns the active task digest built by the polling pass", async () => {
     const h = makeHarness({
@@ -1426,130 +1302,6 @@ describe("trellis-activity lifecycle", () => {
 });
 
 // ── project aggregates (avatar R3/R3.1) ──
-
-describe("trellis-activity project aggregates", () => {
-  function bindCodex(h, { taskName = "task-a", taskJson = IN_PROGRESS_TASK } = {}) {
-    addTask(h.fakeFs, taskName, taskJson, { prd: true });
-    addPointer(
-      h.fakeFs,
-      "codex_s1.json",
-      pointerPayload({ platform: "codex", currentTask: `.trellis/tasks/${taskName}`, clockNow: h.clock.now })
-    );
-  }
-
-  it("counts executing tasks of bound roots and reports them once on change", async () => {
-    const h = makeHarness({
-      sessions: new Map([["s1", { agentId: "codex", cwd: CWD }]]),
-    });
-    bindCodex(h);
-    addTask(h.fakeFs, "task-b", { title: "B", status: "in_progress", subtasks: [] });
-    addTask(h.fakeFs, "task-c", { title: "C", status: "completed", subtasks: [] });
-
-    h.activity.start();
-    await h.timers.runDue();
-
-    assert.strictEqual(h.activity.getExecutingCount(), 2);
-    assert.strictEqual(h.activity.hasPlanningBinding(), false);
-    assert.deepStrictEqual(h.aggregates, [{ executingCount: 2, planningActive: false }]);
-
-    // Steady rounds with nothing changed must not re-fan-out.
-    await h.timers.runDue();
-    assert.strictEqual(h.aggregates.length, 1);
-  });
-
-  it("dedupes one root across sessions bound to different tasks", async () => {
-    const h = makeHarness({
-      sessions: new Map([
-        ["s1", { agentId: "codex", cwd: CWD }],
-        ["s2", { agentId: "claude-code", cwd: CWD }],
-      ]),
-    });
-    bindCodex(h, { taskName: "task-a" });
-    addTask(h.fakeFs, "task-b", { title: "B", status: "in_progress", subtasks: [] });
-    addPointer(
-      h.fakeFs,
-      "claude_s2.json",
-      pointerPayload({ platform: "claude", currentTask: ".trellis/tasks/task-b", clockNow: h.clock.now })
-    );
-
-    h.activity.start();
-    await h.timers.runDue();
-
-    assert.strictEqual(h.activity.getExecutingCount(), 2);
-    assert.deepStrictEqual(h.aggregates, [{ executingCount: 2, planningActive: false }]);
-  });
-
-  it("flags planning bindings and clears them when the task moves to executing", async () => {
-    const h = makeHarness({
-      sessions: new Map([["s1", { agentId: "codex", cwd: CWD }]]),
-    });
-    bindCodex(h, { taskJson: { title: "A", status: "planning", subtasks: [] } });
-
-    h.activity.start();
-    await h.timers.runDue();
-
-    assert.strictEqual(h.activity.hasPlanningBinding(), true);
-    assert.strictEqual(h.activity.getExecutingCount(), 0);
-    assert.deepStrictEqual(h.aggregates, [{ executingCount: 0, planningActive: true }]);
-
-    // Task moves planning → in_progress. parallelCount rides a 30s TTL cache,
-    // so advance past it before the next round.
-    h.fakeFs.add(
-      path.join(PROJECT, ".trellis", "tasks", "task-a", "task.json"),
-      JSON.stringify({ title: "A", status: "in_progress", subtasks: [] })
-    );
-    h.clock.now += 31 * 1000;
-    await h.timers.runDue();
-
-    assert.strictEqual(h.activity.hasPlanningBinding(), false);
-    assert.strictEqual(h.activity.getExecutingCount(), 1);
-    assert.deepStrictEqual(h.aggregates, [
-      { executingCount: 0, planningActive: true },
-      { executingCount: 1, planningActive: false },
-    ]);
-  });
-
-  it("clears aggregates when the last bound session disappears", async () => {
-    const h = makeHarness({
-      sessions: new Map([["s1", { agentId: "codex", cwd: CWD }]]),
-    });
-    bindCodex(h);
-
-    h.activity.start();
-    await h.timers.runDue();
-    assert.strictEqual(h.activity.getExecutingCount(), 1);
-
-    h.sessions.clear();
-    await h.timers.runDue();
-
-    assert.strictEqual(h.activity.getExecutingCount(), 0);
-    assert.strictEqual(h.activity.hasPlanningBinding(), false);
-    assert.deepStrictEqual(h.aggregates, [
-      { executingCount: 1, planningActive: false },
-      { executingCount: 0, planningActive: false },
-    ]);
-  });
-
-  it("stop() resets the aggregates without fan-out", async () => {
-    const h = makeHarness({
-      sessions: new Map([["s1", { agentId: "codex", cwd: CWD }]]),
-    });
-    bindCodex(h);
-
-    h.activity.start();
-    await h.timers.runDue();
-    const fanouts = h.aggregates.length;
-    assert.ok(fanouts > 0);
-
-    h.activity.stop();
-    assert.strictEqual(h.activity.getExecutingCount(), 0);
-    assert.strictEqual(h.activity.hasPlanningBinding(), false);
-    assert.strictEqual(h.aggregates.length, fanouts);
-  });
-});
-
-// ── archived-task list + parent link (Dashboard archive/group view) ──
-
 describe("trellis-activity readTaskDoc", () => {
   const TASK_JSON = { title: "文档任务", status: "in_progress", subtasks: [] };
   const PRD_MD = "# PRD\n\n| 列 | 值 |\n| --- | --- |\n| a | b |\n";
@@ -2110,5 +1862,37 @@ describe("trellis-activity parent link", () => {
     const info = h.activity.getTrellisInfo("pi:plain");
     assert.ok(info);
     assert.ok(!("parent" in info), "blank parent must not ride along");
+  });
+});
+
+
+describe("trellis-activity readHudTaskPanel (09-27 hud-task-panel-jump)", () => {
+  function seed(fakeFs) {
+    addTask(fakeFs, "09-27-cur", { title: "当前", status: "in_progress", subtasks: [] });
+    for (let i = 0; i < 10; i += 1) {
+      const name = `old-${String(i).padStart(2, "0")}`;
+      fakeFs.add(path.join(PROJECT, ".trellis", "tasks", "archive", "2026-09", name, "task.json"),
+        JSON.stringify({ title: name, status: "completed", subtasks: [],
+          completed_at: `2026-09-${String(20 - i).padStart(2, "0")}T00:00:00.000Z` }));
+    }
+  }
+
+  it("returns the project's active tasks plus the 8 newest archived, read-only", async () => {
+    const h = makeHarness({ sessions: new Map([["s1", { agentId: "claude-code", cwd: CWD }]]) });
+    seed(h.fakeFs);
+    const result = await h.activity.readHudTaskPanel(CWD);
+    assert.strictEqual(result.status, "ok");
+    assert.deepStrictEqual(result.active.map((t) => t.taskPath), [".trellis/tasks/09-27-cur"]);
+    assert.strictEqual(result.archived.length, 8, "archived capped at 8");
+    assert.ok(result.archived[0].taskPath.endsWith("old-00"), "newest first");
+    assert.deepStrictEqual(h.fakeFs.writeOps, [], "read-only red line");
+  });
+
+  it("rejects untrusted cwds with missing, touching nothing", async () => {
+    const h = makeHarness({ sessions: new Map() });
+    seed(h.fakeFs);
+    const result = await h.activity.readHudTaskPanel("/nowhere");
+    assert.strictEqual(result.status, "missing");
+    assert.deepStrictEqual(h.fakeFs.writeOps, []);
   });
 });

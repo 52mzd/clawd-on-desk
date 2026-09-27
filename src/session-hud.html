@@ -8,6 +8,13 @@
 * { box-sizing: border-box; }
 
 :root {
+  /* 09-27 hud-panel-readability: HUD-wide type scale. Every font-size in this
+     file references one of these tokens — bare px values are a style-test
+     violation. main = session rows / panel rows, sub = secondary text,
+     badge = chips / section heads. */
+  --hud-fs-main: 14px;
+  --hud-fs-sub: 12px;
+  --hud-fs-badge: 11px;
   --hud-bg: rgba(255, 255, 255, 0.88);
   --hud-border: rgba(0, 0, 0, 0.12);
   --text: #242427;
@@ -37,7 +44,7 @@ html, body {
   background: transparent;
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
-  font-size: 12px;
+  font-size: var(--hud-fs-main);
   -webkit-font-smoothing: antialiased;
   user-select: none;
 }
@@ -58,16 +65,18 @@ body { padding: 2px 3px 8px; }
   position: relative;
 }
 
+/* Two floating corner buttons (pin + trellis toggle) share this strip; rows
+   reserve space so neither covers the right-side chips. */
 .hud.has-pin .row {
-  padding-right: 28px;
+  padding-right: 52px;
 }
 
-.pin-btn {
+.pin-btn,
+.trellis-btn {
   position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 16px;
-  height: 16px;
+  top: 6px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   border: none;
   background: transparent;
@@ -76,13 +85,24 @@ body { padding: 2px 3px 8px; }
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: 5px;
   z-index: 2;
   opacity: 0.55;
   transition: opacity 100ms ease, background 100ms ease, color 100ms ease;
 }
 
-.pin-btn:hover {
+.pin-btn { right: 4px; }
+
+/* 09-27 hud-trellis-icon-entry: the trellis panel's only entry, beside the
+   pin; highlighted while its panel is open. 22px touch targets (~macOS HIG)
+   with the SVGs scaled up a touch via CSS. */
+.trellis-btn { right: 26px; }
+
+.pin-btn svg { width: 12px; height: 12px; }
+.trellis-btn svg { width: 13px; height: 13px; }
+
+.pin-btn:hover,
+.trellis-btn:hover {
   opacity: 1;
   background: rgba(0, 0, 0, 0.06);
 }
@@ -92,15 +112,21 @@ body { padding: 2px 3px 8px; }
   color: #f59e0b;
 }
 
+.trellis-btn.active {
+  opacity: 1;
+  color: var(--done);
+}
+
 @media (prefers-color-scheme: dark) {
-  .pin-btn:hover {
+  .pin-btn:hover,
+  .trellis-btn:hover {
     background: rgba(255, 255, 255, 0.10);
   }
 }
 
 .row {
-  height: 28px;
-  flex: 0 0 28px;
+  height: 34px;
+  flex: 0 0 34px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -151,7 +177,7 @@ body { padding: 2px 3px 8px; }
 
 /* Compact source marker (🐧 WSL / 🔗 SSH) before the session title */
 .hud-source {
-  font-size: 11px;
+  font-size: var(--hud-fs-sub);
   line-height: 1;
   flex: 0 0 auto;
 }
@@ -186,7 +212,7 @@ body { padding: 2px 3px 8px; }
 
 .session-inline-feedback {
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--hud-fs-sub);
   font-weight: 500;
 }
 
@@ -229,7 +255,7 @@ body { padding: 2px 3px 8px; }
 
 .state-chip {
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: var(--hud-fs-badge);
   font-weight: 500;
   line-height: 1;
   padding: 2px 5px;
@@ -246,7 +272,7 @@ body { padding: 2px 3px 8px; }
 
 .usage-chip {
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: var(--hud-fs-badge);
   font-weight: 600;
   line-height: 1;
   padding: 2px 5px;
@@ -261,7 +287,7 @@ body { padding: 2px 3px 8px; }
    unknown phases never reach the DOM (trellisChipInfo filters them). */
 .trellis-chip {
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: var(--hud-fs-badge);
   font-weight: 500;
   line-height: 1;
   padding: 2px 5px;
@@ -273,6 +299,62 @@ body { padding: 2px 3px 8px; }
 .trellis-check { background: rgba(147, 51, 234, 0.13); color: #9333ea; }
 .trellis-finish { background: rgba(245, 158, 11, 0.15); color: #b45309; }
 .trellis-done { background: rgba(107, 114, 128, 0.13); color: #52525b; }
+
+/* 09-27 hud-task-panel-jump: the project task panel below the session rows.
+   Flex-locked like .trellis-detail (§4.1 runaway-shrink guard) and capped
+   with an inner scroll so a long list cannot grow the HUD without bound. */
+.trellis-task-panel {
+  flex: 0 0 auto;
+  margin: 2px 6px 4px;
+  padding: 5px 8px 4px;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  border-radius: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.trellis-panel-list { margin-top: 3px; }
+.trellis-panel-head {
+  font-size: var(--hud-fs-badge);
+  font-weight: 600;
+  opacity: 0.75;
+  margin-top: 4px;
+}
+.trellis-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  font-size: var(--hud-fs-main);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.trellis-panel-row:hover { background: rgba(128, 128, 128, 0.15); }
+.trellis-panel-row-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trellis-panel-row-side {
+  flex: 0 0 auto;
+  font-size: var(--hud-fs-sub);
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+.trellis-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; }
+.trellis-dot-plan { background: #2563eb; }
+.trellis-dot-execute { background: #16a34a; }
+.trellis-dot-check { background: #9333ea; }
+.trellis-dot-finish { background: #b45309; }
+.trellis-dot-done { background: #6b7280; }
+.trellis-panel-all {
+  font-size: var(--hud-fs-badge);
+  opacity: 0.75;
+  margin-top: 4px;
+  cursor: pointer;
+  text-decoration: underline;
+}
 
 @media (prefers-color-scheme: dark) {
   .chip-thinking { background: rgba(99, 102, 241, 0.20); color: #818cf8; }
@@ -356,14 +438,6 @@ body { padding: 2px 3px 8px; }
     animation: none;
   }
 }
-.trellis-chip {
-  cursor: pointer;
-}
-.trellis-chip-active {
-  background: #2f6feb;
-  border-color: #2f6feb;
-  color: #fff;
-}
 .trellis-detail {
   display: flex;
   flex-direction: column;
@@ -381,14 +455,14 @@ body { padding: 2px 3px 8px; }
   overflow: hidden;
 }
 .trellis-detail-title {
-  font-size: 11px;
+  font-size: var(--hud-fs-main);
   color: var(--text);
   white-space: normal;
   word-break: break-word;
   line-height: 1.35;
 }
 .trellis-detail-guide {
-  font-size: 10px;
+  font-size: var(--hud-fs-sub);
   color: var(--text-muted);
   white-space: normal;
   word-break: break-word;

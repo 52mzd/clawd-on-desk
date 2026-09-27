@@ -5,7 +5,10 @@
 // detects phase transitions and notifies the host. All disk access is
 // strictly read-only (readFile / stat / readdir only — design D7) and
 // confined to `<projectRoot>/.trellis/`; this module never writes, spawns,
-// or touches the network.
+// or touches the network. One addition (09-27 hud-process-awareness): the
+// bound session's Claude Code transcript tail is read (open/stat/read, a
+// bounded ≤512KB window per bound claude session per round) from
+// `~/.claude/projects/` for process-level HUD hints — still read-only.
 //
 // Polling shape (design D3): a self-scheduling setTimeout chain modelled on
 // src/claude-settings-watcher.js (scheduleHealthCheck L286-299 /
@@ -49,7 +52,6 @@ const ROOT_SEARCH_MAX_DEPTH = 8;
 const CHILD_PROJECT_MAX = 32;
 const ROOT_NEGATIVE_TTL_MS = 60 * 1000;
 const FALLBACK_MAX_AGE_MS = 30 * 60 * 1000;
-const CELEBRATION_MIN_INTERVAL_MS = 10 * 1000;
 const PARALLEL_COUNT_TTL_MS = 30 * 1000;
 
 function toPosix(p) {
@@ -67,12 +69,13 @@ function createTrellisActivity(options) {
   // so tests can fake it without touching the async polling fs.
   const syncFs = opts.syncFs || require("fs");
   const nowFn = typeof opts.now === "function" ? opts.now : Date.now;
+  // Optional tail-read injection (09-27): tests fake it; production uses
+  // the default open/stat/read implementation below — read-only surface.
+  const readTailImpl = typeof opts.readTail === "function" ? opts.readTail : null;
+  const homeDirFn = typeof opts.homedir === "function" ? opts.homedir : require("os").homedir;
   const setTimeoutFn = opts.setTimeoutFn || setTimeout;
   const clearTimeoutFn = opts.clearTimeoutFn || clearTimeout;
   const onTrellisUpdate = typeof opts.onTrellisUpdate === "function" ? opts.onTrellisUpdate : null;
-  const onCelebration = typeof opts.onCelebration === "function" ? opts.onCelebration : null;
-  const onPhaseTransition = typeof opts.onPhaseTransition === "function" ? opts.onPhaseTransition : null;
-  const onAggregateChange = typeof opts.onAggregateChange === "function" ? opts.onAggregateChange : null;
 
   let lifecycleToken = 0;
   let pollTimer = null;
@@ -84,16 +87,6 @@ function createTrellisActivity(options) {
   const sessionCache = new Map();
   // cwd → { root } | { root: null, negativeUntil } — root lookup memo.
   const rootCache = new Map();
-  // Absolute task dir → last observed phase. The first observation seeds
-  // the baseline and never celebrates — otherwise booting Clawd onto a
-  // finished task would cheer out of nowhere.
-  const phaseHistory = new Map();
-  // Absolute task dir → taskPath (".trellis/tasks/<name>") as last reported
-  // by a live pointer. Retained across rounds so an archive-completion
-  // celebration (pointer already deleted) can still name the task.
-  const taskRelPaths = new Map();
-  // Absolute task dir → ms of the last celebration (jitter suppression, D5).
-  const lastCelebrationAt = new Map();
   // Absolute .trellis root → { count, activeTasks, computedAt } (per-root
   // summary cache: parallelCount + the Settings active-task digest).
   const parallelCache = new Map();
@@ -102,12 +95,6 @@ function createTrellisActivity(options) {
   // the trust surface of readTaskDetail / readArchiveList / readActiveList
   // so registered projects stay browsable with no live session at all.
   const persistedRoots = new Set();
-  // Project aggregates for the pet visual (avatar R3/R3.1): total executing
-  // tasks across roots that still have a bound live session, and whether any
-  // bound task is in the planning phase. Both are rewritten from the same
-  // caches each poll round — pure memory reads, zero extra IO (R4).
-  let executingCount = 0;
-  let planningActive = false;
 
   // ── lifecycle ──
 
@@ -149,12 +136,7 @@ function createTrellisActivity(options) {
     started = false;
     sessionCache.clear();
     rootCache.clear();
-    phaseHistory.clear();
-    taskRelPaths.clear();
-    lastCelebrationAt.clear();
     parallelCache.clear();
-    executingCount = 0;
-    planningActive = false;
     // persistedRoots survives stop(): it mirrors a file the caller owns,
     // not a cache this module owns.
     return wasStarted;
@@ -167,37 +149,9 @@ function createTrellisActivity(options) {
     return value === undefined ? null : value;
   }
 
-  // R3 thinking-cap gate: true while any bound live session's task is in
-  // the planning phase. The cache only holds entries for live sessions, so
-  // this cannot go stale beyond one poll round.
-  function hasPlanningBinding() {
-    for (const info of sessionCache.values()) {
-      if (info && info.phase === "plan") return true;
-    }
-    return false;
-  }
-
-  // R3.1 parallel-task juggling input: total executing tasks across roots
-  // that still have a bound live session (per-root deduped, so two sessions
-  // on one project count that project's tasks once).
-  function getExecutingCount() {
-    return executingCount;
-  }
-
-  function setAggregate(nextExecuting, nextPlanning) {
-    if (nextExecuting === executingCount && nextPlanning === planningActive) return;
-    executingCount = nextExecuting;
-    planningActive = nextPlanning;
-    if (onAggregateChange) onAggregateChange({ executingCount, planningActive });
-  }
-
-  // Aggregate fanout for rounds with no bound session left: stale bindings
-  // must not keep the wizard-hat or the juggling tier alive after the last
-  // bound session disappears from the live snapshot.
   function clearStaleBindings() {
     if (sessionCache.size === 0) return;
     sessionCache.clear();
-    setAggregate(0, false);
   }
 
   // ── read-only fs helpers ──
@@ -453,11 +407,142 @@ function createTrellisActivity(options) {
     return null;
   }
 
+  // ── Process-level trace (09-27 hud-process-awareness) ──────────────────
+  // Scans the TAIL of the bound session's Claude Code transcript for two
+  // shape-anchored signals (Measured on 2026-09-27, session f0fb3c8b of
+  // this very repo):
+  //   command — `<command-name>/trellis-xxx</command-name>` inside a
+  //             type:"user" line's message.content item text;
+  //   step    — the `<workflow-state>` block inside a type:"attachment"
+  //             line's rendered[].content, which starts with
+  //             "<system-reminder>\nUserPromptSubmit hook additional
+  //             context: <workflow-state>".
+  // Assistant thinking/text may contain the same literals (observed on
+  // this session) — extraction ONLY accepts those two message shapes,
+  // never a raw substring scan over the whole file. Any drift (rotated
+  // file, format change, tail half-line) degrades to null silently.
+  const TRACE_TAIL_BYTES = 512 * 1024;
+  const TRACE_COMMAND_RE = /<command-name>\s*\/?trellis[:-]([A-Za-z0-9-]+)/;
+  const TRACE_WS_MARKER = "UserPromptSubmit hook additional context: <workflow-state>";
+  const TRACE_STATUS_RE = /^Status:\s*(\S+)\s*$/m;
+  const TRACE_NEXT_RE = /^Next-Action:\s*(.+)$/m;
+  // 120 code points: the HUD detail row wraps (white-space: normal), so the
+  // cap only guards against pathological single-line lengths.
+  const TRACE_NEXT_MAX = 120;
+
+  // Mirrors Claude Code's ~/.claude/projects/<sanitized-cwd>/ convention —
+  // same rule as the trellis channel projectKey: backslash/slash/underscore
+  // → "-", everything else outside [A-Za-z0-9.-] → "-".
+  function claudeProjectsDirName(cwd) {
+    return path.resolve(String(cwd || "")).replace(/[\\/_]/g, "-").replace(/[^A-Za-z0-9.-]/g, "-");
+  }
+
+  function truncateTraceText(text) {
+    const chars = Array.from(String(text || ""));
+    if (chars.length <= TRACE_NEXT_MAX) return chars.join("");
+    return chars.slice(0, TRACE_NEXT_MAX).join("").trimEnd() + "…";
+  }
+
+  function extractSessionTrace(bodyText) {
+    const out = { command: null, workflowStatus: null, workflowNextAction: null };
+    const lines = String(bodyText || "").split("\n");
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      const line = lines[i];
+      if (!line || line.length < 20) continue;
+      if (out.command !== null && out.workflowStatus !== null) break;
+      const maybeAttachment = out.workflowStatus === null && line.includes("attachment");
+      const maybeCommand = out.command === null && line.includes("<command-name>");
+      if (!maybeAttachment && !maybeCommand) continue;
+      let obj;
+      try {
+        obj = JSON.parse(line);
+      } catch {
+        continue; // tail half-line or corrupt row — skip silently
+      }
+      if (obj.type === "attachment" && out.workflowStatus === null) {
+        const rendered = obj.rendered;
+        if (Array.isArray(rendered)) {
+          for (const item of rendered) {
+            const content = item && typeof item.content === "string" ? item.content : "";
+            if (!content.includes(TRACE_WS_MARKER)) continue;
+            const block = content.slice(content.indexOf(TRACE_WS_MARKER) + TRACE_WS_MARKER.length);
+            const status = TRACE_STATUS_RE.exec(block);
+            if (status) out.workflowStatus = status[1];
+            const next = TRACE_NEXT_RE.exec(block);
+            if (next) out.workflowNextAction = truncateTraceText(next[1]);
+            break;
+          }
+        }
+      } else if (obj.type === "user" && out.command === null) {
+        const content = obj.message && obj.message.content;
+        const items = Array.isArray(content)
+          ? content
+          : (typeof content === "string" ? [{ text: content }] : []);
+        for (const item of items) {
+          const text = item && typeof item.text === "string" ? item.text : "";
+          const m = TRACE_COMMAND_RE.exec(text);
+          if (m) {
+            out.command = m[1];
+            break;
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  async function readTail(filePath, maxBytes) {
+    if (readTailImpl) return readTailImpl(filePath, maxBytes);
+    const st = await fs.stat(filePath);
+    const start = Math.max(0, st.size - maxBytes);
+    const len = st.size - start;
+    if (len <= 0) return "";
+    const handle = await fs.open(filePath, "r");
+    try {
+      const buf = Buffer.alloc(len);
+      const { bytesRead } = await handle.read(buf, 0, len, start);
+      return buf.subarray(0, bytesRead).toString("utf8");
+    } finally {
+      await handle.close();
+    }
+  }
+
+  async function readSessionTrace(session, traceReads) {
+    // "claude-code" specifically (not the trellis platform alias "claude"):
+    // zcode pointers also map to the claude platform, but only Claude Code
+    // writes ~/.claude/projects/ transcripts.
+    if (session.agentId !== "claude-code") return null;
+    const rawId = session.rawSessionId || session.sessionId;
+    if (typeof rawId !== "string" || !rawId) return null;
+    if (typeof session.cwd !== "string" || !session.cwd) return null;
+    if (traceReads.has(rawId)) return traceReads.get(rawId);
+    const entry = (async () => {
+      try {
+        const file = path.join(homeDirFn(), ".claude", "projects",
+          claudeProjectsDirName(session.cwd), `${rawId}.jsonl`);
+        const tail = await readTail(file, TRACE_TAIL_BYTES);
+        if (!tail) return null;
+        // The first segment after the byte-window split may be a
+        // write-in-progress half line — drop it before parsing.
+        const nl = tail.indexOf("\n");
+        const body = nl === -1 ? "" : tail.slice(nl + 1);
+        const trace = extractSessionTrace(body);
+        if (!trace.command && !trace.workflowStatus && !trace.workflowNextAction) return null;
+        return trace;
+      } catch {
+        return null; // ENOENT / rotated / unreadable — silent degrade
+      }
+    })();
+    traceReads.set(rawId, entry);
+    return entry;
+  }
+
   async function refreshBindings(bound) {
     const taskReads = new Map(); // abs task dir → Promise<taskInfo|null>
+    const traceReads = new Map(); // raw session id → Promise<trace|null> (per round)
     const nextResolved = new Map(); // sessionId → { info, absDir } | null
     for (const { session, root } of bound) {
-      nextResolved.set(session.sessionId, await resolveSessionTrellis(session, root, taskReads));
+      nextResolved.set(session.sessionId, await resolveSessionTrellis(session, root, taskReads, traceReads));
     }
 
     // Diff against the previous round: only genuinely changed sessions are
@@ -476,23 +561,6 @@ function createTrellisActivity(options) {
     for (const [sessionId, resolved] of nextResolved) {
       sessionCache.set(sessionId, resolved ? resolved.info : null);
     }
-
-    const archived = await detectArchivedTasks(nextResolved);
-    recordPhaseTransitions(nextResolved, archived);
-
-    // R3/R3.1 project aggregate: count executing tasks per root that still
-    // has a bound session this round (resolveSessionTrellis already warmed
-    // parallelCache), then fan out only on change.
-    const boundRoots = new Set();
-    for (const { session, root } of bound) {
-      if (nextResolved.get(session.sessionId)) boundRoots.add(root);
-    }
-    let nextExecuting = 0;
-    for (const root of boundRoots) {
-      const summary = parallelCache.get(root);
-      if (summary) nextExecuting += summary.count;
-    }
-    setAggregate(nextExecuting, hasPlanningBinding());
 
     if (changed.length && onTrellisUpdate) onTrellisUpdate(changed);
   }
@@ -513,79 +581,13 @@ function createTrellisActivity(options) {
       && (a.progress ? a.progress.total : null) === (b.progress ? b.progress.total : null)
       && (a.nextStep || null) === (b.nextStep || null)
       && (a.parent || null) === (b.parent || null)
+      && (a.command || null) === (b.command || null)
+      && (a.workflowStatus || null) === (b.workflowStatus || null)
+      && (a.workflowNextAction || null) === (b.workflowNextAction || null)
     );
   }
 
-  // Phase-transition watching (D5): only arrivals at finish/done celebrate;
-  // planning → execute is announced by the working animation itself.
-  // Archive completion: `task.py archive` moves the task dir and deletes
-  // the session pointer in one commit — by the time the next poll round
-  // runs, the binding is already gone. Detect "bound last round, gone now,
-  // dir lives under archive/" and surface it as an explicit completion so
-  // the celebration fires on the real archive event (not just the brief
-  // pre-archive status flip, which poll timing may skip entirely).
-  // returns [{ archivedDir, relPath }] for entries that completed.
-  async function detectArchivedTasks(nextResolved) {
-    const liveDirs = new Set();
-    for (const resolved of nextResolved.values()) {
-      if (!resolved) continue;
-      liveDirs.add(resolved.absDir);
-      if (resolved.info && resolved.info.taskPath) {
-        taskRelPaths.set(resolved.absDir, resolved.info.taskPath);
-      }
-    }
-    const archived = [];
-    for (const [dir, relPath] of [...taskRelPaths.entries()]) {
-      if (liveDirs.has(dir)) continue;
-      // Binding vanished. If the task dir moved into archive/ it completed.
-      // archive/ is a sibling: <root>/tasks/<name> → tasks/archive/<month>/<name>.
-      taskRelPaths.delete(dir);
-      if (!relPath) continue;
-      const archiveRoot = path.resolve(dir, "..", "archive");
-      const archivedDir = await findArchivedTaskDir(archiveRoot, path.basename(relPath));
-      if (!archivedDir) continue;
-      phaseHistory.set(archivedDir, "done");
-      archived.push({ archivedDir, relPath });
-    }
-    return archived;
-  }
-
-  function recordPhaseTransitions(nextResolved, archived) {
-    const nowMs = nowFn();
-    for (const { archivedDir, relPath } of archived) {
-      if (lastCelebrationAt.has(archivedDir)) continue;
-      lastCelebrationAt.set(archivedDir, nowMs);
-      // Archive move = arrival at done. The pointer is already deleted, so
-      // no title is available here — the bubble falls back to the task path.
-      if (onPhaseTransition) onPhaseTransition({ taskPath: relPath, title: null, fromPhase: null, toPhase: "done" });
-      if (onCelebration) onCelebration(relPath);
-    }
-    const seen = new Map(); // abs task dir → { relPath, title, phase }
-    for (const resolved of nextResolved.values()) {
-      if (!resolved || !resolved.info) continue;
-      seen.set(resolved.absDir, {
-        relPath: resolved.info.taskPath,
-        title: resolved.info.title,
-        phase: resolved.info.phase,
-      });
-    }
-    for (const [absDir, { relPath, title, phase }] of seen) {
-      const last = phaseHistory.get(absDir);
-      phaseHistory.set(absDir, phase);
-      if (!last || !phase || last === phase) continue;
-      // v3 lifecycle feedback: every genuine transition is surfaced to the
-      // host (one-shot phase bubble). The celebration below keeps its
-      // narrower finish/done-only remit and its own 10s jitter window.
-      if (onPhaseTransition) onPhaseTransition({ taskPath: relPath, title, fromPhase: last, toPhase: phase });
-      if (phase !== "finish" && phase !== "done") continue;
-      const lastAt = lastCelebrationAt.get(absDir) || 0;
-      if (nowMs - lastAt < CELEBRATION_MIN_INTERVAL_MS) continue;
-      lastCelebrationAt.set(absDir, nowMs);
-      if (onCelebration) onCelebration(relPath);
-    }
-  }
-
-  async function resolveSessionTrellis(session, root, taskReads) {
+  async function resolveSessionTrellis(session, root, taskReads, traceReads) {
     const key = sessionPointerKey(session.agentId, session.rawSessionId || session.sessionId);
     if (!key) return null;
     const platform = trellisPlatformFor(session.agentId);
@@ -625,6 +627,14 @@ function createTrellisActivity(options) {
     };
     if (task.nextStep) info.nextStep = task.nextStep;
     if (task.parent) info.parent = task.parent;
+    // Process-level hints (09-27): absent trace → absent fields → the HUD
+    // renders exactly as before.
+    const trace = traceReads ? await readSessionTrace(session, traceReads) : null;
+    if (trace) {
+      if (trace.command) info.command = trace.command;
+      if (trace.workflowStatus) info.workflowStatus = trace.workflowStatus;
+      if (trace.workflowNextAction) info.workflowNextAction = trace.workflowNextAction;
+    }
     return {
       info,
       // Transition history is keyed by the pointer's task ref, not by the
@@ -1385,6 +1395,33 @@ function createTrellisActivity(options) {
   // cwd is the trusted cwd that owns the task's root.
   const ACTIVE_LIST_MAX = 200;
 
+  // Shared per-root active-task collection (readActiveList and the HUD
+  // panel both walk it — one traversal, two consumers).
+  async function collectActiveTasksInRoot(root, cwd) {
+    const projectRoot = path.dirname(root);
+    const entries = await readdirQuiet(path.join(root, "tasks"));
+    if (!entries) return [];
+    const out = [];
+    for (const entry of entries) {
+      if (entry === "archive") continue;
+      const info = await readTaskInfo(root, path.join(root, "tasks", entry));
+      if (!info) continue;
+      const task = {
+        taskPath: toPosix(path.relative(projectRoot, info.dir)),
+        title: info.title,
+        phase: info.phase,
+        progress: info.progress,
+        parent: typeof info.parent === "string" ? info.parent : null,
+        hasChildren: info.hasChildren === true,
+        priority: info.priority || null,
+        cwd,
+      };
+      if (info.nextStep) task.nextStep = info.nextStep;
+      out.push(task);
+    }
+    return out;
+  }
+
   async function readActiveList() {
     const tasks = [];
     // One cwd per root: a registered project root and a session cwd deep
@@ -1397,29 +1434,44 @@ function createTrellisActivity(options) {
       if (!root) continue;
       if (seenRoots.has(root)) continue;
       seenRoots.add(root);
-      const projectRoot = path.dirname(root);
-      const entries = await readdirQuiet(path.join(root, "tasks"));
-      if (!entries) continue;
-      for (const entry of entries) {
-        if (entry === "archive") continue;
-        const info = await readTaskInfo(root, path.join(root, "tasks", entry));
-        if (!info) continue;
-        const task = {
-          taskPath: toPosix(path.relative(projectRoot, info.dir)),
-          title: info.title,
-          phase: info.phase,
-          progress: info.progress,
-          parent: typeof info.parent === "string" ? info.parent : null,
-          hasChildren: info.hasChildren === true,
-          priority: info.priority || null,
-          cwd,
-        };
-        if (info.nextStep) task.nextStep = info.nextStep;
-        tasks.push(task);
-      }
+      const collected = await collectActiveTasksInRoot(root, cwd);
+      tasks.push(...collected);
       if (tasks.length >= ACTIVE_LIST_MAX) break;
     }
     return { status: "ok", tasks: tasks.slice(0, ACTIVE_LIST_MAX) };
+  }
+
+  // 09-27 hud-task-panel-jump: one-shot read of a single project's task
+  // overview for the HUD panel. Trust surface identical to readTaskDetail
+  // (live session cwd ∪ persisted roots ∪ positively-cached roots); the
+  // active part reuses the shared per-root walker, the archived part the
+  // shared archive traversal, newest-first capped at 8. Read-only, never
+  // cached — one fetch per panel open.
+  const HUD_PANEL_ARCHIVE_MAX = 8;
+
+  async function readHudTaskPanel(cwd) {
+    if (!isTrustedTrellisCwd(cwd)) return { status: "missing" };
+    const root = persistedRoots.has(normalizeRootPath(cwd))
+      ? persistedRootDir(cwd)
+      : await findTrellisRoot(cwd);
+    if (!root) return { status: "missing" };
+    const active = await collectActiveTasksInRoot(root, cwd);
+    const archived = listArchivedTasks(syncFs, path.join(root, "tasks", "archive"))
+      .sort((a, b) => {
+        const am = a.completedAtMs;
+        const bm = b.completedAtMs;
+        if (am === null && bm === null) return 0;
+        if (am === null) return 1;
+        if (bm === null) return -1;
+        return bm - am;
+      })
+      .slice(0, HUD_PANEL_ARCHIVE_MAX)
+      .map((entry) => ({
+        taskPath: `.trellis/tasks/archive/${entry.month}/${entry.name}`,
+        title: entry.title || entry.name,
+        completedAt: entry.completedAt,
+      }));
+    return { status: "ok", active, archived };
   }
 
   // Roots whose .trellis directory was resolved from a live session cwd
@@ -1453,8 +1505,6 @@ function createTrellisActivity(options) {
     getTrellisInfo,
     getByProject,
     getKnownRoots,
-    getExecutingCount,
-    hasPlanningBinding,
     setPersistedRoots,
     resolveProjectRoot,
     isDirectProjectRoot,
@@ -1464,6 +1514,7 @@ function createTrellisActivity(options) {
     readSpecTree,
     readSpecDoc,
     readTaskNetworkOverview,
+    readHudTaskPanel,
     readArchiveList,
     readActiveList,
   };

@@ -64,6 +64,9 @@ const quickModeApi = QUICK_MODE_SUPPORTED ? {
 
 contextBridge.exposeInMainWorld("dashboardAPI", {
   getSnapshot: () => ipcRenderer.invoke("dashboard:get-snapshot"),
+  // 09-27 hud-task-panel-jump: main asks the page to reveal a trellis task
+  // (HUD panel click). Listener-based like the quick-mode events above.
+  onNavigateTrellis: (cb) => ipcRenderer.on("dashboard:navigate-trellis", (_e, payload) => cb(payload)),
   getI18n: () => ipcRenderer.invoke("dashboard:get-i18n"),
   getKimiQuotaStatus: () => ipcRenderer.invoke("dashboard:get-kimi-quota-status"),
   refreshKimiQuota: () => ipcRenderer.invoke("dashboard:refresh-kimi-quota"),

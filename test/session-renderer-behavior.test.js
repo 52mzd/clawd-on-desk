@@ -47,15 +47,33 @@ class FakeElement {
     this.disabled = false;
     this.style = {};
   }
-  appendChild(child) { this.children.push(child); return child; }
-  replaceChildren(...children) { this.children = children; }
+  appendChild(child) {
+    this.children.push(child);
+    // Non-enumerable parentNode (same pattern as dashboard-trellis-panel's
+    // stub): the blank-space click handler walks parentNode to find the
+    // nearest interactive ancestor, so the vm DOM needs a real parent chain.
+    Object.defineProperty(child, "parentNode", {
+      value: this, writable: true, configurable: true, enumerable: false,
+    });
+    return child;
+  }
+  replaceChildren(...children) {
+    this.children = children;
+    for (const child of children) {
+      Object.defineProperty(child, "parentNode", {
+        value: this, writable: true, configurable: true, enumerable: false,
+      });
+    }
+  }
   setAttribute(name, value) { this.attributes[name] = String(value); }
   addEventListener(name, listener) {
     if (!this.listeners.has(name)) this.listeners.set(name, []);
     this.listeners.get(name).push(listener);
   }
-  async dispatch(name) {
-    const event = { stopPropagation() {}, preventDefault() {}, key: "" };
+  // `overrides` lets a test synthesize a bubbling container click with a
+  // specific event.target (e.g. the hud root itself, or a row's child).
+  async dispatch(name, overrides) {
+    const event = { stopPropagation() {}, preventDefault() {}, key: "", ...(overrides || {}) };
     for (const listener of this.listeners.get(name) || []) await listener(event);
   }
   querySelector(selector) {
@@ -101,6 +119,15 @@ async function flush() {
 
 function translations() {
   return {
+    sessionHudTrellisTooltip: "Trellis task: {title} — {phase}",
+    sessionHudTrellisPhaseExecute: "Execute",
+    trellisHintExecute: "step {done}/{total}",
+    sessionHudTrellisPanelActive: "Active",
+    sessionHudTrellisPanelDone: "Done",
+    sessionHudTrellisPanelAll: "View all in Dashboard",
+    sessionHudTrellisPanelLoading: "Loading…",
+    sessionHudTrellisPanelEmpty: "No tasks",
+    sessionHudTrellisToggleTooltip: "Trellis tasks",
     dashboardWindowTitle: "Sessions",
     dashboardCount: "{n} active",
     dashboardJumpTerminal: "Jump",
@@ -228,9 +255,14 @@ async function loadDashboard(
   };
 }
 
-async function loadHud(sessions, openResult = { status: "ok" }) {
+// `panelResult` overrides the getTrellisPanel mock: a fixed object (e.g.
+// `{status:"missing"}`) or a function of the request payload — the default
+// still answers the ok fixture below.
+async function loadHud(sessions, openResult = { status: "ok" }, panelResult = null) {
   const document = createDocument(["hud"]);
   const openCalls = [];
+  const focusCalls = [];
+  const ackCalls = [];
   let snapshotListener = null;
   let feedbackTimeout = null;
   const api = {
@@ -241,10 +273,21 @@ async function loadHud(sessions, openResult = { status: "ok" }) {
       openCalls.push(args);
       return typeof openResult === "function" ? openResult(...args) : openResult;
     },
-    focusSession: () => {},
-    ackCompletion: async () => ({ status: "noop" }),
+    focusSession: (id) => { focusCalls.push(id); },
+    ackCompletion: async (id) => { ackCalls.push(id); return { status: "noop" }; },
     openDashboard: () => {},
     setPinned: () => {},
+    getTrellisPanel: async (payload) => {
+      openCalls.push(["getTrellisPanel", payload]);
+      if (typeof panelResult === "function") return panelResult(payload);
+      if (panelResult) return panelResult;
+      return { status: "ok", active: [
+        { taskPath: ".trellis/tasks/09-27-x", title: "Task X", phase: "execute", progress: { done: 1, total: 3 } },
+      ], archived: [
+        { taskPath: ".trellis/tasks/archive/2026-09/09-20-old", title: "Old", completedAt: "2026-09-20T10:00:00.000Z" },
+      ] };
+    },
+    openTrellisTask: (payload) => { openCalls.push(["openTrellisTask", payload]); },
   };
   const context = vm.createContext({
     window: { sessionHudAPI: api }, document, console, Date,
@@ -259,6 +302,8 @@ async function loadHud(sessions, openResult = { status: "ok" }) {
   return {
     root: document.elements.get("hud"),
     openCalls,
+    focusCalls,
+    ackCalls,
     pushSnapshot: (nextSessions = sessions) => snapshotListener({
       sessions: nextSessions,
       orderedIds: nextSessions.map((entry) => entry.id),
@@ -497,7 +542,7 @@ test("Dashboard keeps session automation failure feedback visible after rerender
   );
 });
 
-test("HUD unfocusable click explains why and offers folder only for local non-webui", async () => {
+test("HUD unfocusable single-click explains why and offers folder only for local non-webui", async () => {
   const { root } = await loadHud([
     session("local"),
     session("remote", { sourceType: "ssh", host: "host" }),
@@ -509,6 +554,8 @@ test("HUD unfocusable click explains why and offers folder only for local non-we
     "Remote sessions cannot focus a terminal on this computer.",
     "WebUI sessions do not have a local terminal window.",
   ]);
+  // Official single-click semantics: an unfocusable row explains itself
+  // inline instead of jumping.
   await rows[0].dispatch("click");
   assert.strictEqual(
     byClass(root, "session-inline-feedback")[0].textContent,
@@ -601,5 +648,195 @@ test("model row is its own line, not a chip inside the clipped meta row", async 
 test("model copy exists in all supported languages", () => {
   for (const lang of SUPPORTED_LANGS) {
     assert.ok(i18n[lang].dashboardModel, `${lang}.dashboardModel is required`);
+  }
+});
+
+
+test("HUD trellis icon button is the sole panel entry; panel rows jump to the dashboard", async () => {
+  const { root, openCalls } = await loadHud([
+    { id: "s1", agentId: "claude-code", cwd: "/proj", state: "working", trellis:
+      { taskPath: ".trellis/tasks/09-27-cur", title: "Current", phase: "execute", progress: { done: 1, total: 2 }, parallelCount: 1 } },
+  ]);
+  // vm DOM: find elements via class walk
+  const byCls = (el, cls) => {
+    const out = [];
+    if (el.classList && el.classList.contains(cls)) out.push(el);
+    for (const child of (el.children || [])) out.push(...byCls(child, cls));
+    return out;
+  };
+  const btn = byCls(root, "trellis-btn")[0];
+  assert.ok(btn, "the trellis toggle button renders beside the pin");
+  assert.strictEqual(btn.title, "Trellis tasks");
+  assert.ok(!btn.classList.contains("active"), "closed panel leaves the button unlit");
+  await btn.dispatch("click");
+  await flush();
+  const panel = byCls(root, "trellis-task-panel");
+  assert.equal(panel.length, 1, "the icon click opens the panel below the rows");
+  assert.ok(byCls(root, "trellis-panel-row").length >= 2, "active + archived rows render");
+  assert.ok(byCls(panel[0], "trellis-detail-title").some((el) => el.textContent.includes("Current")),
+    "panel header keeps the old detail-row task title (tooltip template)");
+  assert.ok(byCls(root, "trellis-btn")[0].classList.contains("active"),
+    "an open panel highlights the button");
+  assert.equal(byCls(root, "trellis-panel-hint").length, 0,
+    "the dblclick footer hint is gone (double-click has no separate semantics)");
+  const rows = byCls(root, "trellis-panel-row");
+  rows[0].dispatch ? rows[0].dispatch("click") : rows[0].click();
+  assert.ok(openCalls.some((c) => c[0] === "openTrellisTask" && c[1] && c[1].taskPath === ".trellis/tasks/09-27-x"),
+    "row click sends the jump payload");
+  byCls(root, "trellis-panel-all")[0].dispatch("click");
+  assert.ok(openCalls.some((c) => c[0] === "openTrellisTask" && c[1] && c[1].taskPath === ""),
+    "view-all click sends the dashboard-only payload");
+  // The icon again closes the panel.
+  await byCls(root, "trellis-btn")[0].dispatch("click");
+  await flush();
+  assert.equal(byCls(root, "trellis-task-panel").length, 0, "second icon click closes");
+  assert.ok(!byCls(root, "trellis-btn")[0].classList.contains("active"),
+    "closing the panel drops the highlight");
+});
+
+test("HUD trellis panel outlives its binding; closes when the owner session goes", async () => {
+  const h = await loadHud([
+    { id: "s1", agentId: "claude-code", cwd: "/proj", state: "working", trellis:
+      { taskPath: ".trellis/tasks/09-27-cur", title: "Current", phase: "execute", progress: null, parallelCount: 1 } },
+  ]);
+  const byCls = (el, cls) => {
+    const out = [];
+    if (el.classList && el.classList.contains(cls)) out.push(el);
+    for (const child of (el.children || [])) out.push(...byCls(child, cls));
+    return out;
+  };
+  await byCls(h.root, "trellis-btn")[0].dispatch("click");
+  await flush();
+  assert.equal(byCls(h.root, "trellis-task-panel").length, 1);
+  // The binding vanishes (task archived → pointer cleared) while the session
+  // row stays on screen: the panel keeps serving from disk — hud-panel-entry.
+  await h.pushSnapshot([
+    { id: "s1", agentId: "claude-code", cwd: "/proj", state: "working" },
+  ]);
+  await flush();
+  assert.equal(byCls(h.root, "trellis-task-panel").length, 1,
+    "binding gone but owner row alive → panel stays");
+  // The owner session itself disappears → panel closes.
+  await h.pushSnapshot([session("other")]);
+  await flush();
+  assert.equal(byCls(h.root, "trellis-task-panel").length, 0,
+    "owner row gone → panel closes");
+});
+
+test("HUD icon click without a cwd-bearing session is a no-op", async () => {
+  const h = await loadHud([session("nowhere", { cwd: null })]);
+  await byClass(h.root, "trellis-btn")[0].dispatch("click");
+  await flush();
+  assert.ok(!h.openCalls.some((c) => c[0] === "getTrellisPanel"),
+    "no cwd anchor → no fetch, no panel");
+  assert.equal(byClass(h.root, "trellis-task-panel").length, 0);
+});
+
+test("HUD row single-click is the official jump: bell dismiss, focus, ack — never a panel", async () => {
+  const h = await loadHud([
+    { id: "bound", agentId: "claude-code", cwd: "/proj", state: "working", badge: "done",
+      updatedAt: Date.now(), canFocus: true, trellis:
+      { taskPath: ".trellis/tasks/09-27-cur", title: "Current", phase: "execute", progress: null, parallelCount: 1 } },
+    session("unbound", { badge: "done" }),
+  ]);
+
+  // Fresh done badges render unread bells so the dismissal below is
+  // falsifiable (a broken unread pipeline must not pass vacuously).
+  assert.equal(byClass(h.root, "unread-bell").length, 2, "fresh done badges render unread bells");
+  await byClass(h.root, "row")[0].dispatch("click");
+  await flush();
+  assert.deepStrictEqual(h.focusCalls, ["bound"], "single click jumps to the terminal");
+  assert.deepStrictEqual(h.ackCalls, ["bound"], "ack rides the single click");
+  assert.equal(byClass(h.root, "unread-bell").length, 1,
+    "the click repaints its own dismissed bell away");
+  assert.equal(byClass(h.root, "trellis-task-panel").length, 0,
+    "the row click never opens the panel");
+  assert.ok(!h.openCalls.some((c) => c[0] === "getTrellisPanel"),
+    "the row click never fetches the panel");
+
+  // An unfocusable row shows the inline reason instead of jumping.
+  await byClass(h.root, "row")[1].dispatch("click");
+  await flush();
+  assert.equal(h.focusCalls.length, 1, "the unfocusable row adds no focus call");
+});
+
+test("HUD row single-click on a cwd without .trellis still leaves no panel behind", async () => {
+  // The row click is the official jump now — the fetch-based "missing"
+  // cleanup only runs through the icon button, and the row path never
+  // opens a panel in the first place.
+  const h = await loadHud(
+    [session("plain", { canFocus: true })],
+    { status: "ok" },
+    { status: "missing" }
+  );
+  await byClass(h.root, "row")[0].dispatch("click");
+  await flush();
+  assert.ok(!h.openCalls.some((c) => c[0] === "getTrellisPanel"),
+    "a row click triggers no panel fetch at all");
+  assert.deepStrictEqual(h.focusCalls, ["plain"], "the row click jumps");
+  assert.equal(byClass(h.root, "trellis-task-panel").length, 0,
+    "no panel residue");
+});
+
+test("HUD icon click on a cwd without .trellis leaves no panel behind", async () => {
+  // The icon entry trusts the fetch, not the binding: a cwd that answers
+  // "missing" opens nothing and leaves nothing on screen.
+  const h = await loadHud(
+    [session("plain")],
+    { status: "ok" },
+    { status: "missing" }
+  );
+  await byClass(h.root, "trellis-btn")[0].dispatch("click");
+  await flush();
+  assert.ok(h.openCalls.some((c) => c[0] === "getTrellisPanel" && c[1] && c[1].cwd === "/safe/project"),
+    "the icon click still fetches — the fetch decides, not the binding");
+  assert.equal(byClass(h.root, "trellis-task-panel").length, 0,
+    "a missing answer closes the panel before it ever shows");
+});
+
+test("HUD row single-click jump keeps an open panel alive", async () => {
+  const h = await loadHud([
+    { id: "bound", agentId: "claude-code", cwd: "/proj", state: "working", badge: "done",
+      updatedAt: Date.now(), canFocus: true, trellis:
+      { taskPath: ".trellis/tasks/09-27-cur", title: "Current", phase: "execute", progress: null, parallelCount: 1 } },
+  ]);
+
+  await byClass(h.root, "trellis-btn")[0].dispatch("click");
+  await flush();
+  assert.equal(byClass(h.root, "trellis-task-panel").length, 1, "the icon opens the panel");
+  await byClass(h.root, "row")[0].dispatch("click");
+  await flush();
+  assert.deepStrictEqual(h.focusCalls, ["bound"], "the row click jumps to the terminal");
+  assert.equal(byClass(h.root, "trellis-task-panel").length, 1,
+    "the jump keeps the panel open — the owner row stays expanded");
+  assert.ok(byClass(h.root, "trellis-btn")[0].classList.contains("active"),
+    "the button highlight stays with the panel");
+});
+
+test("two row single clicks are two jumps — double-click has no separate semantics", async () => {
+  const h = await loadHud([
+    { id: "bound", agentId: "claude-code", cwd: "/proj", state: "working", badge: "done",
+      updatedAt: Date.now(), canFocus: true, trellis:
+      { taskPath: ".trellis/tasks/09-27-cur", title: "Current", phase: "execute", progress: null, parallelCount: 1 } },
+  ]);
+
+  // A physical double-click is click, click, dblclick on the same spot;
+  // with no dblclick handler that is just two official single clicks. Every
+  // click re-renders, so re-query the row the way a fresh hit-test would.
+  await byClass(h.root, "row")[0].dispatch("click");
+  await flush();
+  await byClass(h.root, "row")[0].dispatch("click");
+  await flush();
+  assert.deepStrictEqual(h.focusCalls, ["bound", "bound"], "each physical click jumps");
+  assert.equal(byClass(h.root, "trellis-task-panel").length, 0, "no panel ever opens");
+  // One ack per physical click. Main's ackSessionCompletion is idempotent
+  // (second ack = noop), so two acks for one double-click are safe.
+  assert.deepStrictEqual(h.ackCalls, ["bound", "bound"], "ack rides each click");
+});
+
+test("trellis toggle tooltip exists in all supported languages and the dblclick hint key is gone", () => {
+  for (const lang of SUPPORTED_LANGS) {
+    assert.ok(i18n[lang].sessionHudTrellisToggleTooltip, `${lang}.sessionHudTrellisToggleTooltip is required`);
+    assert.ok(!i18n[lang].sessionHudTrellisPanelDblclickHint, `${lang}.sessionHudTrellisPanelDblclickHint must be gone`);
   }
 });

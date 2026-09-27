@@ -108,6 +108,9 @@ function createOfficialThemeMain(options = {}) {
   const sendToSettingsWindow = options.sendToSettingsWindow || (() => {});
   const getAppVersion = options.getAppVersion
     || (() => (app && typeof app.getVersion === "function" ? app.getVersion() : "0.0.0"));
+  // The app version may carry a fork prerelease suffix (e.g. "1.1.0-trellis.1.1");
+  // every catalog comparison uses the stripped release baseline.
+  const appBaselineVersion = () => catalogModule.normalizeAppVersion(getAppVersion());
   const now = options.now || (() => Date.now());
   const nowIso = options.nowIso || (() => new Date().toISOString());
   const downloadImpl = options.downloadArchive || downloadModule.downloadArchive;
@@ -430,7 +433,7 @@ function createOfficialThemeMain(options = {}) {
         derived = catalogModule.deriveOfficialThemeState({
           entry,
           installed,
-          appVersion: getAppVersion(),
+          appVersion: appBaselineVersion(),
         });
       }
       const card = {
@@ -482,7 +485,7 @@ function createOfficialThemeMain(options = {}) {
       const derived = catalogModule.deriveOfficialThemeState({
         entry,
         installed,
-        appVersion: getAppVersion(),
+        appVersion: appBaselineVersion(),
       });
       return {
         ...theme,
@@ -568,7 +571,7 @@ function createOfficialThemeMain(options = {}) {
     if (!entry) {
       return { status: "error", code: MANAGER_ERROR_CODES.NOT_FOUND, message: `unknown official theme "${themeId}"` };
     }
-    if (catalogModule.compareSemver(getAppVersion(), entry.minAppVersion) < 0) {
+    if (catalogModule.compareSemver(appBaselineVersion(), entry.minAppVersion) < 0) {
       return {
         status: "error",
         code: MANAGER_ERROR_CODES.UNSUPPORTED_VERSION,

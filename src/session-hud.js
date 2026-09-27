@@ -11,13 +11,17 @@ const isMac = process.platform === "darwin";
 const isWin = process.platform === "win32";
 
 const HUD_BORDER_Y = 2;
-const HUD_WIDTH = 240;
-const HUD_WIDTH_COMPACT = 190;
-const HUD_WIDTH_LABELS = 320;
-const HUD_WIDTH_LABELS_COMPACT = 260;
+// 09-27 hud-panel-readability: the HUD type scale moved to 14/12/11px tokens
+// (session-hud.html), so the row height and the four widths grew with it.
+// Row height feeds computeHudHeight AND computeHudReservedOffset — keep the
+// formulas untouched, only the constants moved.
+const HUD_WIDTH = 270;
+const HUD_WIDTH_COMPACT = 215;
+const HUD_WIDTH_LABELS = 355;
+const HUD_WIDTH_LABELS_COMPACT = 290;
 const HUD_CONTEXT_USAGE_WIDTH_BUMP = 36;
 const HUD_LABELS_ONLY_WIDTH_TRIM = 36;
-const HUD_ROW_HEIGHT = 28;
+const HUD_ROW_HEIGHT = 34;
 const HUD_MAX_EXPANDED_ROWS = 3;
 const HUD_MAX_EXPANDED_ROWS_LABELS = 5;
 const HUD_HEIGHT = HUD_ROW_HEIGHT + HUD_BORDER_Y;
