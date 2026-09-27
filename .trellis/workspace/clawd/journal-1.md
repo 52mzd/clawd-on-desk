@@ -886,3 +886,26 @@ issue #1069 预告评论后提两个官方 PR：#1071（acceptFirstMouse cherry-
 ### Status
 
 [OK] **Completed**
+
+
+## Session 33: recency 选键 bug break-loop 复盘与 spec 沉淀
+<!-- trellis-session: v=2 fp=24ce0c77cb8e1fa1 -->
+
+**Date**: 2026-09-28
+**Task**: recency 选键 bug break-loop 复盘与 spec 沉淀
+**Branch**: `main`
+
+### Summary
+
+对 hud-multi-project-audit 的 recency 排序第一版选键错误做深度复盘:trellis CLI 会话结束清空 .runtime/sessions 目录,pointer 内容戳全灭导致刚动过的项目垫底,修法取 max(pointer 内容戳, sessions 目录 mtime)。break-loop 沉淀 spec『外部状态文件生命周期三问』(格式漂移/清理时机/清理后痕迹)+ 验证集必含反例纪律。update-spec 补渲染器测试 vm stub 属性分歧教训(FakeElement 未实现的标准 DOM 属性静默 undefined 使负向断言空转)与暂存区残留核对纪律(auto-commit 失败留 staged)。全量测试基线 11794/0 fail/47 skip。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5d5c5d81` | docs(spec): lifecycle dimension for external state files (break-loop) |
+| `75b5702f` | docs(spec): vm stub property divergence in renderer behavior tests |
+
+### Status
+
+[OK] **Completed**
