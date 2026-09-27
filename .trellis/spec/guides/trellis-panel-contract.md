@@ -418,7 +418,10 @@ flex 锁定同 `.trellis-detail`；owner 会话消失才自动关（trellis 绑�
 （main.js `listTrellisRoots`，roots/picks 各按成员最新 root 排）、Settings 扫描
 （`settings:trellis-scan` 的 `sortScanByRecency`，projects 按自身 pointer、scans/
 roots 按扫描根内最新项目）。排序键：per-root recency = max(`.trellis/.runtime/
-sessions/*.json` 的 `last_seen_at`)——trellis CLI 每次交互刷新该戳，重启不丢；
+sessions/*.json` 的 `last_seen_at`，**sessions 目录 mtime**)——trellis CLI 每次交互
+刷新内容戳；会话结束时 CLI **清空** sessions 目录（实测 09-28：write-notes-like-
+deepseek / vlc-android 刚动过但目录已空、内容戳全灭，仅凭 pointer 排垫底），目录
+mtime 记住最后一次增删，两信号取 max 才是重启不丢的「最近动过」代理；
 唯一实现在 `trellis-activity.readRootRecencies`（root 参数是 `.trellis` 目录，
 同 rootCache 约定）。红线：无 pointer → 0，稳定排序保存储序垫底；锚定 root 只保
 membership 不保位置（陈旧锚定不得压过刚动过的项目）；reader 缺失（测试）/抛错 →
