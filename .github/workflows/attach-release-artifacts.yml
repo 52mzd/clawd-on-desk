@@ -1,0 +1,43 @@
+name: Attach build artifacts to release
+
+# Fork maintenance workflow: copies installer artifacts from a completed
+# Build & Release run onto a (draft) release entirely inside GitHub's
+# network, so maintainers with slow uplinks do not have to upload ~1GB
+# of installers from a local machine.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach artifacts to"
+        required: true
+      run_id:
+        description: "Build & Release run id that owns the artifacts"
+        required: true
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  attach:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download and attach artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p assets && cd assets
+          gh api "repos/$REPO/actions/runs/${{ inputs.run_id }}/artifacts" \
+            --jq '.artifacts[] | select(.name | endswith("installer")) | "\(.id) \(.name)"' \
+            | while read -r id name; do
+                echo "Fetching $name ($id)"
+                gh api "repos/$REPO/actions/artifacts/$id/zip" > "$name.zip"
+                unzip -o -q "$name.zip" && rm -f "$name.zip"
+              done
+          ls -lh
+          gh release upload "${{ inputs.tag }}" ./* --repo "$REPO" --clobber
+          echo "Attached:"
+          gh release view "${{ inputs.tag }}" --repo "$REPO" --json assets --jq '.assets[].name'
