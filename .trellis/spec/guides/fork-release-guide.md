@@ -3,7 +3,8 @@
 > **Purpose**: 把 fork 的二开版本发布成可下载的 GitHub Release。
 > 上游的「发布契约」测试与 GitHub 的 release 行为有几处会静默绊住 fork。
 >
-> 来源：2026-09-26 `09-26-fork-release` 首次发版复盘（连踩 6 个坑）。
+> 来源：2026-09-26 `09-26-fork-release` 首次发版复盘（连踩 6 个坑）；
+> 2026-09-27 `v1.1.0-trellis.1.1` 二次发版复盘（导出/资产/notes 三类新坑，见坑 7–9 与「单提交导出模式」）。
 
 ---
 
@@ -17,7 +18,12 @@
 | `readme-contributors.test.js` | **6 个 README** 的贡献者列表与 `src/settings-i18n.js` 的 `CONTRIBUTORS` **排序后完全相等**；表格版另要求「前 N-1 行满 7 格、末行 1-7 格」且 4 个表格版形状一致 |
 | `verify-release-contributors.js`（由 `verify:release` 跑） | `git log <previousTag>..HEAD` 中每个 author 都要能映射到 GitHub handle，且该 handle 出现在 `CONTRIBUTORS` 里 |
 
-**结论**：**fork 改版本号 = 连锁触发这些断言**。除非打算把整套发布契约适配到 fork，否则**保持版本号与上游一致**最省事，只用 **release tag** 区分（见坑 4、坑 6）。
+**结论（2026-09-27 更新）**：契约测试已适配 fork 版本号，两种模式都可用：
+
+- **模式 A（新默认）——版本号长期保留 trellis 后缀**：`release-version-contract.test.js` 已改为动态读 `package.json` 版本 + pre-release（含 `-`）自动跳过 smoke checklist 断言。fork 版本号不再连锁触发契约失败，发布后无需 revert。迭代规则：`<上游base>-trellis.<线号>.<包号>`，线内出包 +1，同步上游新 tag 后 base 升位、线号重开。
+- **模式 B（旧方案）——版本号与上游一致，只用 release tag 区分**：仍可行，但坑 4 的 `previousTag` 回退问题需要按 §0 的方式处理。
+
+⚠️ 模式 A 下 fork 版本号在 semver 里小于同号上游正式版（`1.1.0-trellis.1.1 < 1.1.0`）。fork 不走官方 updater 通道，序列内单调即可；但不要把 fork 版本号和上游 updater 元数据混用。
 
 ### 实操建议：先一次跑完全部契约，不要靠 CI 逐个发现
 
@@ -36,6 +42,89 @@ npm run verify:release
 一次性看到全部契约要求，而不是让 CI 一个接一个地告诉你。
 
 ---
+
+## 坑 7：单提交导出会静默冲掉 fork 线独有的改动
+
+导出的本质是 `git checkout main -- . ':!.trellis' ':!.pi' …` 把本地 main 的树覆盖到 fork 基底上。
+**任何只存在于 fork main、不存在于本地 main 的改动（比如直接改在 fork 上的 hotfix、发布杂务里的注册行）都会被覆盖丢失**。
+
+2026-09-27 实录：导出冲掉了 contributors 注册行（映射表 + `CONTRIBUTORS`），被 CI `verify-release-contributors` 拦下。
+恢复时文踩了第二个坑：按单个历史提交（`8ffae44d`）的 diff 重放，漏了后续提交在同一行追加的 `hanzhe-one`。
+
+**恢复必须用文件级 diff，不是提交级重放**：
+
+```bash
+git diff <fork-base> <export> -- scripts/verify-release-contributors.js src/settings-i18n.js
+# 把丢失的行按文件当前状态加回，而不是找某个历史提交的 patch
+```
+
+**原则（强约束）**：fork 线上不做任何直接改动，一切变更先进本地 main 再导出。
+只有 contributors 有 CI 校验兑底；其他文件被覆盖即静默丢失，无任何报警。
+导出后必须本地预检：
+
+```bash
+npm run verify:release && node --test test/release-version-contract.test.js
+# 私有内容断言（导出树上必须为空）：
+git ls-tree <export> .trellis .pi
+```
+
+## 坑 8：release notes 的变更清单凭记忆写会漏
+
+2026-09-27 实录：notes 第一版只写了当前会话记忆里的 HUD 修复，漏了 5 个 trellis fork 变更（`-u` 身份、`--tag` 频道升级、并发防抖、重建守卫、后续修复），被用户指出后修正。
+
+**规范**：fork 变更清单必须从 git 历史机械枚举，禁止凭记忆：
+
+```bash
+# 上次导出时间之后的非私有功能提交
+ git log --since="<上次导出时间>" main --no-merges --format="%h %ad %s" \
+  --date=format:"%m-%d %H:%M" -- src hooks test agents themes scripts assets extensions \
+  | grep -v "chore: record journal\|docs(spec)"
+```
+
+注意甄别两类：fork 自己的变更（进 notes「Fork 新增与修复」）与同步进来的上游提交（进 notes「同步上游」）。
+上游提交可通过 origin/main 的 tag 间日志交叉确认。
+
+## 坑 9：本地上传 ~1GB 资产受限于上行带宽，连瑰超时
+
+2026-09-27 实录：`gh release create/upload` 一次性传 12 个安装包（~1GB），本地上行仅 ~150KB/s，600s × 2 均超时中断，还留下两个残缺 draft。
+
+**解法（已落地为常驻基础设施）**：`attach-release-artifacts.yml` 维护 workflow，在 GitHub runner 内网把 Build & Release run 的 installer artifacts 直接转传到 release（2 分钟完成）：
+
+```bash
+gh workflow run attach-release-artifacts.yml -R <owner>/<repo> --ref main \
+  -f tag=<tag> -f run_id=<build_run_id>
+gh run watch <attach_run_id> -R <owner>/<repo>
+```
+
+本地下载/上传只留给小文件（yml/blockmap）或无 runner 可用的场景。
+中断留下的残缺 draft 要先删干净再重建（同名 tag 可挂多个 draft）。
+
+## 单提交导出模式（fork 的隐私边界）
+
+本地 main 与 fork main 是**两条平行线**，同步靠导出而不是 merge/push：
+
+- **本地 main**：真实开发线，跟踪 `.trellis/`（workspace/spec/journal）与 `.pi/`（agent 配置）等私有内容
+- **fork main**：公开导出线，一棵干净的单提交快照树
+
+**绝不能直接 `git push fork main`** —— 会把 340+ 个私有文件暴露到公开仓库。
+
+导出流程（2026-09-27 验证过的完整序列）：
+
+```bash
+git fetch fork main
+git checkout -b tmp-export <fork-main>
+# 1. 覆盖非私有路径（排除私有目录 + fork 特有文件）
+git checkout main -- . ':!.trellis' ':!.pi' ':!.gitignore' ':!README*.md'
+# 2. .gitignore：fork 版 ignore .trellis/.pi（导出树必须用它）；追加 release note 白名单行
+# 3. README：五个非 ko-KR 直接用 fork 版（含 fork 声明块/贡献者表格）；
+#    README.ko-KR.md 若上游动过，用 fork 版 + git show <上游提交> -- README.ko-KR.md | git apply -3 三方融合
+# 4. 隐私断言 + 预检（见坑 7）
+git commit -m "feat(trellis): re-export on upstream <sha> as <tag> …"
+git push fork tmp-export:main
+git tag <tag> && git push fork <tag>
+```
+
+导出提交的 author 必须是 noreply 身份（坑 2）；本地仓库已配 `git config user.email <id>@users.noreply.github.com`。
 
 ## 坑 1：`docs/**` 是逐文件白名单，新增 release note 会被静默忽略
 
@@ -193,18 +282,34 @@ gh run download <runId> -R <owner>/<repo> -n <artifact-name> -D <clean-dir>
 
 ### 创建 / 更新 release
 
+**优先用 runner 内网转传（坑 9，已落地）**：
+
 ```bash
-# 创建 tag 会触发 tag 路径的构建（fail closed）→ 先禁用 workflow
-gh workflow disable build.yml -R <owner>/<repo>
-gh release create <tag> --title "…" --notes-file <file> <assets…>
-gh workflow enable  build.yml -R <owner>/<repo>
+# 创建空 draft（不传资产，秒完成）
+gh release create <tag> --draft --title "…" --notes-file <file>
+# runner 内网把 build artifacts 挂上去
+gh workflow run attach-release-artifacts.yml -R <owner>/<repo> --ref main \
+  -f tag=<tag> -f run_id=<build_run_id>
+# 核对资产齐全后发布
+gh release edit <tag> --draft=false
+```
 
-# 替换已有 assets（同名覆盖）
+仅小文件或无 runner 时才本地上传：
+
+```bash
 gh release upload <tag> -R <owner>/<repo> --clobber <assets…>
-
 # 校验「release 上的包 == 本地新构建」
 gh release view <tag> --json assets --jq '.assets[] | select(.name=="<file>") | .digest'
 shasum -a 256 <file>
+```
+
+### 本地跑测试前先去污染环境变量
+
+宿主工具（如 Orca）注入的 `CODEX_HOME` 会让安装检测类测试假失败
+（2026-09-27 实录：5 个测试报 `false !== true`，根因是读到了 orca/codex-runtime-home）：
+
+```bash
+env -u CODEX_HOME npm test
 ```
 
 ---
@@ -213,16 +318,19 @@ shasum -a 256 <file>
 
 发布前：
 
-- [ ] 版本号与上游一致（除非已整套适配发布契约测试）
+- [ ] 版本号策略已选：模式 A（长期保留 trellis 后缀）或模式 B（与上游一致）；模式 A 迭代规则 `<上游base>-trellis.<线>.<包>`
 - [ ] 新 release note 已加入 `.gitignore` 白名单，且 `git status` 能看到它
 - [ ] commit author 是 noreply 身份（不是 `*@*.local`）
 - [ ] 新贡献者已同时登记到：映射表 + `CONTRIBUTORS` + **6 个 README**
-- [ ] `npm run verify:release` 在**完整历史**的 clone 上通过
+- [ ] 导出树隐私断言：`git ls-tree <export> .trellis .pi` 为空
+- [ ] 导出后本地预检：`npm run verify:release` + 契约测试（完整历史 clone）
+- [ ] notes 的 fork 变更清单来自 `git log --since=<上次导出>` 机械枚举（坑 8），不是记忆
+- [ ] 本地跑过 `env -u CODEX_HOME npm test`
 - [ ] 所有 spawn 外部 CLI 的调用点都传了 PATH 覆盖（坑 5）
 
 发布后：
 
 - [ ] `gh api .../releases/latest` 能解析到目标 tag（否则页面显示「Create a new release」）
-- [ ] release assets 数量与安装包清单一致
-- [ ] 替换过 assets 时用 digest 逐字节确认
+- [ ] release assets 数量与安装包清单一致（三平台全量 = 13 个）
+- [ ] 资产文件名带完整 fork 版本号（如 `1.1.0-trellis.1.1`）
 - [ ] 手动触发过构建时 workflow 已恢复 `active`
