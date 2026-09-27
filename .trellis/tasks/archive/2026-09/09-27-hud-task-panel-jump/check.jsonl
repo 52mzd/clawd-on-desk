@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/trellis-panel-contract.md", "reason": "验收对照：只读断言、锚定形状、隐藏语义守卫、§6 断言点清单"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "基线 diff 纪律与 review 硬线（CSS 双向/console.log/innerHTML）"}
