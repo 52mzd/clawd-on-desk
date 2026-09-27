@@ -23,6 +23,7 @@
 // Nothing in this file schedules work: no timer, no watcher, no startup task.
 // A write happens only because a Settings button invoked one of these channels.
 
+const path = require("path");
 const defaultPrefs = require("./prefs");
 const defaultScanner = require("./trellis-scanner");
 const { createTrellisCli, TRELLIS_BIN, REMOTE_CHANNELS, buildInitArgs } = require("./trellis-cli");
@@ -113,6 +114,56 @@ function withActiveTasks(projects, getActivityByProject) {
   });
 }
 
+// 09-28 hud-multi-project-audit: recency order for the Settings scan — the
+// same rule as the HUD panel and the dashboard chips (newest-touched project
+// first). Each project ranks by its own pointer recency; each scan root by
+// the newest project it contains (scan roots are parent directories, so they
+// have no .trellis of their own). No reader injected (tests), or a throw →
+// the scan payload keeps the stored order; sorting must never fail the scan.
+async function sortScanByRecency(result, readRootRecencies) {
+  if (typeof readRootRecencies !== "function" || !result || !Array.isArray(result.scans)) {
+    return result;
+  }
+  const projectPaths = [];
+  for (const scanEntry of result.scans) {
+    for (const project of scanEntry && Array.isArray(scanEntry.projects) ? scanEntry.projects : []) {
+      if (project && typeof project.path === "string" && project.path) projectPaths.push(project.path);
+    }
+  }
+  if (projectPaths.length === 0) return result;
+  try {
+    const recencies = await readRootRecencies(projectPaths.map((p) => path.join(p, ".trellis")));
+    const recOf = (projectPath) => (
+      typeof projectPath === "string" ? recencies.get(path.join(projectPath, ".trellis")) || 0 : 0
+    );
+    const rootRec = new Map();
+    for (const scanEntry of result.scans) {
+      if (!scanEntry || typeof scanEntry.root !== "string" || !scanEntry.root) continue;
+      let best = rootRec.get(scanEntry.root) || 0;
+      for (const project of Array.isArray(scanEntry.projects) ? scanEntry.projects : []) {
+        if (project && typeof project.path === "string") {
+          const rec = recOf(project.path);
+          if (rec > best) best = rec;
+        }
+      }
+      rootRec.set(scanEntry.root, best);
+    }
+    const out = { ...result };
+    out.scans = [...result.scans].sort(
+      (a, b) => (rootRec.get(b.root) || 0) - (rootRec.get(a.root) || 0)
+    );
+    if (Array.isArray(result.projects)) {
+      out.projects = [...result.projects].sort((a, b) => recOf(b.path) - recOf(a.path));
+    }
+    if (Array.isArray(result.roots)) {
+      out.roots = [...result.roots].sort((a, b) => (rootRec.get(b) || 0) - (rootRec.get(a) || 0));
+    }
+    return out;
+  } catch {
+    return result;
+  }
+}
+
 function registerTrellisIpc(options = {}) {
   const ipcMain = requireDependency(options.ipcMain, "ipcMain");
   const settingsController = requireDependency(options.settingsController, "settingsController");
@@ -130,6 +181,13 @@ function registerTrellisIpc(options = {}) {
   // left untouched.
   const getActivityByProject = typeof options.getActivityByProject === "function"
     ? options.getActivityByProject
+    : null;
+  // Optional recency reader (09-28 hud-multi-project-audit): main injects the
+  // trellis-activity one so the Settings scan lists newest-touched projects
+  // first, same rule as the HUD panel / dashboard chips. Absent the scan keeps
+  // its stored order.
+  const readRootRecencies = typeof options.readRootRecencies === "function"
+    ? options.readRootRecencies
     : null;
   // Fail closed: a missing guard and a throwing guard both deny every call. A
   // permissive default here would silently turn any renderer into a write
@@ -181,7 +239,10 @@ function registerTrellisIpc(options = {}) {
     // An unknown channel string means "no override" rather than an error: the
     // default stays the per-project inference from the installed version.
     const channel = normalizeChannel(payload && payload.channel);
-    const result = await runtime.scan(channel ? { channel } : {});
+    const result = await sortScanByRecency(
+      await runtime.scan(channel ? { channel } : {}),
+      readRootRecencies
+    );
     return {
       ...result,
       projects: withActiveTasks(withStaleFixes(result.projects), getActivityByProject),

@@ -1856,6 +1856,31 @@ describe("trellis-activity readActiveList", () => {
       "the registered root wins the representative cwd");
     assert.deepStrictEqual(h.fakeFs.writeOps, []);
   });
+
+  it("walks roots newest-touched first (09-28 recency order)", async () => {
+    const PROJECT2 = path.resolve("/proj2");
+    const h = makeHarness({ sessions: new Map([
+      ["pi:a", { agentId: "pi", cwd: CWD }],
+      ["pi:b", { agentId: "pi", cwd: path.join(PROJECT2, "app") }],
+    ]) });
+    addTask(h.fakeFs, "09-21-a", { title: "A", status: "in_progress", subtasks: [] }, { prd: true });
+    addTask(h.fakeFs, "09-21-b", { title: "B", status: "in_progress", subtasks: [] }, { prd: true, root: PROJECT2 });
+    h.activity.start();
+    await h.timers.runDue();
+    // PROJECT2's pointer is a minute old, PROJECT's an hour: B's project
+    // leads even though CWD/PROJECT resolved first.
+    addPointer(h.fakeFs, "pi_a.json", pointerPayload({
+      platform: "pi", currentTask: null, seenAgoMs: 60 * 60 * 1000, clockNow: h.clock.now,
+    }));
+    addPointer(h.fakeFs, "pi_b.json", pointerPayload({
+      platform: "pi", currentTask: null, seenAgoMs: 60 * 1000, clockNow: h.clock.now,
+    }), { root: PROJECT2 });
+
+    const result = await h.activity.readActiveList();
+    assert.strictEqual(result.status, "ok");
+    assert.deepStrictEqual(result.tasks.map((t) => t.title), ["B", "A"],
+      "the dashboard's per-project grouping follows the newest root first");
+  });
 });
 
 describe("trellis-activity parent link", () => {
@@ -1933,7 +1958,7 @@ describe("trellis-activity readHudTaskPanel (09-27 hud-task-panel-jump, 09-28 mu
     }
   }
 
-  it("returns one section per known root, the anchor project first, read-only", async () => {
+  it("returns one section per known root in recency order — not anchor order", async () => {
     const h = makeHarness({ sessions: new Map([
       ["s1", { agentId: "claude-code", cwd: CWD }],
       ["s2", { agentId: "claude-code", cwd: CWD2 }],
@@ -1942,14 +1967,24 @@ describe("trellis-activity readHudTaskPanel (09-27 hud-task-panel-jump, 09-28 mu
     addTask(h.fakeFs, "09-28-other", { title: "Other", status: "planning", subtasks: [] }, { prd: true, root: PROJECT2 });
     h.activity.start();
     await h.timers.runDue();
+    // The anchor is PROJECT2, but PROJECT carries the freshest pointer (a
+    // minute ago vs a day ago): sections follow recency, the anchor only
+    // guarantees membership, never position.
+    addPointer(h.fakeFs, "s1.json", pointerPayload({
+      platform: "claude", currentTask: null, seenAgoMs: 60 * 1000, clockNow: h.clock.now,
+    }));
+    addPointer(h.fakeFs, "s2.json", pointerPayload({
+      platform: "claude", currentTask: null, seenAgoMs: 24 * 60 * 60 * 1000, clockNow: h.clock.now,
+    }), { root: PROJECT2 });
 
     const result = await h.activity.readHudTaskPanel(CWD2);
     assert.strictEqual(result.status, "ok");
-    assert.deepStrictEqual(result.projects.map((p) => p.name), ["proj2", "proj"], "anchor project sorts first");
-    assert.deepStrictEqual(result.projects[0].active.map((t) => t.taskPath), [".trellis/tasks/09-28-other"]);
-    assert.strictEqual(result.projects[1].cwd, CWD, "each section carries its own trusted cwd");
-    assert.strictEqual(result.projects[1].archived.length, 3, "archived capped at 3 per project");
-    assert.ok(result.projects[1].archived[0].taskPath.endsWith("old-00"), "newest first");
+    assert.deepStrictEqual(result.projects.map((p) => p.name), ["proj", "proj2"],
+      "freshest project first, not the anchor");
+    assert.deepStrictEqual(result.projects[0].active.map((t) => t.taskPath), [".trellis/tasks/09-27-cur"]);
+    assert.strictEqual(result.projects[1].cwd, CWD2, "each section carries its own trusted cwd");
+    assert.strictEqual(result.projects[0].archived.length, 3, "archived capped at 3 per project");
+    assert.ok(result.projects[0].archived[0].taskPath.endsWith("old-00"), "newest first");
     assert.deepStrictEqual(h.fakeFs.writeOps, [], "read-only red line");
   });
 

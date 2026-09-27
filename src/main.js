@@ -5283,6 +5283,9 @@ const trellisIpcRuntime = registerTrellisIpc({
   // inside trellis-activity (no new channel, no fresh disk scan).
   getActivityByProject: (projectPath) =>
     _trellisActivity ? _trellisActivity.getByProject(projectPath) : null,
+  // 09-28 hud-multi-project-audit: recency order for the Settings scan —
+  // newest-touched project first, same rule as the HUD panel / chips.
+  readRootRecencies: (roots) => _trellisActivity.readRootRecencies(roots),
 });
 
 const sessionHistoryRuntime = createSessionHistoryRuntime({
@@ -5371,14 +5374,32 @@ registerSessionIpc({
     }
     return _trellisActivity.readArchiveList();
   },
-  listTrellisRoots: () => ({
-    status: "ok",
-    roots: _trellisRootsStore.list(),
-    // One entry per user pick: the folder they chose plus the roots that
-    // were registered from it. The UI lists picks (single remove per pick);
-    // roots is kept for backwards compatibility / diagnostics.
-    picks: _trellisRootsStore.listPicks(),
-  }),
+  // 09-28 hud-multi-project-audit: recency order (newest-touched first),
+  // the same rule the HUD panel and the dashboard task lists use. Without a
+  // live trellis-activity (or on a read failure) the stored registration
+  // order stays. Store roots are project roots — join ".trellis" for the
+  // activity module's root convention. picks stays one entry per user pick
+  // (the folder they chose plus the roots registered from it; the UI lists
+  // picks, roots is backwards-compat / diagnostics), ordered by the newest
+  // recency among each pick's roots.
+  listTrellisRoots: async () => {
+    const roots = _trellisRootsStore.list();
+    const picks = _trellisRootsStore.listPicks();
+    let recencies = null;
+    if (_trellisActivity && typeof _trellisActivity.readRootRecencies === "function") {
+      recencies = await _trellisActivity.readRootRecencies(
+        roots.map((root) => path.join(root, ".trellis"))
+      ).catch(() => null);
+    }
+    if (!recencies) return { status: "ok", roots, picks };
+    const rec = (root) => recencies.get(path.join(root, ".trellis")) || 0;
+    const sortedRoots = [...roots].sort((a, b) => rec(b) - rec(a));
+    const sortedPicks = picks
+      .map((pick) => ({ pick, max: Math.max(0, ...pick.roots.map(rec)) }))
+      .sort((a, b) => b.max - a.max)
+      .map((entry) => entry.pick);
+    return { status: "ok", roots: sortedRoots, picks: sortedPicks };
+  },
   addTrellisRoot: () => pickAndRegisterTrellisRoot(),
   removeTrellisRoot: (root) => removeRegisteredTrellisRoot(root),
   removeTrellisPick: (picked) => removeTrellisPick(picked),

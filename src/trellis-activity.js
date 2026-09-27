@@ -1444,17 +1444,24 @@ function createTrellisActivity(options) {
   }
 
   async function readActiveList() {
-    const tasks = [];
     // One cwd per root: a registered project root and a session cwd deep
     // inside it both resolve the same root — without this guard each task
     // would be listed once per source (readArchiveList's rootToCwd twin).
+    const resolved = [];
     const seenRoots = new Set();
     for (const cwd of collectKnownRootCwds()) {
       const isPersisted = persistedRoots.has(normalizeRootPath(cwd));
       const root = isPersisted ? persistedRootDir(cwd) : await findTrellisRoot(cwd);
-      if (!root) continue;
-      if (seenRoots.has(root)) continue;
+      if (!root || seenRoots.has(root)) continue;
       seenRoots.add(root);
+      resolved.push({ root, cwd });
+    }
+    // Recency order (09-28): the dashboard's per-project grouping follows
+    // this traversal, so the newest-touched project's tasks come first.
+    const recencies = await readRootRecencies(resolved.map((entry) => entry.root));
+    resolved.sort((a, b) => (recencies.get(b.root) || 0) - (recencies.get(a.root) || 0));
+    const tasks = [];
+    for (const { root, cwd } of resolved) {
       const collected = await collectActiveTasksInRoot(root, cwd);
       tasks.push(...collected);
       if (tasks.length >= ACTIVE_LIST_MAX) break;
@@ -1464,7 +1471,8 @@ function createTrellisActivity(options) {
 
   // 09-27 hud-task-panel-jump / 09-28 hud-multi-project-audit: one-shot read
   // of the task overview for the HUD panel. The panel lists EVERY known
-  // project (the anchor cwd's root only sorts first) — same trust surface as
+  // project in recency order (newest-touched first; the anchor cwd's root
+  // is merely guaranteed a slot) — same trust surface as
   // readArchiveList/readActiveList (registered roots ∪ cwds that positively
   // resolved a root). Caps keep the HUD panel bounded: ≤5 projects, ≤3
   // archived rows per project. The active part reuses the shared per-root
@@ -1496,6 +1504,12 @@ function createTrellisActivity(options) {
       roots.push({ root, cwd });
     }
     if (!roots.length) return { status: "missing" };
+    // Recency order (09-28): newest-touched project first, everywhere the
+    // panel lists projects. The anchor session's project usually IS the
+    // freshest, but a stale anchor must not outrank a project the user just
+    // worked in — the anchor only guarantees membership, never position.
+    const recencies = await readRootRecencies(roots.map((entry) => entry.root));
+    roots.sort((a, b) => (recencies.get(b.root) || 0) - (recencies.get(a.root) || 0));
     const projects = [];
     for (const { root, cwd } of roots.slice(0, HUD_PANEL_PROJECT_MAX)) {
       const active = await collectActiveTasksInRoot(root, cwd);
@@ -1532,6 +1546,33 @@ function createTrellisActivity(options) {
     return [...roots];
   }
 
+  // ── Per-root recency (09-28 hud-multi-project-audit) ───────────────────
+  // The newest last_seen_at across a root's session pointers: the Trellis
+  // CLI refreshes that stamp on every interaction, so it is a durable,
+  // restart-proof proxy for "which project was touched last". Roots with no
+  // readable pointer answer 0 — under the callers' stable sorts they keep
+  // their incoming order at the tail. Root argument is the `.trellis` dir
+  // (this module's root convention, same as rootCache / knownRoots).
+  async function readRootRecencies(roots) {
+    const out = new Map();
+    for (const root of Array.isArray(roots) ? roots : []) {
+      if (typeof root !== "string" || !root) continue;
+      const sessionsDir = path.join(root, ".runtime", "sessions");
+      const entries = await readdirQuiet(sessionsDir);
+      let best = 0;
+      if (entries) {
+        for (const name of entries) {
+          if (!name.endsWith(".json")) continue;
+          const pointer = await readJsonObject(path.join(sessionsDir, name));
+          const seenAt = pointer.ok ? Date.parse(pointer.value.last_seen_at) : NaN;
+          if (Number.isFinite(seenAt) && seenAt > best) best = seenAt;
+        }
+      }
+      out.set(root, best);
+    }
+    return out;
+  }
+
   // Phase-5 read for the Settings → Trellis tab: active (planning /
   // in_progress) task digests of one project, served from the polling cache
   // only — a pure memory lookup, never a fresh disk scan. null when the root
@@ -1551,6 +1592,7 @@ function createTrellisActivity(options) {
     getByProject,
     getKnownRoots,
     setPersistedRoots,
+    readRootRecencies,
     resolveProjectRoot,
     isDirectProjectRoot,
     listChildProjectRoots,
