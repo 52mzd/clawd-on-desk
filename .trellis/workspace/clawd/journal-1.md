@@ -792,3 +792,25 @@ Settings → Trellis 安装向导支持 trellis init -u <name> 开发者身份�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 29: 官方上游跟进：幽灵会话 issue + macOS acceptFirstMouse 补丁
+<!-- trellis-session: v=2 fp=6cc0e10d3593c797 -->
+
+**Date**: 2026-09-28
+**Task**: 官方上游跟进：幽灵会话 issue + macOS acceptFirstMouse 补丁
+**Branch**: `main`
+
+### Summary
+
+① 向官方提幽灵会话过滤 issue #1069（116 条记录中 107 条 <1s、104 条 cwd=/，建议 loader 过滤）；② settings/dashboard 窗口补 acceptFirstMouse: true（仅 darwin，对齐 permission.js 写法），后台第一击直达页面不再双击，win32/linux 补 undefined 断言；全量 11774 tests 零失败；spec §514 同步 fork 已根治；memory 已记 issue URL 待官方修复后清理。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `26e331ff` | fix(mac): 设置/Dashboard 窗口补 acceptFirstMouse — 后台第一击直达页面，不再要双击 |
+
+### Status
+
+[OK] **Completed**

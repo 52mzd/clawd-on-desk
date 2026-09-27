@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 28
+- **Total Sessions**: 29
 - **Last Active**: 2026-09-28
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~794 | Active |
+| `journal-1.md` | ~816 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 29 | 2026-09-28 | 官方上游跟进：幽灵会话 issue + macOS acceptFirstMouse 补丁 | `26e331ff` | `main` |
 | 28 | 2026-09-28 | HUD 跳转保留面板修复 + 官方/二开问题归因排查 | `da51f580` | `main` |
 | 27 | 2026-09-27 | HUD 交互三轮迭代收敛（字号重设计→语义统一→绑定解耦→常驻图标回归官方）+ 主题版本门修复 | `dd0c04c6`, `b9d15397`, `6c7cf727`, `d79ce88d`, `664b1def`, `7921bfe1`, `7529271b`, `bd70862b`, `c83c0d45` | `main` |
 | 26 | 2026-09-27 | v1.1.0-trellis.1.1 发布 — HUD 浅色修复 + 上游同步 + fork 发布流程基建 | `62f4954f`, `065ebfee`, `e93d3b80`, `32c45083`, `befa95a2`, `5feb90f6`, `09b75766` | `main` |
