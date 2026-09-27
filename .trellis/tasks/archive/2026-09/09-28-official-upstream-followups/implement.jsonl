@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/trellis-panel-contract.md", "reason": "§514 记录了 macOS 后台第一击行为与 acceptFirstMouse 结论，补丁落地后需同步该段"}
+{"file": ".trellis/spec/guides/repository-sync-guide.md", "reason": "fork 对官方文件的偏离需按官方基线 diff 流程原则记录与维护"}
