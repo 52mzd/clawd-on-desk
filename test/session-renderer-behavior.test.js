@@ -127,6 +127,7 @@ function translations() {
     sessionHudTrellisPanelAll: "View all in Dashboard",
     sessionHudTrellisPanelLoading: "Loading…",
     sessionHudTrellisPanelEmpty: "No tasks",
+    sessionHudTrellisPanelDblclickHint: "Double-click a session row to open its terminal",
     dashboardWindowTitle: "Sessions",
     dashboardCount: "{n} active",
     dashboardJumpTerminal: "Jump",
@@ -257,6 +258,8 @@ async function loadDashboard(
 async function loadHud(sessions, openResult = { status: "ok" }) {
   const document = createDocument(["hud"]);
   const openCalls = [];
+  const focusCalls = [];
+  const ackCalls = [];
   let snapshotListener = null;
   let feedbackTimeout = null;
   const api = {
@@ -267,8 +270,8 @@ async function loadHud(sessions, openResult = { status: "ok" }) {
       openCalls.push(args);
       return typeof openResult === "function" ? openResult(...args) : openResult;
     },
-    focusSession: () => {},
-    ackCompletion: async () => ({ status: "noop" }),
+    focusSession: (id) => { focusCalls.push(id); },
+    ackCompletion: async (id) => { ackCalls.push(id); return { status: "noop" }; },
     openDashboard: () => {},
     setPinned: () => {},
     getTrellisPanel: async (payload) => {
@@ -294,6 +297,8 @@ async function loadHud(sessions, openResult = { status: "ok" }) {
   return {
     root: document.elements.get("hud"),
     openCalls,
+    focusCalls,
+    ackCalls,
     pushSnapshot: (nextSessions = sessions) => snapshotListener({
       sessions: nextSessions,
       orderedIds: nextSessions.map((entry) => entry.id),
@@ -532,7 +537,7 @@ test("Dashboard keeps session automation failure feedback visible after rerender
   );
 });
 
-test("HUD unfocusable click explains why and offers folder only for local non-webui", async () => {
+test("HUD unfocusable double-click explains why and offers folder only for local non-webui", async () => {
   const { root } = await loadHud([
     session("local"),
     session("remote", { sourceType: "ssh", host: "host" }),
@@ -544,7 +549,10 @@ test("HUD unfocusable click explains why and offers folder only for local non-we
     "Remote sessions cannot focus a terminal on this computer.",
     "WebUI sessions do not have a local terminal window.",
   ]);
+  // Unbound single click is a strict no-op (no feedback either).
   await rows[0].dispatch("click");
+  assert.strictEqual(byClass(root, "session-inline-feedback").length, 0);
+  await rows[0].dispatch("dblclick");
   assert.strictEqual(
     byClass(root, "session-inline-feedback")[0].textContent,
     "This session did not provide terminal window information."
@@ -580,7 +588,7 @@ test("HUD preserves folder pending state across snapshot renders", async () => {
 
 test("HUD feedback survives snapshot renders and clears on its timeout", async () => {
   const harness = await loadHud([session("local")]);
-  await byClass(harness.root, "row-unfocusable")[0].dispatch("click");
+  await byClass(harness.root, "row-unfocusable")[0].dispatch("dblclick");
   harness.pushSnapshot();
   assert.strictEqual(
     byClass(harness.root, "session-inline-feedback")[0].textContent,
@@ -760,4 +768,96 @@ test("HUD blank-space click without a bound session opens nothing", async () => 
   await flush();
   assert.equal(byCls(h.root, "trellis-task-panel").length, 0);
   assert.ok(!h.openCalls.some((c) => c[0] === "getTrellisPanel"), "no anchor → no panel fetch");
+});
+
+test("HUD single-click toggles the panel per row; unbound rows open nothing", async () => {
+  const h = await loadHud([
+    { id: "bound", agentId: "claude-code", cwd: "/proj", state: "working", canFocus: true, trellis:
+      { taskPath: ".trellis/tasks/09-27-cur", title: "Current", phase: "execute", progress: null, parallelCount: 1 } },
+    session("unbound", { badge: "done" }),
+  ]);
+
+  // Single click on the bound row opens the panel anchored to that row.
+  await byClass(h.root, "row")[0].dispatch("click");
+  await flush();
+  assert.equal(byClass(h.root, "trellis-task-panel").length, 1);
+  assert.ok(h.openCalls.some((c) => c[0] === "getTrellisPanel" && c[1] && c[1].cwd === "/proj"),
+    "the fetch anchors to the clicked row's cwd");
+  assert.equal(h.focusCalls.length, 0, "single click never focuses");
+  assert.deepStrictEqual(h.ackCalls, ["bound"], "a click means noticed — ack rides the single click");
+  // The panel footer advertises the double-click jump.
+  const hint = byClass(h.root, "trellis-panel-hint")[0];
+  assert.ok(hint, "panel renders the dblclick hint");
+  assert.strictEqual(hint.textContent, "Double-click a session row to open its terminal");
+
+  // Second single click on the same row closes it.
+  await byClass(h.root, "row")[0].dispatch("click");
+  await flush();
+  assert.equal(byClass(h.root, "trellis-task-panel").length, 0);
+
+  // Unbound row: no panel, no fetch, no feedback — but its own unread bell
+  // still dismisses (and repaints away) on click.
+  assert.equal(byClass(h.root, "unread-bell").length, 1, "the unbound done row carries its bell");
+  await byClass(h.root, "row")[1].dispatch("click");
+  await flush();
+  assert.equal(byClass(h.root, "trellis-task-panel").length, 0);
+  assert.equal(byClass(h.root, "unread-bell").length, 0, "the unbound click repaints the dismissed bell away");
+  assert.ok(!h.openCalls.some((c) => c[0] === "getTrellisPanel" && c[1] && c[1].cwd === "/safe/project"),
+    "unbound row click fetches nothing");
+  assert.equal(byClass(h.root, "session-inline-feedback").length, 0, "unbound row click shows no feedback");
+  assert.equal(h.focusCalls.length, 0);
+  assert.deepStrictEqual(h.ackCalls, ["bound", "bound", "unbound"],
+    "every click acks (bell-dismiss per click); unbound clicks still dismiss their own bell");
+});
+
+test("HUD double-click is the only jump entry and closes an open panel with it", async () => {
+  const h = await loadHud([
+    { id: "bound", agentId: "claude-code", cwd: "/proj", state: "working", badge: "done",
+      updatedAt: Date.now(), canFocus: true, trellis:
+      { taskPath: ".trellis/tasks/09-27-cur", title: "Current", phase: "execute", progress: null, parallelCount: 1 } },
+  ]);
+
+  // Precondition: a fresh done badge renders the unread bell, so the
+  // dismissal below is falsifiable (a broken unread pipeline must not pass
+  // vacuously).
+  assert.equal(byClass(h.root, "unread-bell").length, 1, "a fresh done badge renders the unread bell");
+  await byClass(h.root, "row")[0].dispatch("click");
+  await flush();
+  assert.equal(byClass(h.root, "trellis-task-panel").length, 1);
+  assert.equal(byClass(h.root, "unread-bell").length, 0,
+    "the single click dismisses the unread bell — noticing is enough");
+  assert.deepStrictEqual(h.ackCalls, ["bound"], "ackCompletion rides the single click");
+
+  await byClass(h.root, "row")[0].dispatch("dblclick");
+  await flush();
+  assert.deepStrictEqual(h.focusCalls, ["bound"], "double click focuses the terminal");
+  assert.equal(byClass(h.root, "trellis-task-panel").length, 0, "jumping closes an open panel");
+  assert.equal(h.ackCalls.length, 1, "double click does not re-ack — the click already did");
+});
+
+test("HUD real-browser double-click (click, click, dblclick) still lands closed and focused", async () => {
+  const h = await loadHud([
+    { id: "bound", agentId: "claude-code", cwd: "/proj", state: "working", badge: "done",
+      updatedAt: Date.now(), canFocus: true, trellis:
+      { taskPath: ".trellis/tasks/09-27-cur", title: "Current", phase: "execute", progress: null, parallelCount: 1 } },
+  ]);
+
+  // A physical double-click is click, click, dblclick on the same spot:
+  // click #1 opens the panel, click #2 toggles it shut, dblclick jumps.
+  // Every click re-renders, so re-query the row the way a fresh hit-test
+  // would — the final state must still be panel-closed + focused.
+  await byClass(h.root, "row")[0].dispatch("click");
+  await flush();
+  assert.equal(byClass(h.root, "trellis-task-panel").length, 1, "first click opens the panel");
+  await byClass(h.root, "row")[0].dispatch("click");
+  await flush();
+  assert.equal(byClass(h.root, "trellis-task-panel").length, 0, "second click toggles it shut");
+  await byClass(h.root, "row")[0].dispatch("dblclick");
+  await flush();
+  assert.deepStrictEqual(h.focusCalls, ["bound"], "the full sequence still jumps once");
+  assert.equal(byClass(h.root, "trellis-task-panel").length, 0, "final state: panel closed");
+  // One ack per physical click; the dblclick itself adds none. Main's
+  // ackSessionCompletion is idempotent (second ack = noop), so two acks
+  // for one double-click are safe by contract.
+  assert.deepStrictEqual(h.ackCalls, ["bound", "bound"], "ack rides each click, none on dblclick");
 });

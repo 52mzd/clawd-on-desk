@@ -90,9 +90,11 @@ function toggleTrellisPanel(session) {
 
 // 09-27 hud-panel-readability: clicking blank HUD space toggles the trellis
 // panel too, anchored to the most recent bound session — the trellis chip
-// stays as a second entry point. Session rows keep their own click meaning
-// (focus terminal / open dashboard), and the open panel itself is content,
-// not blank space — clicks inside its headings/padding must not close it.
+// stays as a second entry point. 09-27 hud-click-semantics unified the row
+// clicks: single-click toggles the panel (bound rows only), double-click is
+// the ONLY focus-terminal entry (see createRowForSession). The open panel
+// itself is content, not blank space — clicks inside its headings/padding
+// must not close it.
 const HUD_INTERACTIVE_CLASS_RE = /(?:^|\s)(row|pin-btn|trellis-task-panel)(?:\s|$)/;
 
 function isHudInteractiveTarget(node) {
@@ -108,14 +110,16 @@ function isHudInteractiveTarget(node) {
   return false;
 }
 
+function hasTrellisBinding(session) {
+  return !!(session && session.trellis && typeof session.cwd === "string" && session.cwd);
+}
+
 function lastBoundExpandedSession() {
   const sessions = orderedHudSessions(snapshot);
   const { expanded } = splitHudLayout(sessions);
   // orderedIds is newest-first (sessionUpdatedAtComparator sorts desc), so
   // the FIRST bound session in `expanded` is the most recently active one.
-  return expanded.find((session) =>
-    session && session.trellis && typeof session.cwd === "string" && session.cwd
-  ) || null;
+  return expanded.find(hasTrellisBinding) || null;
 }
 
 function onHudContainerClick(event) {
@@ -225,6 +229,12 @@ function createTrellisPanel(session) {
     }
   });
   panel.appendChild(all);
+  // 09-27 hud-click-semantics: since double-click is the only jump entry, the
+  // panel footer advertises it (static hint, not a click target).
+  const hint = document.createElement("div");
+  hint.className = "trellis-panel-hint";
+  hint.textContent = t("sessionHudTrellisPanelDblclickHint");
+  panel.appendChild(hint);
   return panel;
 }
 
@@ -681,22 +691,41 @@ function createRowForSession(session, now) {
   row.appendChild(left);
   if (hasRightContent) row.appendChild(right);
 
+  // 09-27 hud-click-semantics: single-click on ANY session row toggles the
+  // trellis panel anchored to that row (bound rows only — an unbound row
+  // opens nothing: no focus, no feedback, no fetch). Double-click is the
+  // ONLY focus-terminal entry regardless of binding.
   row.addEventListener("click", () => {
-    unreadSessions.delete(session.id);
-    if (canFocus) {
-      render();
-      window.sessionHudAPI.focusSession(session.id);
-    } else {
-      showSessionFeedback(session.id, focusUnavailableTooltip(session));
-    }
-    // Fire-and-forget: the row click's primary intent is focus / unread
-    // dismissal. ack failure shouldn't block the UI — the next snapshot
-    // will reconcile the lifecycle flag.
+    // A single click means the row was noticed — dismiss the unread bell
+    // and ack the completion right here (bell-dismiss and panel-open do
+    // not conflict), then toggle the panel for bound rows only.
+    const dismissedUnread = unreadSessions.delete(session.id);
     if (window.sessionHudAPI && typeof window.sessionHudAPI.ackCompletion === "function") {
       Promise.resolve(window.sessionHudAPI.ackCompletion(session.id)).catch((err) => {
         console.warn("ack completion threw:", err);
       });
     }
+    if (!hasTrellisBinding(session)) {
+      // Only a dismissed bell needs an immediate repaint; otherwise the
+      // ack's forced snapshot will re-render anyway — skip the redundant
+      // full redraw.
+      if (dismissedUnread) render();
+      return;
+    }
+    toggleTrellisPanel(session);
+  });
+
+  row.addEventListener("dblclick", () => {
+    if (!canFocus) {
+      showSessionFeedback(session.id, focusUnavailableTooltip(session));
+      return;
+    }
+    // The terminal jump is the HUD's only jump-out, on double click; an
+    // open panel closes alongside. Unread dismissal already ran on the
+    // first click of this double click.
+    closeTrellisPanel();
+    render();
+    window.sessionHudAPI.focusSession(session.id);
   });
 
   return row;

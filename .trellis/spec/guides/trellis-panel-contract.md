@@ -499,7 +499,15 @@ entry.id 直接当外部工具记录 id 用的代码都会静默失配（HUD 徽
   容器空白点击即 toggle 面板，锚定 expanded 中**最近活跃**的绑定会话
   （orderedIds 最新在前，取第一个绑定者）；会话行/pin/面板内容区
   （`trellis-task-panel` 整块）是交互面，不参与 toggle——面板内容
-  点击不得误关自身。
+  点击不得误关自身。**行点击统一语义（09-27 hud-click-semantics）**：
+  会话行**单击** = 清完成铃铛 + `ackCompletion`（fire-and-forget，"注意
+  到了"语义，与开面板不冲突）后 toggle 面板锚定该行（须有绑定；无绑定
+  行单击除清铃铛外零操作——不跳终端、无反馈、零 fetch）；**双击** = 跳
+  终端的**唯一**入口（`focusSession`，不分有无绑定），跳转顺手关掉开着
+  的面板，不重复未读清理（单击已触发）；
+  `canFocus=false` 行双击给不可用反馈。折叠行（"其他 N 个"）保留单击
+  openDashboard，不参与本语义。面板底部 `trellis-panel-hint` 常驻双击
+  提示（`sessionHudTrellisPanelDblclickHint` ×7 语言，静态非交互）。
 - detailExtraPx 只能来自渲染层实测，main 侧不预测、不缓存跨快照
 - 单向流：renderer 实测 → IPC → main 重算 bounds → setBounds
 - extra=0 时公式与旧版完全一致（无展开即零行为变化，向后兼容）

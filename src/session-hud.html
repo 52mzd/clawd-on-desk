@@ -336,6 +336,13 @@ body { padding: 2px 3px 8px; }
   cursor: pointer;
   text-decoration: underline;
 }
+/* 09-27 hud-click-semantics: static footer hint (double-click = jump);
+   same muted weight as .trellis-panel-all but not interactive. */
+.trellis-panel-hint {
+  font-size: var(--hud-fs-sub);
+  opacity: 0.6;
+  margin-top: 4px;
+}
 
 @media (prefers-color-scheme: dark) {
   .chip-thinking { background: rgba(99, 102, 241, 0.20); color: #818cf8; }
