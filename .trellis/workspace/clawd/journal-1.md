@@ -836,3 +836,25 @@ Settings → Trellis 安装向导支持 trellis init -u <name> 开发者身份�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 31: 官方双 PR：acceptFirstMouse + 幽灵会话 Resume 禁用
+<!-- trellis-session: v=2 fp=17e97a600a66d17a -->
+
+**Date**: 2026-09-28
+**Task**: 官方双 PR：acceptFirstMouse + 幽灵会话 Resume 禁用
+**Branch**: `main`
+
+### Summary
+
+issue #1069 预告评论后提两个官方 PR：#1071（acceptFirstMouse cherry-pick 26e331ff，干净基线 98 测试绿）与 #1072（Fixes #1069：transcriptPresent false 行禁用 Resume——复用 profile-unverified 可见-禁用模式而非过滤，因官方 flags 用例要求 false 行可见；resolveResumeTarget 拒文件系统根 cwd；loader 16/16 绿，全量与基线失败集合逐文件一致）。修复 cherry-pick 回本地 main（ad6d1b9f）；worktree 已清理；memory 三条同步（ghost-cleanup/first-click/fork-policy PR 待合并跟进）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ad6d1b9f` | fix(history): disable Resume for ghost sessions and refuse a filesystem-root cwd |
+
+### Status
+
+[OK] **Completed**
