@@ -390,8 +390,13 @@ HUD 底部面板（`createTrellisPanel`，替代旧 per-session 详情行——�
 面板头）——图标是面板**唯一入口**（trellis chip 纯信息：渲染 + title tooltip，
 无 click listener 无 active 态；行单击回归 fork 官方跳终端语义，见 §4.1）。
 数据走 `session-hud:trellis-panel`（invoke，payload 严格单键 `{cwd}`，
-activity 侧 `readHudTaskPanel` 复用共享 per-root 遍历 + `listArchivedTasks`，
-active 全量 + 归档 newest-first 截 8，cwd 过 `isTrustedTrellisCwd`）；
+activity 侧 `readHudTaskPanel` 复用共享 per-root 遍历 + `listArchivedTasks`；
+**09-28 hud-multi-project-audit 起多项目**：cwd 仅决定锚定项目排序（过
+`isTrustedTrellisCwd`），面板覆盖全部已知 root（`collectKnownRootCwds()` 信任面，
+项目 ≤5、每项目 active 全量 + 归档 newest-first 截 3，`{status, projects:[{cwd,
+name, active, archived}]}`），renderer 每项目一节（`.trellis-panel-project`
+节头），行跳转用**所属节的 cwd**——非锚定项目的行不得经锚定 cwd 解析；
+换锚定会话不 refetch（payload 与单 cwd 解耦），仅冷开面板拉一次）；
 跳转走 `session-hud:open-trellis-task`（send，payload 严格双键，taskPath 须以
 `.trellis/tasks/` 开头或为空串=仅切视图）→ main `openTrellisTaskFromHud`
 （showDashboard → `dashboard:navigate-trellis`，isLoading 时挂 did-finish-load）
@@ -407,18 +412,34 @@ active 全量 + 归档 newest-first 截 8，cwd 过 `isTrustedTrellisCwd`）；
 flex 锁定同 `.trellis-detail`；owner 会话消失才自动关（trellis 绑定消失不
 关，hud-panel-entry 起从磁盘续服务）；一次一拉不轮询。
 
-**过程级 trace（09-27 hud-process-awareness）**：绑定会话额外扫其 Claude Code
-transcript 尾部（`~/.claude/projects/<sanitized-cwd>/<raw-id>.jsonl`，尾窗
-`TRACE_TAIL_BYTES = 512KB`，`opts.readTail` 可注入、缺省 open/stat/read 只读实现），
-提取两个**形状锚定**信号（Measured on 2026-09-27，本仓 f0fb3c8b 会话实测）：
+**过程级 trace（09-27 hud-process-awareness；09-28 hud-multi-project-audit 修订）**：绑定会话
+额外扫其 Claude Code transcript 尾部（`~/.claude/projects/<sanitized-cwd>/<raw-id>.jsonl`，
+`opts.readTail` 可注入、缺省 open/stat/read 只读实现），提取两个**形状锚定**信号：
 指令 = `type:"user"` 行 content 项 text 里的 `<command-name>/trellis-xxx</command-name>`；
 步骤 = `type:"attachment"` 行 `rendered[].content` 中以
 `<system-reminder>\nUserPromptSubmit hook additional context: <workflow-state>` 开头的块内
-`Status:` / `Next-Action:` 行（截 80 code points）。红线与降级：仅 `agentId ===
-"claude-code"` 的**已绑定**会话扫（zcode 虽归 claude 指针平台但无 transcript）；assistant
-thinking/text 可能含同样字样（实测存在）——绝不做全文件裸子串匹配；文件缺失/格式漂移/
-指令落在尾窗外 → 三字段缺省，HUD 与改动前逐字节一致；per-round `traceReads` 缓存
-（每轮每会话 1 次 readTail）；`trellisInfoEqual` 含三字段比较（否则指令/步骤变化不触发
+`Status:` / `Next-Action:` 行（截 80 code points）。
+
+**信号源实测修订（2026-09-28，本仓 f4f640b2 会话，8.9MB / 3334 行）**：当前版本
+Claude Code 的 jsonl **不落盘指令痕迹**——user 行 content 为纯 STRING 文本，本会话
+执行 4+ 次 trellis 指令全文件 0 条真实 command 行；所有 `<command-name>` 字样均在
+assistant 文本 / tool_result 渲染 / `prompt_snapshot` 型 attachment（`rendered: []`，
+字样在 `attachment.systemPrompt` 字段）里，全为伪迹。**ws 注入块是唯一可靠信号源**
+（每条用户消息必写），其 Next-Action 文本自带指令上下文（如
+``Load `trellis-brainstorm`; stay in planning``）；HUD 详情第三行门槛因此放宽为
+任一信号存在，ws-only 渲染「Status — Next-Action」透传（不语义解读、无 i18n 键）。
+command 提取锚定保留（兼容旧版本 jsonl）但不再是显示与扩窗的必要条件。
+
+**尾窗阶梯（09-28 修订，取代固定 512KB）**：`TRACE_TAIL_STEPS = [512, 1024, 2048,
+4096, 8192]` KB——固定 512KB 会被一轮大文件读取/长输出的 tool 输出把用户轮次边界
+推出窗口（实测 1.17MB：8.7MB 会话的最近 ws 注入距尾距离）。任一信号命中即停
+（command 行与 ws 注入块同轮相邻写入，更大窗口不会分离它们）；全空才扩；最坏
+~15MB/轮（含重复读，仅活跃 claude-code 会话触发），常见路径仍 512KB 一次读。
+红线与降级不变：仅 `agentId === "claude-code"` 的**已绑定**会话扫（zcode 虽归
+claude 指针平台但无 transcript）；assistant thinking/text 可能含同样字样（实测
+存在）——绝不做全文件裸子串匹配；文件缺失/格式漂移 → 三字段缺省，HUD 与改动前
+逐字节一致；per-round `traceReads` 缓存（每轮每会话 1 次解析、按阶梯至多 5 次
+readTail）；`trellisInfoEqual` 含三字段比较（否则指令/步骤变化不触发
 snapshot 重发）。
 
 `check` 是推导相而非真信号：task.json 的 status 只有
