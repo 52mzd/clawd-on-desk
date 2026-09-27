@@ -546,7 +546,15 @@ entry.id 直接当外部工具记录 id 用的代码都会静默失配（HUD 徽
 - `test/session-ipc.test.js`：通道白名单 + noop 依赖基座（required
   dep 缺失必须 throw，白名单用例拦截漏注册）
 - `test/session-renderer-behavior.test.js`：无 rAF 环境测量同步
-  fallback（缺失则 4 个用例时序被吞）
+  fallback（缺失则 4 个用例时序被吞）；**入口收敛断言（09-27 起）**——
+  行单击官方语义（focusCalls + ackCalls + 铃铛消 + 面板不开 + 零
+  fetch，不可聚焦行 inline feedback）、图标单击开/关/active 高亮、
+  missing 自动关零残留、无 cwd 锚点图标点击零 fetch、绑定消失面板
+  存活（owner 行消失才关）、`loadHud` 第三参 `panelResult`（对象或
+  按 payload 函数）注入 mock
+- `test/session-hud-style.test.js`：字号 token 零裸值 + 52px 行避让 +
+  「入口收敛」静态守卫（无 dblclick listener / 无空白点击机制 /
+  无 chip active / 无 panel-hint / 图标按钮存在）
 - `test/session-hud.test.js`：`computeHudHeight(rowCount, extra)` 的
   0/负/NaN/正常四类输入
 
