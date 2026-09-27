@@ -56,7 +56,7 @@ function createTrellisDetailRow(session) {
   // through the §4.1 measured-report contract unchanged.
   if (lines.length > 2) {
     const command = document.createElement("div");
-    command.className = "trellis-detail-guide trellis-detail-command";
+    command.className = "trellis-detail-guide";
     command.textContent = lines.slice(2).join(" ");
     row.appendChild(command);
   }

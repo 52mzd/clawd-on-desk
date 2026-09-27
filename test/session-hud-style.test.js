@@ -329,11 +329,11 @@ describe("Kimi quota freshness policy mirrors across browser renderers", () => {
 
 describe("HUD trellis detail command line (09-27 hud-process-awareness)", () => {
   it("wires the process-level command row through the i18n key", () => {
-    assert.match(sessionHudRenderer, /trellis-detail-command/);
     assert.match(sessionHudRenderer, /sessionHudTrellisCommand/);
-    // The command line is a third title segment — absent command → the
-    // title stays byte-identical to the pre-09-27 shape (guarded here so
-    // refactors keep the conditional).
+    // The command line is a third title segment (lines.slice(2)) — absent
+    // command → the title stays byte-identical to the pre-09-27 shape
+    // (guarded here so refactors keep the conditional).
     assert.match(sessionHudRenderer, /if \(info\.command\)/);
+    assert.match(sessionHudRenderer, /lines\.slice\(2\)/);
   });
 });
