@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/trellis-panel-contract.md", "reason": "被删五模块的契约面（跃迁庆祝/idle气泡/阶段气泡/juggling聚合）与保留面（HUD/recap/会话绑定）边界"}
+{"file": ".trellis/spec/frontend/renderer-guidelines.md", "reason": "i18n 键删除与死键防护规则"}
