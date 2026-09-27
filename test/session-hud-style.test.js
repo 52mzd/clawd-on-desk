@@ -327,6 +327,26 @@ describe("Kimi quota freshness policy mirrors across browser renderers", () => {
   });
 });
 
+describe("HUD global type scale (09-27 hud-panel-readability)", () => {
+  it("defines the three font-size tokens on :root", () => {
+    assert.match(sessionHudHtml, /--hud-fs-main:\s*14px;/);
+    assert.match(sessionHudHtml, /--hud-fs-sub:\s*12px;/);
+    assert.match(sessionHudHtml, /--hud-fs-badge:\s*11px;/);
+  });
+
+  it("sources every font-size from the tokens — no bare px values left", () => {
+    assert.doesNotMatch(sessionHudHtml, /font-size:\s*\d/);
+    const refs = sessionHudHtml.match(/font-size:\s*var\(--hud-fs-(?:main|sub|badge)\)/g) || [];
+    assert.ok(refs.length >= 12, `expected >= 12 token-referenced font-sizes, got ${refs.length}`);
+  });
+
+  it("grew the row height, panel cap and trellis dot with the type scale", () => {
+    assert.match(sessionHudHtml, /\.row\s*\{[\s\S]*?height:\s*34px;[\s\S]*?flex:\s*0 0 34px;[\s\S]*?\}/);
+    assert.match(sessionHudHtml, /\.trellis-task-panel\s*\{[\s\S]*?max-height:\s*320px;/);
+    assert.match(sessionHudHtml, /\.trellis-dot\s*\{[^}]*width:\s*7px;\s*height:\s*7px;/);
+  });
+});
+
 describe("HUD trellis detail command line (09-27 hud-process-awareness)", () => {
   it("wires the process-level command row through the i18n key", () => {
     assert.match(sessionHudRenderer, /sessionHudTrellisCommand/);

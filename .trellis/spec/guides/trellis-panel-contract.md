@@ -393,7 +393,7 @@ active 全量 + 归档 newest-first 截 8，cwd 过 `isTrustedTrellisCwd`）；
 `.trellis/tasks/` 开头或为空串=仅切视图）→ main `openTrellisTaskFromHud`
 （showDashboard → `dashboard:navigate-trellis`，isLoading 时挂 did-finish-load）
 → renderer 复用 `jumpToTrellisNetworkTask`（归档自动开 archiveOpen）。面板
-计入 §4.1 高度实测（`.trellis-task-panel` 选择器），max-height 280px 内滚，
+计入 §4.1 高度实测（`.trellis-task-panel` 选择器），max-height 320px 内滚，
 flex 锁定同 `.trellis-detail`；绑定消失自动关；一次一拉不轮询。
 
 **过程级 trace（09-27 hud-process-awareness）**：绑定会话额外扫其 Claude Code
@@ -466,7 +466,7 @@ entry.id 直接当外部工具记录 id 用的代码都会静默失配（HUD 徽
 - **HUD Trellis 详情行**（点击展开，取代 hover tooltip）：点 chip 在
   该会话行下方插入 `.trellis-detail` 弹性行，显示任务名 + 引导行。
   三个硬约束：① **高度双轨制**——`computeHudHeight(rowCount,
-  detailExtra)` 只认固定行高×28px，弹性展开高度必须由渲染层实测
+  detailExtra)` 只认固定行高×34px（09-27 重设计），弹性展开高度必须由渲染层实测
   （`offsetHeight`+margin）经 `session-hud:set-trellis-detail-height`
   IPC 回传 main 重算 bounds，禁止拍常数（固定值遇换行即截断）；
   ② **flex 收缩禁区**——HUD 容器是 column flexbox + overflow:hidden，
@@ -491,7 +491,15 @@ entry.id 直接当外部工具记录 id 用的代码都会静默失配（HUD 徽
   `computeHudHeight(rowCount, detailExtraPx)`
 
 **3. Contracts**：
-- `height = rowCount × HUD_ROW_HEIGHT(28) + HUD_BORDER_Y + detailExtraPx`
+- `height = rowCount × HUD_ROW_HEIGHT(34) + HUD_BORDER_Y + detailExtraPx`
+- **HUD 全局字号重设计（09-27 hud-panel-readability）**：字号一律引
+  `:root` token（`--hud-fs-main: 14px` / `--hud-fs-sub: 12px` /
+  `--hud-fs-badge: 11px`，style 测试守卫零裸值）；行高 34，宽度常量
+  270/215/355/290（普通/紧凑/带标签/带标签紧凑）。**整面触发**：HUD
+  容器空白点击即 toggle 面板，锚定 expanded 中**最近活跃**的绑定会话
+  （orderedIds 最新在前，取第一个绑定者）；会话行/pin/面板内容区
+  （`trellis-task-panel` 整块）是交互面，不参与 toggle——面板内容
+  点击不得误关自身。
 - detailExtraPx 只能来自渲染层实测，main 侧不预测、不缓存跨快照
 - 单向流：renderer 实测 → IPC → main 重算 bounds → setBounds
 - extra=0 时公式与旧版完全一致（无展开即零行为变化，向后兼容）

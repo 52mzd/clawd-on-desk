@@ -8,6 +8,13 @@
 * { box-sizing: border-box; }
 
 :root {
+  /* 09-27 hud-panel-readability: HUD-wide type scale. Every font-size in this
+     file references one of these tokens — bare px values are a style-test
+     violation. main = session rows / panel rows, sub = secondary text,
+     badge = chips / section heads. */
+  --hud-fs-main: 14px;
+  --hud-fs-sub: 12px;
+  --hud-fs-badge: 11px;
   --hud-bg: rgba(255, 255, 255, 0.88);
   --hud-border: rgba(0, 0, 0, 0.12);
   --text: #242427;
@@ -37,7 +44,7 @@ html, body {
   background: transparent;
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
-  font-size: 12px;
+  font-size: var(--hud-fs-main);
   -webkit-font-smoothing: antialiased;
   user-select: none;
 }
@@ -99,8 +106,8 @@ body { padding: 2px 3px 8px; }
 }
 
 .row {
-  height: 28px;
-  flex: 0 0 28px;
+  height: 34px;
+  flex: 0 0 34px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -151,7 +158,7 @@ body { padding: 2px 3px 8px; }
 
 /* Compact source marker (🐧 WSL / 🔗 SSH) before the session title */
 .hud-source {
-  font-size: 11px;
+  font-size: var(--hud-fs-sub);
   line-height: 1;
   flex: 0 0 auto;
 }
@@ -186,7 +193,7 @@ body { padding: 2px 3px 8px; }
 
 .session-inline-feedback {
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--hud-fs-sub);
   font-weight: 500;
 }
 
@@ -229,7 +236,7 @@ body { padding: 2px 3px 8px; }
 
 .state-chip {
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: var(--hud-fs-badge);
   font-weight: 500;
   line-height: 1;
   padding: 2px 5px;
@@ -246,7 +253,7 @@ body { padding: 2px 3px 8px; }
 
 .usage-chip {
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: var(--hud-fs-badge);
   font-weight: 600;
   line-height: 1;
   padding: 2px 5px;
@@ -261,7 +268,7 @@ body { padding: 2px 3px 8px; }
    unknown phases never reach the DOM (trellisChipInfo filters them). */
 .trellis-chip {
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: var(--hud-fs-badge);
   font-weight: 500;
   line-height: 1;
   padding: 2px 5px;
@@ -283,12 +290,12 @@ body { padding: 2px 3px 8px; }
   padding: 5px 8px 4px;
   border: 1px solid rgba(128, 128, 128, 0.35);
   border-radius: 8px;
-  max-height: 280px;
+  max-height: 320px;
   overflow-y: auto;
 }
 .trellis-panel-list { margin-top: 3px; }
 .trellis-panel-head {
-  font-size: 9px;
+  font-size: var(--hud-fs-badge);
   font-weight: 600;
   opacity: 0.75;
   margin-top: 4px;
@@ -296,9 +303,9 @@ body { padding: 2px 3px 8px; }
 .trellis-panel-row {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 2px 3px;
-  font-size: 10px;
+  gap: 6px;
+  padding: 3px 4px;
+  font-size: var(--hud-fs-main);
   border-radius: 4px;
   cursor: pointer;
 }
@@ -312,18 +319,18 @@ body { padding: 2px 3px 8px; }
 }
 .trellis-panel-row-side {
   flex: 0 0 auto;
-  font-size: 9px;
+  font-size: var(--hud-fs-sub);
   opacity: 0.7;
   font-variant-numeric: tabular-nums;
 }
-.trellis-dot { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; }
+.trellis-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; }
 .trellis-dot-plan { background: #2563eb; }
 .trellis-dot-execute { background: #16a34a; }
 .trellis-dot-check { background: #9333ea; }
 .trellis-dot-finish { background: #b45309; }
 .trellis-dot-done { background: #6b7280; }
 .trellis-panel-all {
-  font-size: 9px;
+  font-size: var(--hud-fs-badge);
   opacity: 0.75;
   margin-top: 4px;
   cursor: pointer;
@@ -437,14 +444,14 @@ body { padding: 2px 3px 8px; }
   overflow: hidden;
 }
 .trellis-detail-title {
-  font-size: 11px;
+  font-size: var(--hud-fs-main);
   color: var(--text);
   white-space: normal;
   word-break: break-word;
   line-height: 1.35;
 }
 .trellis-detail-guide {
-  font-size: 10px;
+  font-size: var(--hud-fs-sub);
   color: var(--text-muted);
   white-space: normal;
   word-break: break-word;

@@ -88,6 +88,45 @@ function toggleTrellisPanel(session) {
   render();
 }
 
+// 09-27 hud-panel-readability: clicking blank HUD space toggles the trellis
+// panel too, anchored to the most recent bound session — the trellis chip
+// stays as a second entry point. Session rows keep their own click meaning
+// (focus terminal / open dashboard), and the open panel itself is content,
+// not blank space — clicks inside its headings/padding must not close it.
+const HUD_INTERACTIVE_CLASS_RE = /(?:^|\s)(row|pin-btn|trellis-task-panel)(?:\s|$)/;
+
+function isHudInteractiveTarget(node) {
+  // vm DOM has no closest(); walk parentNode manually. A detached node (no
+  // parentNode chain) simply stops early — same verdict as the real DOM.
+  let current = node || null;
+  while (current && current !== hudEl) {
+    if (current.tagName === "BUTTON") return true;
+    const cls = typeof current.className === "string" ? current.className : "";
+    if (HUD_INTERACTIVE_CLASS_RE.test(cls)) return true;
+    current = current.parentNode;
+  }
+  return false;
+}
+
+function lastBoundExpandedSession() {
+  const sessions = orderedHudSessions(snapshot);
+  const { expanded } = splitHudLayout(sessions);
+  // orderedIds is newest-first (sessionUpdatedAtComparator sorts desc), so
+  // the FIRST bound session in `expanded` is the most recently active one.
+  return expanded.find((session) =>
+    session && session.trellis && typeof session.cwd === "string" && session.cwd
+  ) || null;
+}
+
+function onHudContainerClick(event) {
+  if (isHudInteractiveTarget(event && event.target)) return;
+  const anchor = lastBoundExpandedSession();
+  if (!anchor) return; // no bound session → no panel (unchanged behavior)
+  toggleTrellisPanel(anchor);
+}
+
+let hudContainerClickBound = false;
+
 function trellisPanelTaskRow(entry, archived) {
   const row = document.createElement("div");
   row.className = "trellis-panel-row";
@@ -704,6 +743,13 @@ function createPinButton(pinned) {
 }
 
 function render() {
+  // Container-level blank-space toggle (bound once; the real DOM dedupes a
+  // repeated addEventListener of the same reference, but the vm test stub
+  // accumulates — the guard keeps both worlds at exactly one listener).
+  if (!hudContainerClickBound) {
+    hudContainerClickBound = true;
+    hudEl.addEventListener("click", onHudContainerClick);
+  }
   const sessions = orderedHudSessions(snapshot);
   const currentIds = new Set(sessions.map((session) => session.id));
   for (const sessionId of pendingFolderSessions) {

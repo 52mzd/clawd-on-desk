@@ -47,15 +47,33 @@ class FakeElement {
     this.disabled = false;
     this.style = {};
   }
-  appendChild(child) { this.children.push(child); return child; }
-  replaceChildren(...children) { this.children = children; }
+  appendChild(child) {
+    this.children.push(child);
+    // Non-enumerable parentNode (same pattern as dashboard-trellis-panel's
+    // stub): the blank-space click handler walks parentNode to find the
+    // nearest interactive ancestor, so the vm DOM needs a real parent chain.
+    Object.defineProperty(child, "parentNode", {
+      value: this, writable: true, configurable: true, enumerable: false,
+    });
+    return child;
+  }
+  replaceChildren(...children) {
+    this.children = children;
+    for (const child of children) {
+      Object.defineProperty(child, "parentNode", {
+        value: this, writable: true, configurable: true, enumerable: false,
+      });
+    }
+  }
   setAttribute(name, value) { this.attributes[name] = String(value); }
   addEventListener(name, listener) {
     if (!this.listeners.has(name)) this.listeners.set(name, []);
     this.listeners.get(name).push(listener);
   }
-  async dispatch(name) {
-    const event = { stopPropagation() {}, preventDefault() {}, key: "" };
+  // `overrides` lets a test synthesize a bubbling container click with a
+  // specific event.target (e.g. the hud root itself, or a row's child).
+  async dispatch(name, overrides) {
+    const event = { stopPropagation() {}, preventDefault() {}, key: "", ...(overrides || {}) };
     for (const listener of this.listeners.get(name) || []) await listener(event);
   }
   querySelector(selector) {
@@ -675,4 +693,71 @@ test("HUD trellis panel auto-closes when the binding disappears", async () => {
   ]);
   await flush();
   assert.equal(byCls(h.root, "trellis-task-panel").length, 0, "no trellis anchor → closed");
+});
+
+test("HUD blank-space click toggles the panel anchored to the most recently active bound session", async () => {
+  const h = await loadHud([
+    { id: "s1", agentId: "claude-code", cwd: "/proj-a", state: "working", trellis:
+      { taskPath: ".trellis/tasks/09-27-a", title: "Task A", phase: "plan", progress: null, parallelCount: 1 } },
+    { id: "s2", agentId: "claude-code", cwd: "/proj-b", state: "working", trellis:
+      { taskPath: ".trellis/tasks/09-27-b", title: "Task B", phase: "execute", progress: null, parallelCount: 1 } },
+  ]);
+  const byCls = (el, cls) => {
+    const out = [];
+    if (el.classList && el.classList.contains(cls)) out.push(el);
+    for (const child of (el.children || [])) out.push(...byCls(child, cls));
+    return out;
+  };
+
+  // Blank click (target = the hud container itself) opens the panel on the
+  // FIRST bound expanded session — orderedIds is newest-first, so that is
+  // the most recently active project. No chip aiming needed.
+  await h.root.dispatch("click", { target: h.root });
+  await flush();
+  assert.equal(byCls(h.root, "trellis-task-panel").length, 1, "blank click opens the panel");
+  assert.ok(
+    byCls(h.root, "trellis-detail-title").some((el) => el.textContent.includes("Task A")),
+    "the panel anchors to the most recently active bound session"
+  );
+  assert.ok(h.openCalls.some((c) => c[0] === "getTrellisPanel" && c[1] && c[1].cwd === "/proj-a"));
+  assert.ok(!h.openCalls.some((c) => c[0] === "getTrellisPanel" && c[1] && c[1].cwd === "/proj-b"),
+    "the older bound session is not fetched");
+
+  // The open panel is content, not blank space — a click on its heading or
+  // padding must NOT close it.
+  const panelTitle = byCls(h.root, "trellis-detail-title")[0];
+  await h.root.dispatch("click", { target: panelTitle });
+  await flush();
+  assert.equal(byCls(h.root, "trellis-task-panel").length, 1, "clicks inside the panel never toggle it");
+  const panel = byCls(h.root, "trellis-task-panel")[0];
+  await h.root.dispatch("click", { target: panel });
+  await flush();
+  assert.equal(byCls(h.root, "trellis-task-panel").length, 1, "the panel's own padding never toggles it");
+
+  // Blank click again closes it.
+  await h.root.dispatch("click", { target: h.root });
+  await flush();
+  assert.equal(byCls(h.root, "trellis-task-panel").length, 0, "second blank click closes the panel");
+
+  // A click landing inside a session row must NOT toggle — the row keeps its
+  // focus-terminal meaning. Target is a row's inner title; the handler must
+  // find the .row ancestor via the parentNode walk.
+  const title = byCls(byCls(h.root, "row")[0], "title")[0];
+  await h.root.dispatch("click", { target: title });
+  await flush();
+  assert.equal(byCls(h.root, "trellis-task-panel").length, 0, "row clicks never toggle the panel");
+});
+
+test("HUD blank-space click without a bound session opens nothing", async () => {
+  const h = await loadHud([session("plain")]);
+  const byCls = (el, cls) => {
+    const out = [];
+    if (el.classList && el.classList.contains(cls)) out.push(el);
+    for (const child of (el.children || [])) out.push(...byCls(child, cls));
+    return out;
+  };
+  await h.root.dispatch("click", { target: h.root });
+  await flush();
+  assert.equal(byCls(h.root, "trellis-task-panel").length, 0);
+  assert.ok(!h.openCalls.some((c) => c[0] === "getTrellisPanel"), "no anchor → no panel fetch");
 });
