@@ -687,3 +687,29 @@ Settings → Trellis 安装向导支持 trellis init -u <name> 开发者身份�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 25: Trellis 全局升级修复（--tag / 按钮防重复）+ check/break-loop/update-spec 沉淀
+
+**Date**: 2026-09-27
+**Task**: Trellis 全局升级修复（--tag / 按钮防重复）+ check/break-loop/update-spec 沉淀
+**Branch**: `main`
+
+### Summary
+
+承接上一 session 的 -u 作用域修正，本轮处理用户报告的 3 个问题 + 复查发现的 1 个缺陷。① 全局 CLI 升级选 beta 却装成正式版：根因是 argv 形态错——CLI 的频道是选项 --tag <tag>，而 Clawd 传位置参数 trellis upgrade beta，CLI 静默忽略后按默认频道（latest）升级；真机 --dry-run 对照证实（位置参数形态打印 @latest，--tag 形态打印 @beta），而测试断言的正是同一个错误假设 ["upgrade","beta"]，所以两天未被发现。修复为 [...GLOBAL_UPGRADE_ARGS, "--tag", wanted]，断言改为含 --tag 存在性。② 升级按钮点击后仍可点、可能并发安装：保存按钮引用 + globalUpgradePending 守卫，点击后立即 setButtonState({disabled:true, label:trellisStatusRunning})，二次点击直接 return，失败/异常路径显式恢复（成功由 runScan 重建覆盖）；复用现有 i18n key trellisStatusRunning（7 语言齐）无需新增。③ 加平台时预览命令显示 -u <目录名>（用户确认是已 init 项目，属设计行为非 bug）：但加平台时 CLI 会忽略 -u，显示目录名纯属误导；新增并导出 buildInitArgs(projectPath, flags, options)，userName 为 undefined/null 时不带 -u，addPlatforms / previewAddPlatforms / staleFixes 三处共用（作用域语义唯一实现点），向导只在 isFirstInstall() 时带 userName。④ trellis-check 复查本轮修复时发现两个真实缺陷：buildInitArgs 只把 undefined 当「未提供」（null 会又带上目录名，IPC 边界可能把省略值变 null）；升级按钮的 in-flight 守卫在卡片重建时被无条件重置（升级中点 refresh 就恢复可点）——后者违反本仓既有约定（scanning/batchRunning 是「模块级标志 + 重建时读状态渲染」）。两条都修并补回归测试 + 逆向验证（移除修复后对应测试立刻变红）。知识沉淀：break-loop 分析出 argv 形态必须向外部工具 --help 取证（自证式断言只能验证一致性、不能验证正确性；静默忽略是最危险的失败形态，exit 0 不等于参数生效）；update-spec 发现并修复 spec 与实现的脱节（--tag 修复时只更新了「附带：跨层教训」，漏了 Scenario 内部的 Good/Bad 与 Tests Required 段）。全部改动：定向各轮全绿，全量 npm test 与基线逐行相同（零新增）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d9178a74` | (see git log) |
+| `114bc2ff` | (see git log) |
+| `57c8bb46` | (see git log) |
+| `ac76777c` | (see git log) |
+| `99d60a82` | (see git log) |
+| `8aec679e` | (see git log) |
+
+### Status
+
+[OK] **Completed**
