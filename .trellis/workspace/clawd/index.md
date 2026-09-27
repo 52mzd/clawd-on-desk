@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 25
+- **Total Sessions**: 26
 - **Last Active**: 2026-09-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~715 | Active |
+| `journal-1.md` | ~742 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 26 | 2026-09-27 | v1.1.0-trellis.1.1 发布 — HUD 浅色修复 + 上游同步 + fork 发布流程基建 | `62f4954f`, `065ebfee`, `e93d3b80`, `32c45083`, `befa95a2`, `5feb90f6`, `09b75766` | `main` |
 | 25 | 2026-09-27 | Trellis 全局升级修复（--tag / 按钮防重复）+ check/break-loop/update-spec 沉淀 | `d9178a74`, `114bc2ff`, `57c8bb46`, `ac76777c`, `99d60a82`, `8aec679e` | `main` |
 | 24 | 2026-09-27 | 向导 -u 作用域修正：加平台不带 -u | `5a2d8268` | `main` |
 | 23 | 2026-09-27 | Trellis 向导 -u 开发者身份（含 shell 注入防护） | `4b3bbfaa` | `main` |

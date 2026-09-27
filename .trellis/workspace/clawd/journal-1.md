@@ -713,3 +713,30 @@ Settings → Trellis 安装向导支持 trellis init -u <name> 开发者身份�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 26: v1.1.0-trellis.1.1 发布 — HUD 浅色修复 + 上游同步 + fork 发布流程基建
+
+**Date**: 2026-09-27
+**Task**: v1.1.0-trellis.1.1 发布 — HUD 浅色修复 + 上游同步 + fork 发布流程基建
+**Branch**: `main`
+
+### Summary
+
+修复 HUD trellis 展开详情行只有深色配色的问题（复用 :root 主题变量，暗色像素级不变）。同步上游 fa9bcaa4（24 提交：OpenCode V2、WSL PID、Cursor 投递等）。版本号升级为模式 A：1.1.0-trellis.1.1 长期保留 trellis 后缀，契约测试改为动态读版本 + pre-release 跳过 checklist（根治上次'发布后必须 revert'的连锁问题）。考古并延续 fork 单提交导出模式（.trellis/.pi 340+ 私有文件零泄漏，README ko-KR 三方融合），发现并修复导出覆盖丢失的贡献者注册行。新增 attach-release-artifacts.yml：GitHub runner 内网转传构建资产（本地 150KB/s 上行传 1GB 需 1h+，runner 2 分钟）。最终发布 v1.1.0-trellis.1.1（13 资产，Latest）。沉淀两层知识：fork-release-guide（坑 7 导出覆盖/坑 8 notes 机械枚举/坑 9 带宽瓶颈 + 单提交导出章节）+ frontend/renderer-guidelines HUD 颜色契约（新 UI 禁止硬编码颜色）。本地测试注意 env -u CODEX_HOME（Orca 注入致 5 个假失败）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `62f4954f` | (see git log) |
+| `065ebfee` | (see git log) |
+| `e93d3b80` | (see git log) |
+| `32c45083` | (see git log) |
+| `befa95a2` | (see git log) |
+| `5feb90f6` | (see git log) |
+| `09b75766` | (see git log) |
+
+### Status
+
+[OK] **Completed**
