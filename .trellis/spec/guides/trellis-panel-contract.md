@@ -513,7 +513,11 @@ entry.id 直接当外部工具记录 id 用的代码都会静默失配（HUD 徽
   会话行**单击** = `unreadSessions.delete` → `render()` → `canFocus` ?
   `focusSession`（跳转顺手关掉开着的面板——跳走即离开面板语境） :
   `showSessionFeedback`（不可聚焦反馈）→ fire-and-forget
-  `ackCompletion`（"注意到了"语义）；**不开面板**。**双击无独立语义**
+  `ackCompletion`（"注意到了"语义）；**不开面板**。跳终端 = osascript
+  `activate` 终端进程（`focus.js`），clawd 整个 app 随之退后台——用户
+  回到 Dashboard/Settings 的**第一击只激活窗口、不传 click**（macOS 对
+  后台 app 窗口的标准行为，非 bug、app 内不可根治），现象是"选项卡要
+  双击才切换"。**双击无独立语义**
   （无 dblclick handler，两次单击的自然结果）；HUD 容器**空白点击
   不触发面板**；trellis chip 纯信息（渲染 + title tooltip，无 click
   listener、无 active 态）。**面板存活（hud-panel-entry）**：开着的
