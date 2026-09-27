@@ -91,6 +91,34 @@ width: min(880px, 92vw);
 flex 链路填满：`main` 改 `flex column`，section `flex:1 1 auto; min-height:0`，
 两栏各自 `min-height:0` 内部滚动。判据：把窗口拉高，面板必须跟着长。
 
+## HUD 颜色契约：新 UI 必须接 `:root` 主题变量（硬线）
+
+`src/session-hud.html` 的 `:root` 定义了亮/暗双套变量（`--hud-bg`/`--hud-border`/
+`--text`/`--text-muted`…，`@media (prefers-color-scheme: dark)` 切换）。HUD 内新增
+任何可见 UI，颜色一律引用这些变量；**禁止硬编码 hex/rgba 颜色字面量**。
+
+```css
+/* ✓ 正确：文字/边框直接用变量，亮暗自动切换 */
+.trellis-detail-title { color: var(--text); }
+.trellis-detail { border: 1px solid var(--hud-border); }
+
+/* ✗ 错误：硬编码只在一种外观下成立（09-27 实录：trellis 展开详情行
+   写了 rgba(30,30,36,.96) 背景 + #ececf1 文字，浅色模式下渲染成
+   “黑夜卡片”，用户报告“只有黑夜模式没有白天模式”） */
+.trellis-detail { background: rgba(30, 30, 36, 0.96); }
+.trellis-detail-title { color: #ececf1; }
+```
+
+**暗色特例**：确需与亮色不同的值（如展开行背景 0.96 不透明度 vs `--hud-bg`
+的 0.88），亮色写默认值、暗色值放 dark 媒体查询块——**两套都必须定义**，
+缺一套 = 单外观硬编码的同款 bug。
+
+**同类先例**：state-chip / usage-chip / trellis-chip 全部是“默认亮色 +
+dark 媒体查询”双分支形态；加新 HUD 组件时先照抄这两块的结构再改值。
+
+**测试缺口警示**：`test/session-hud-style.test.js` 不校验颜色主题接入
+（本 bug 漏网原因），新增 HUD UI 后人工过一遍浅色/深色两种系统外观。
+
 ## 全局样式陷阱（元素选择器继承）
 
 新建小尺寸控件前先查它继承的元素级样式，本仓库已知两个：
