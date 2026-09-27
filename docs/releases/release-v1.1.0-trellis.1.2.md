@@ -16,6 +16,9 @@
 
 ## 本 fork 新增内容(自 v1.1.0-trellis.1.1)
 
+- **桌宠视觉反馈绑定退役** —— 删除并行任务杂耍、规划期巫师帽、相位气泡与完成庆祝(`trellis-bubble` / `trellis-celebration` 模块整体移除),状态信息统一收敛到 HUD / Dashboard / recap 信息面,降低桌宠动画干扰与性能开销。
+- **HUD Trellis 面板入口收敛** —— pin 按钮旁新增常驻 trellis 图标按钮,成为底部任务面板的唯一入口;面板内任务行一键跳转 Dashboard 任务详情卡(归档任务自动展开对应月份),owner 会话消失才自动关面板。
+- **项目根自动注册与实时同步** —— 跑过会话的项目自动登记进 Dashboard 项目 chips(与 Settings 扫描制的可见差收敛);roots 增删实时推送刷新;向上解析命中杂散 `~/.trellis` 时拒绝把整个 $HOME 注册为根。
 - **HUD 多项目任务面板** —— Session HUD 的 Trellis 面板从单项目扩展为覆盖全部已知项目根(至多 5 个),每项目一节(活跃任务全量 + 最新 3 条归档),切换项目不再丢失另一项目的视野;行点击跳转经所属节的 cwd 解析,跳转后 Dashboard 项目 chip 自动切到归属根。
 - **过程级感知恢复(尾窗阶梯)** —— HUD 详情第三行重新显示绑定 claude-code 会话的最新 trellis 指令与工作流步骤;以 workflow-state hook 注入块为唯一可靠信号源,尾窗按 512KB → 8MB 阶梯放宽,大输出轮次不再丢信号。
 - **项目列表按最近使用排序** —— HUD 面板、Dashboard 任务分组与 Settings 扫描三处统一「最近动过的项目排最前」;排序键取 `max(pointer last_seen_at, sessions 目录 mtime)`,因为 trellis CLI 在会话结束会清空 `.runtime/sessions`,目录 mtime 是幸存痕迹。
