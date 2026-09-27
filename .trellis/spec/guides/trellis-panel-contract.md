@@ -202,7 +202,7 @@ function parseVersionOutput(text) {
 // src/trellis-cli.js
 resolveUserName(projectPath, candidate) -> string   // 永不返回 ""
 normalizeUserName(value) -> string                  // 不合法/空 -> ""
-buildInitArgs(projectPath, flags, { userName? }) -> string[]   // userName === undefined -> 无 `-u`
+buildInitArgs(projectPath, flags, { userName? }) -> string[]   // userName === undefined || null -> 无 `-u`
 USER_NAME_MAX_LENGTH                                 // 64 code points
 createTrellisCli().readGitUserName() -> { name: string }   // 失败/超时 -> ""
 
@@ -238,7 +238,7 @@ normalize：trim；lone surrogate（含超长粘贴被切一半的代理对）�
 > 所以它也过同一个 normalize。代价：含空格或 `&` 等元字符的合法名字（`Tom & Jerry`）会被
 > 回退成目录名/`clawd` —— 这是明知的取舍。
 
-- `-u` **只在首次 init 出现**（09-27 修订）：`buildInitArgs` 以 `options.userName === undefined`
+- `-u` **只在首次 init 出现**（09-27 修订）：`buildInitArgs` 以 `options.userName === undefined || null`
   为判据，`undefined` → argv 完全不带 `-u`（加平台场景）；显式提供（含空串/空白）→ 走
   `resolveUserName` 回退链后带上 `-u`。
 - `-u` 的值**永不为空**：0.6.17 实测**首次 init** 缺 `-u` 时 `trellis init --gemini -y`
@@ -259,7 +259,7 @@ normalize：trim；lone surrogate（含超长粘贴被切一半的代理对）�
 
 | 条件 | 行为 |
 | --- | --- |
-| `userName` 为 `undefined`（加平台 / stale repair） | argv **完全不带** `-u`（CLI 会忽略它，显示目录名只会误导） |
+| `userName` 为 `undefined` / `null`（加平台 / stale repair） | argv **完全不带** `-u`（CLI 会忽略它，显示目录名只会误导） |
 | `userName` 合法非空 | 直接作为 `-u` 值 |
 | `userName` 空串 / 纯空白 / 非字符串（**显式提供**时） | 回退目录名（仍带 `-u`） |
 | `userName` 含空格或任一 ASCII shell 元字符（`; & \| < > ^ % " ' \` $ ( ) !` 及控制字符） | 白名单判不可用，回退目录名（**H1**） |
@@ -315,7 +315,7 @@ Wrong   三处各写 path.basename(String(p)) || "clawd"
         加平台时也带 `-u <目录名>`（CLI 忽略它，预览命令却假装身份被设置）
 
 Correct resolveUserName(projectPath, candidate) 单一回退链，三处 import 复用
-        buildInitArgs 以 `userName === undefined` 区分加平台 / 首装，加平台不带 `-u`
+        buildInitArgs 以 `userName === undefined || null` 区分加平台 / 首装，加平台不带 `-u`
         normalizeUserName 用 Unicode 白名单，含元字符/空格/Lone surrogate 一律判不可用
         IPC 层缓存一次 readGitUserName()，仅首装输入框触发
         UI 只传 userName 字段（且仅首装），argv 由 trellis-runtime/cli 构造

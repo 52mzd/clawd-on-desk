@@ -285,6 +285,39 @@ border-radius/token 迁移时按**现状值域分档**（3/4/5→xs、6/7→s、
 机械替换保留特例：`50%`/`999px`（圆）、复合值（多角）、`var()` 引用不碰。
 每次批量替换后用 Counter 验证分布，防止误伤。
 
+## 按钮的 in-flight 状态是模块级标志，重建时读状态而非重置（09-27 check 发现）
+
+长时间操作（`npm install -g`、扫描、批量升级）期间必须禁用触发按钮，否则用户会重复
+点击并产生并发操作。本仓既有约定（`settings-tab-trellis.js` 的 `scanning` /
+`batchRunning`）：
+
+```js
+let scanning = false;              // 模块级，不是挂在 DOM 上的一次性状态
+function runScan() { scanning = true; requestRender(); ... }
+
+// 渲染时 **读** 标志决定按钮状态
+helpers.buildButton({ label: t("trellisRefresh"), disabled: scanning, ... });
+```
+
+**陷阱**：把「重建时重置标志」当成清理手段。重建可能发生在操作**进行中**
+（例如用户点 refresh），重置会让按钮**恢复可点**，重新打开并发窗口。
+
+```js
+// ❌ 重建时无条件重置 —— 升级进行中一次 refresh 就能再次触发安装
+globalUpgradeButton = upgradeButton;
+globalUpgradePending = false;
+
+// ✅ 重建时按标志渲染
+globalUpgradeButton = upgradeButton;
+if (globalUpgradePending) {
+  helpers.setButtonState(upgradeButton, { disabled: true, label: t("trellisStatusRunning") });
+}
+```
+
+**规则**：in-flight 标志的生命周期由**操作本身**负责（成功/失败/异常三条路径都要清除），
+**不由渲染路径清除**。测试要点：操作进行中触发一次重建，按钮必须仍为禁用 ——
+只测「点击后禁用」会漏掉这条。
+
 ## vm 测试沙箱还有：没有 insertBefore / prepend（09-25 追加）
 
 dashboard 渲染层的 node:test 用 `vm.runInNewContext` + 极简 DOM stub，除了没有 timer，
