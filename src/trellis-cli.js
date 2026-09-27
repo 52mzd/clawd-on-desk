@@ -180,7 +180,7 @@ function resolveUserName(projectPath, candidate) {
 // 会让用户以为「身份被设成了目录名」；官方文档给加平台的命令本就不带 `-u`。
 // `undefined` → 完全不加；`""` → 首次 init 但用户没填，走回退链。
 function buildInitArgs(projectPath, flags, options = {}) {
-  if (options.userName === undefined) {
+  if (options.userName === undefined || options.userName === null) {
     return [...INIT_ARGS, ...flags, ...INIT_ARGS_SUFFIX];
   }
   return [...INIT_ARGS, "-u", resolveUserName(projectPath, options.userName), ...flags, ...INIT_ARGS_SUFFIX];

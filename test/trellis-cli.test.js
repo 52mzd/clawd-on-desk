@@ -153,6 +153,13 @@ describe("argv contract", () => {
     // undefined (or an options object without userName) == add-platform.
     assert.deepStrictEqual(buildInitArgs("/projects/alpha", ["--gemini"]), ["init", "--gemini", "-y"]);
     assert.deepStrictEqual(buildInitArgs("/projects/alpha", ["--gemini"], {}), ["init", "--gemini", "-y"]);
+    // `null` must count as "not supplied" too — the IPC boundary can turn an
+    // omitted value into null, and treating it as a first install would put the
+    // folder name back into a platform-only add.
+    assert.deepStrictEqual(
+      buildInitArgs("/projects/alpha", ["--gemini"], { userName: null }),
+      ["init", "--gemini", "-y"]
+    );
     // A supplied name (even the empty string) == first init, so `-u` rides along
     // and an empty value falls back to the folder name.
     assert.deepStrictEqual(

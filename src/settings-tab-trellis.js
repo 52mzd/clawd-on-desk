@@ -815,9 +815,13 @@ function openUpgradePreviewWizard(project) {
       onClick: onUpgradeGlobal,
     });
     globalUpgradeButton = upgradeButton;
-    // Rebuilding the card hands us a fresh, enabled button — drop the guard too
-    // so the next click is not swallowed by a stale pending flag.
-    globalUpgradePending = false;
+    // Same convention as `scanning` / `batchRunning`: the in-flight flag is
+    // module-level and a rebuild **reads** it to render the button rather than
+    // clearing it. Resetting here would re-open the concurrent-install window
+    // whenever a refresh rebuilt the card mid-upgrade.
+    if (globalUpgradePending) {
+      helpers.setButtonState(upgradeButton, { disabled: true, label: t("trellisStatusRunning") });
+    }
     control.appendChild(upgradeButton);
     return helpers.buildSection("", rows);
   }
