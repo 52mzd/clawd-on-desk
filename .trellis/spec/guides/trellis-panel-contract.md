@@ -846,11 +846,25 @@ Correct readArchiveList() 无参；根集来自 collectKnownRootCwds()
   `persistedRoots` 在 activity 内**穿越 stop()**（镜像 caller 拥有的
   文件，不是本模块自有的缓存）
 
-**4. Tests Required**（`test/trellis-roots.test.js`）：
-- 加载规范化（尾分隔符/非字符串/重复去重）；缺失文件零写盘
-- 损坏/非数组 → 空集 + warn 一次 + 原文件保留
-- add 的 tmp+rename 原子形状；duplicate 零写盘
-- remove 已注册成员持久化；未注册零写盘；cap 64
+**4. Tests Required**：
+- `test/trellis-roots.test.js`（store 层）：加载规范化（尾分隔符/非字符串/
+  重复去重）；缺失文件零写盘；损坏/非数组 → 空集 + warn 一次 + 原文件
+  保留；add 的 tmp+rename 原子形状；duplicate 零写盘；remove 已注册
+  成员持久化；未注册零写盘；cap 64
+- `test/trellis-activity.test.js`（09-28 discovery hook）：正向命中触发
+  `onRootDiscovered` 恰一次、携带 `<root>/.trellis`；rootCache 命中不重发；
+  negative 不触发；回调 throw 后解析仍返回正确 root（fire-and-forget）
+- `test/trellis-roots.test.js`（09-28 home 守卫，源码形状断言）：
+  main.js 的 `autoRegisterDiscoveredRoot` 函数体含 `os.homedir()` 解析与
+  `projectRoot === home` 拒绝。守卫当前挂在调用方（过渡形态）——若下沉
+  到 `add()` 统一写入口，此断言应改为 store 层单测
+- `test/dashboard-trellis-panel.test.js`（09-28 roots-changed push）：
+  推送后 chips 反映新 roots 集（roots 源可变，无需视图切换）；选中 root
+  被推送移除 → 回退合并视图
+- `test/dashboard-trellis-panel.test.js`（09-28 跳转切 chip）：双 root
+  同 taskPath 时带 cwd 的 jump 选中 owning root chip 且另一 root 的行
+  被滤出；cwd 归属不到任何注册 root 时保持合并视图（active chip 无
+  title，不 fallback 陈旧 overviewRoot）
 
 #### §4.6 独立 Trellis 视图（v7 起唯一任务视图 + readActiveList）
 
