@@ -585,6 +585,8 @@ function loadDashboard({
 
   const navigateListeners = [];
   api.onNavigateTrellis = (cb) => { navigateListeners.push(cb); };
+  const rootsChangedListeners = [];
+  api.onTrellisRootsChanged = (cb) => { rootsChangedListeners.push(cb); };
   const context = vm.createContext({
     window: {
       dashboardAPI: api,
@@ -614,6 +616,7 @@ function loadDashboard({
     panel: elements.get("trellisPanel"),
     overlay: elements.get("trellisDetailOverlay"),
     navigateTrellis: (payload) => { for (const fn of navigateListeners) fn(payload); },
+    fireRootsChanged: () => { for (const fn of rootsChangedListeners) fn(); },
     view: elements.get("trellisView"),
     // Renderer module scope, for the pure fold helpers (applySubtreeFold /
     // isTrellisRowVisible) — they are DOM-shape logic, not DOM plumbing.
@@ -2619,5 +2622,103 @@ describe("dashboard trellis navigation from the HUD panel (09-27)", () => {
     app.navigateTrellis({ taskPath: "", cwd: "/proj/one" });
     await flush();
     assert.ok(!app.view.hidden, "view-only jump still flips the view");
+  });
+
+  // 09-28 dashboard-trellis-sync: the jump must also land in the target
+  // project's filtered view, not the merged "all" list.
+  it("selects the owning project's chip when the jump cwd resolves to a registered root", async () => {
+    const app = loadDashboard({
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/one", "/proj/two"] },
+      activeResult: { status: "ok", tasks: [
+        { taskPath: ".trellis/tasks/shared", title: "One Task", phase: "execute", progress: null, parent: null, cwd: "/proj/one" },
+        { taskPath: ".trellis/tasks/shared", title: "Two Task", phase: "execute", progress: null, parent: null, cwd: "/proj/two" },
+      ] },
+      archiveResult: { status: "ok", tasks: [] },
+    });
+    await flush();
+    app.navigateTrellis({ taskPath: ".trellis/tasks/shared", cwd: "/proj/two" });
+    await flush();
+    const activeChips = byClass(app.view, "trellis-filter-chip").filter((el) => el.classList.contains("is-active"));
+    assert.equal(activeChips.length, 1, "exactly one chip is active");
+    assert.equal(activeChips[0].title, "/proj/two", "the jump target's owning root chip is selected");
+    // The filter really narrowed the list: only /proj/two's task survives.
+    const rows = byClass(app.view, "trellis-split-row");
+    assert.ok(rows.some((el) => textOf(el).includes("Two Task")), "target row rendered");
+    assert.ok(!rows.some((el) => textOf(el).includes("One Task")), "the other root's same-path task is filtered out");
+    assert.ok(rows.some((el) => el.classList.contains("is-selected")), "target row selected");
+  });
+
+  it("keeps the merged all-projects view when the jump cwd resolves to no registered root", async () => {
+    const app = loadDashboard({
+      sessions: [],
+      rootsResult: { status: "ok", roots: ["/proj/one"] },
+      activeResult: { status: "ok", tasks: [
+        { taskPath: ".trellis/tasks/unreg", title: "Unreg Task", phase: "execute", progress: null, parent: null, cwd: "/proj/unreg" },
+      ] },
+      archiveResult: { status: "ok", tasks: [] },
+    });
+    await flush();
+    app.navigateTrellis({ taskPath: ".trellis/tasks/unreg", cwd: "/proj/unreg" });
+    await flush();
+    // No stale overview root may hijack the chip: the merged view (chip(null))
+    // stays selected and the unregistered task's row remains reachable.
+    const activeChips = byClass(app.view, "trellis-filter-chip").filter((el) => el.classList.contains("is-active"));
+    assert.equal(activeChips.length, 1);
+    assert.ok(!activeChips[0].title, "the all-projects chip (no root tooltip) is the active one");
+    const rows = byClass(app.view, "trellis-split-row");
+    assert.ok(rows.some((el) => el.classList.contains("is-selected")), "target row still selected");
+  });
+});
+
+describe("dashboard trellis roots-changed push (09-28 dashboard-trellis-sync)", () => {
+  it("re-reads roots and the active list when main pushes the change", async () => {
+    let roots = { status: "ok", roots: ["/proj/one"] };
+    const app = loadDashboard({
+      sessions: [],
+      rootsResult: () => roots,
+      activeResult: { status: "ok", tasks: [] },
+      archiveResult: { status: "ok", tasks: [] },
+    });
+    await flush();
+    await switchToTrellis(app);
+    const chipsBefore = byClass(app.view, "trellis-filter-chip").filter((el) => el.title);
+    assert.equal(chipsBefore.length, 1, "one root chip before the push");
+
+    roots = { status: "ok", roots: ["/proj/one", "/proj/two"] };
+    app.fireRootsChanged();
+    await flush();
+    const chipsAfter = byClass(app.view, "trellis-filter-chip").filter((el) => el.title);
+    assert.equal(chipsAfter.length, 2, "the new root's chip appears without a view switch");
+    assert.ok(chipsAfter.some((el) => el.title === "/proj/two"), "the pushed root is among the chips");
+    assert.ok(app.rootsCalls.length >= 2, "roots were re-read");
+  });
+
+  it("falls back to the merged view when the selected root disappears in a push", async () => {
+    let roots = { status: "ok", roots: ["/proj/one", "/proj/two"] };
+    const app = loadDashboard({
+      sessions: [],
+      rootsResult: () => roots,
+      activeResult: { status: "ok", tasks: [
+        { taskPath: ".trellis/tasks/a", title: "Task A", phase: "execute", progress: null, parent: null, cwd: "/proj/one" },
+      ] },
+      archiveResult: { status: "ok", tasks: [] },
+    });
+    await flush();
+    await switchToTrellis(app);
+    const oneChip = byClass(app.view, "trellis-filter-chip").find((el) => el.title === "/proj/one");
+    oneChip.dispatch("click");
+    await flush();
+    // The click rebuilds the chip bar — re-query, never the stale node.
+    const activeBefore = byClass(app.view, "trellis-filter-chip").filter((el) => el.classList.contains("is-active"));
+    assert.equal(activeBefore.length, 1);
+    assert.equal(activeBefore[0].title, "/proj/one", "precondition: /proj/one chip selected");
+
+    roots = { status: "ok", roots: ["/proj/two"] };
+    app.fireRootsChanged();
+    await flush();
+    const activeChips = byClass(app.view, "trellis-filter-chip").filter((el) => el.classList.contains("is-active"));
+    assert.equal(activeChips.length, 1);
+    assert.ok(!activeChips[0].title, "removed root's selection falls back to the merged view");
   });
 });

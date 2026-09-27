@@ -1896,3 +1896,61 @@ describe("trellis-activity readHudTaskPanel (09-27 hud-task-panel-jump)", () => 
     assert.deepStrictEqual(h.fakeFs.writeOps, []);
   });
 });
+
+describe("trellis-activity root discovery hook (09-28 dashboard-trellis-sync)", () => {
+  it("fires onRootDiscovered once per positively resolved cwd, with the .trellis dir", async () => {
+    const discovered = [];
+    const h = makeHarness({
+      sessions: new Map([[
+        "pi:sub",
+        { agentId: "pi", cwd: CWD },
+      ]]),
+      extra: { onRootDiscovered: (root) => discovered.push(root) },
+    });
+    addTask(h.fakeFs, "09-28-hook", {
+      title: "Hook", status: "in_progress", subtasks: [],
+    }, { prd: true });
+
+    h.activity.start();
+    await h.timers.runDue();
+    assert.deepStrictEqual(discovered, [path.join(PROJECT, ".trellis")],
+      "fired exactly once with the resolved .trellis dir");
+
+    // The cache-hit path must not re-fire for the same cwd.
+    await h.activity.readActiveList();
+    assert.strictEqual(discovered.length, 1, "a cached resolution does not re-fire");
+  });
+
+  it("does not fire for cwds that resolve no .trellis root", async () => {
+    const discovered = [];
+    const h = makeHarness({
+      sessions: new Map([[
+        "pi:none",
+        { agentId: "pi", cwd: "/nowhere" },
+      ]]),
+      extra: { onRootDiscovered: (root) => discovered.push(root) },
+    });
+    h.activity.start();
+    await h.timers.runDue();
+    assert.deepStrictEqual(discovered, [], "negative lookups never fire the hook");
+  });
+
+  it("survives a throwing hook without breaking the root lookup", async () => {
+    const h = makeHarness({
+      sessions: new Map([[
+        "pi:sub",
+        { agentId: "pi", cwd: CWD },
+      ]]),
+      extra: { onRootDiscovered: () => { throw new Error("hook blew up"); } },
+    });
+    addTask(h.fakeFs, "09-28-hook2", {
+      title: "Hook2", status: "in_progress", subtasks: [],
+    }, { prd: true });
+
+    h.activity.start();
+    await h.timers.runDue();
+    // The resolver must still answer ok for the same cwd afterwards.
+    const panel = await h.activity.readHudTaskPanel(CWD);
+    assert.strictEqual(panel.status, "ok", "a throwing hook never breaks the lookup");
+  });
+});

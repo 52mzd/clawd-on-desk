@@ -2,6 +2,7 @@
 
 const { describe, it } = require("node:test");
 const assert = require("node:assert");
+const fs = require("node:fs");
 const path = require("node:path");
 
 const { createTrellisRootsStore, TRELLIS_ROOTS_MAX } = require("../src/trellis-roots");
@@ -222,3 +223,21 @@ describe("trellis-roots store", () => {
 function expectTmp(_ops, filePath) {
   return path.join(path.dirname(filePath), `.trellis-roots.json.${process.pid}.tmp`);
 }
+
+
+describe("main auto-registration guard (09-28 dashboard-trellis-sync)", () => {
+  it("never registers $HOME when the upward climb hits a stray ~/.trellis", () => {
+    // The climb from any home-relative session cwd can reach a stray
+    // ~/.trellis (a global trellis install); registering $HOME would
+    // swallow every project under it. The guard lives in main's
+    // autoRegisterDiscoveredRoot — assert the red line survives refactors
+    // (source-shape check, same pattern as the main-wiring tests).
+    const mainSource = fs.readFileSync(path.join(__dirname, "..", "src", "main.js"), "utf8");
+    const start = mainSource.indexOf("function autoRegisterDiscoveredRoot");
+    assert.ok(start >= 0, "autoRegisterDiscoveredRoot exists");
+    const end = mainSource.indexOf("\nfunction ", start + 10);
+    const body = mainSource.slice(start, end > start ? end : start + 2000);
+    assert.match(body, /os\.homedir\(\)/, "the home dir is resolved");
+    assert.match(body, /projectRoot === home/, "a climb landing on $HOME is refused");
+  });
+});

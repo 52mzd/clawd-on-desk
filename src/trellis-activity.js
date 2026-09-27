@@ -76,6 +76,11 @@ function createTrellisActivity(options) {
   const setTimeoutFn = opts.setTimeoutFn || setTimeout;
   const clearTimeoutFn = opts.clearTimeoutFn || clearTimeout;
   const onTrellisUpdate = typeof opts.onTrellisUpdate === "function" ? opts.onTrellisUpdate : null;
+  // Optional discovery hook (09-28 dashboard-trellis-sync): fired once per
+  // cwd that positively resolves a .trellis root, with the .trellis dir
+  // path. Main uses it to auto-register session-worked projects so they
+  // show up in the Dashboard's project chips without a manual add.
+  const onRootDiscovered = typeof opts.onRootDiscovered === "function" ? opts.onRootDiscovered : null;
 
   let lifecycleToken = 0;
   let pollTimer = null;
@@ -397,6 +402,10 @@ function createTrellisActivity(options) {
       const st = await statQuiet(candidate);
       if (st && st.isDirectory()) {
         rootCache.set(cwd, { root: candidate });
+        // Fire-and-forget discovery; a throw must never break the lookup.
+        if (onRootDiscovered) {
+          try { onRootDiscovered(candidate); } catch {}
+        }
         return candidate;
       }
       const parent = path.dirname(dir);
