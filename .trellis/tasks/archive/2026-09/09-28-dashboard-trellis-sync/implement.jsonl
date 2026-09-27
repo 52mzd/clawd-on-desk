@@ -1,0 +1,1 @@
+{"file": ".trellis/spec/guides/trellis-panel-contract.md", "reason": "HUD trellis 面板/跳转与 Dashboard trellis 视图的契约（chips、selectedRoot、one-shot 读口径），R1/R3 改动必须对齐并回写"}
