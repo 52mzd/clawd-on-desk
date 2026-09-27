@@ -27,6 +27,12 @@
     renderer 主体（DOM 构建/overlay 流程）依赖手动真机冒烟（dev app 重启 + 用户验收）
 - 新增纯逻辑（parser/状态推导）提为可导出模块（`trellis-checklist.js`、
   `trellis-phase.js` 形态）进单测；DOM 胶水不留测试债
+- **vm stub 属性分歧（09-28 教训）**：行为套件的 vm `FakeElement` 是手写 DOM
+  子集，renderer 代码读到 stub 未实现的标准属性（实测：`childElementCount`）时
+  **不报错、静默 undefined**——`!el.childElementCount` 恒真，空态门槛在有内容时
+  也追加空提示，测试与生产 DOM 分歧却绿灯。规则：renderer 新读一个标准 DOM
+  属性，同步给 FakeElement 补实现（getter 形态）；写「不出现空态」类负向断言
+  前，先确认 stub 真的实现了门槛读的那个属性
 
 ## 真机冒烟
 
