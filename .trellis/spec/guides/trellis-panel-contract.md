@@ -101,6 +101,7 @@ upgradeGlobal(channel?)                 // → { ok, from, to, output }
 | `isTrustedEvent` 抛错 | 同上（**不得**把 guard 的异常串透传给渲染层） |
 | `platformIds` 含表外 id | `{ok:false, error:"unknown-platform"}`；**execFile 不被调用** |
 | `channel` 非 `REMOTE_CHANNELS` 成员 | `{ok:false, error:"unknown-channel"}`；**execFile 不被调用**（ipc 与 cli **各校验一次**） |
+| `channel` 以**位置参数**传入（如 `["upgrade","beta"]`） | CLI **静默忽略**它、按默认频道（latest）升级，**exit 0 —— 无任何错误可观察**。所以 argv 形态必须向 `--help` 取证（见「附带：跨层教训」） |
 | 退出码非 0 | `{ok:false}`，**保留原始 stdout/stderr** |
 | `--version` 输出无「整行仅版本号」的行 | `{installed:true, version:null}`（不是 `installed:false`） |
 | `--version` 的 cwd 含 `.trellis/` | 解析仍取 CLI 版本；但 UI 显示的“已安装版本”含义变窄（见下） |
@@ -108,7 +109,7 @@ upgradeGlobal(channel?)                 // → { ok, from, to, output }
 
 ### 5. Good/Base/Bad Cases
 
-- **Good**：`upgradeGlobal("beta")` → argv `["upgrade","beta"]`；`upgradeGlobal()` → `["upgrade"]`
+- **Good**：`upgradeGlobal("beta")` → argv `["upgrade","--tag","beta"]`（**必须走 `--tag`**；位置参数会被 CLI 静默忽略）；`upgradeGlobal()` → `["upgrade"]`
 - **Base**：`--version` 输出只有 `0.7.0-beta.4` → 解析得 `0.7.0-beta.4`
 - **Bad**：`addPlatforms(dir, ["gemini"])` 产出 `["init","--gemini","-y","-f"]`——`-f` 会让 CLI 跳过 `handleReinit` 增量分支、**从零重建** `.template-hashes.json`，使已登记平台从记录中消失，之后 `trellis update` 静默不再同步它们
 
@@ -120,7 +121,8 @@ upgradeGlobal(channel?)                 // → { ok, from, to, output }
 | guard 抛错 → 同上（**新分支**，不是只测 guard 缺失） | `test/trellis-ipc.test.js` |
 | 不可信 sender 被拒、可信 sender 仍可调用 | `test/trellis-ipc.test.js` |
 | `upgradeGlobal()` argv 恰为 `["upgrade"]` | `test/trellis-cli.test.js` |
-| `upgradeGlobal("beta")` argv 恰为 `["upgrade","beta"]` | `test/trellis-cli.test.js` |
+| `upgradeGlobal("beta")` argv 恰为 `["upgrade","--tag","beta"]`，且显式断言含 `--tag` | `test/trellis-cli.test.js` |
+| **argv × CLI help 契约**（P1，尚未实现）：每个 `*_ARGS` 的 flag 都出现在 `trellis <cmd> --help` 里。当前靠人工取证 + 注释记录 `Measured on <version>` | 待建 |
 | 未知 channel → `{ok:false,error:"unknown-channel"}` 且 execFile 未被调用 | `test/trellis-cli.test.js` |
 | `addPlatforms` argv 恰为 `["init","--gemini","-y"]`（不含 `-s`/`-f`） | `test/trellis-cli.test.js` |
 | 未知 platform id → 不构建 argv | `test/trellis-cli.test.js` |
