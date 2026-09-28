@@ -400,7 +400,10 @@ name, active, archived}]}`），renderer 每项目一节（`.trellis-panel-proje
 跳转走 `session-hud:open-trellis-task`（send，payload 严格双键，taskPath 须以
 `.trellis/tasks/` 开头或为空串=仅切视图）→ main `openTrellisTaskFromHud`
 （showDashboard → `dashboard:navigate-trellis`，isLoading 时挂 did-finish-load）
-→ renderer 复用 `jumpToTrellisNetworkTask`（归档自动开 archiveOpen）。
+→ renderer 复用 `jumpToTrellisNetworkTask`（归档自动开 archiveOpen）；
+跳转前先 await 刷新 active/archive（09-28 trellis-freshness-time：
+dashboard 已开且已停在 trellis 视图时 switchDashboardView 的一次性
+refreshTrellisView 不触发，不刷新会拿旧缓存把已归档任务当活跃定位）。
 **跳转切项目 chip**（09-28 dashboard-trellis-sync）：先按 payload.cwd 经
 `trellisTaskOwningRoot` 解析 owning root 并切 `selectedRoot`（子目录 cwd 也能
 归到所属 root）；cwd 解析不到注册 root 时保持合并视图——**不 fallback 陈旧
@@ -410,7 +413,10 @@ name, active, archived}]}`），renderer 每项目一节（`.trellis-panel-proje
 聚合行 cwd 同 root 不同路径时不重合——现网 cwd=项目根未触发，未修。面板
 计入 §4.1 高度实测（`.trellis-task-panel` 选择器），max-height 320px 内滚，
 flex 锁定同 `.trellis-detail`；owner 会话消失才自动关（trellis 绑定消失不
-关，hud-panel-entry 起从磁盘续服务）；一次一拉不轮询。
+关，hud-panel-entry 起从磁盘续服务）；打开期间 30s 轮询续拉（09-28
+trellis-freshness-time：renderer setInterval 同 HUD per-second tick 惯例，
+§4「禁 setInterval」只约束 main 侧轮询器；fetchSeq 代数守卫防陈旧响应
+覆盖，面板关闭清 timer，status=missing 自动关），冷开一次一拉。
 
 **项目列表 recency 排序（09-28 hud-multi-project-audit）**：四处项目列表统一
 「最近动过的项目排最前」——HUD 面板（`readHudTaskPanel`）、dashboard 任务分组
@@ -682,10 +688,13 @@ Correct 聚合入 dashboard-trellis-panel.js UMD；阶段文案复用 sessionHud
 - IPC `dashboard:trellis-task-detail`（handle，同步返回结果对象）
 - main `_trellisActivity.readTaskDetail(cwd, taskPath)` →
   `{status:"ok",task:{title,phase,rawStatus,priority,createdAt,completedAt,
-  archived,checklist,docs}}` | `{status:"missing"}` | `{status:"error",message}`；
+  completedAtRealMs,archived,checklist,docs}}` | `{status:"missing"}` | `{status:"error",message}`；
   `docs` 列出任务目录全部 `*.md`（`{name,size}`，prd → design → implement
   优先，其余字典序；size 是 utf-8 字节数）；`priority` 同 listArchivedTasks
   口径（v7 R7）
+  ；`completedAtRealMs` 是 task.json 自身 mtime ≈ 归档时刻
+  （statQuiet 失败 null），detail 卡完成行同走归档行的
+  trellisArchiveCompletedLabel（09-28 trellis-freshness-time）
 - main `_trellisActivity.readTaskDoc(cwd, taskPath, doc)` →
   `{status:"ok",name,size,truncated,content}` | `{status:"missing"}`
 - renderer `switchTrellisDetailTab(tab)` → doc tab 懒拉取一次，
@@ -780,12 +789,16 @@ Correct taskPath.slice(prefix).split(/[\\/]/) 后逐段拒绝
 - `listArchivedTasks(fsApi, archiveBase, options?)`（`src/trellis-archive.js`，
   注入同步 fs）→ 冻结条目数组
   `{name, month, dir, title, parent, hasChildren, priority, createdAt,
-  completedAt, completedAtMs}`；
+  completedAt, completedAtMs, completedAtRealMs}`；
   `options.month`（"YYYY-MM"）限定单月目录（recap 语义，不多 readdir
   archive 根），缺省读全部 YYYY-MM 目录。task.json 不可读/损坏 →
   跳过；completedAt 无效时 fallback 目录 mtime（仅存 completedAtMs，
   由消费方投影到自己的时区——recap 用 timeZoneId，dashboard 用
-  toLocaleDateString(app lang)）。v7 R7 起 entry 增 `priority`
+  toLocaleDateString(app lang)）。
+  09-28 trellis-freshness-time：entry 另增 `completedAtRealMs` =
+  task.json 自身 statSync().mtimeMs，≈归档时刻（task.py 归档时改写
+  task.json），GUI 侧时分粒度近似，stat 失败为 null；readArchiveList
+  投影透传，dashboard 完成时间优先用它渲染。v7 R7 起 entry 增 `priority`
   （`normalizePriority`：`P0`/`p0`/`0`→`p0|p1|p2`，非法/缺失→null，
   不冒充排名）与 `hasChildren`（children 数组非空）
 - renderer 首次切到独立 Trellis 视图 / 显式 ↻ 刷新 → 单次
@@ -794,8 +807,8 @@ Correct taskPath.slice(prefix).split(/[\\/]/) 后逐段拒绝
 - main `readArchiveList()` → `{status:"ok", tasks:[…200]}`，
   newest-first（completedAtMs 降序，null 压尾）；条目
   `{taskPath, title, parent, hasChildren, priority, createdAt, completedAt,
-  completedAtMs, durationMs, cwd}`（v7 R7 前六键后旧序不变；priority 口径同
-  listArchivedTasks）；
+  completedAtMs, completedAtRealMs, durationMs, cwd}`（v7 R7 前六键后旧序不变；priority 口径同
+  listArchivedTasks；completedAtRealMs 透传自 listArchivedTasks，09-28）；
   `durationMs ≤ 0` 或缺失 → null（渲染 "—"）
 
 **3. Contracts**：
@@ -815,8 +828,11 @@ Correct taskPath.slice(prefix).split(/[\\/]/) 后逐段拒绝
   守卫，旧响应回来 `seq !== current` 直接丢弃
 - **隐藏语义**：loaded 且空 → 空态文案（独立视图内仍显示区块
   头）；loading/error/非空保持可见
-- **locale**：mtime fallback 的完成日期用 `toLocaleDateString(app lang)`，
-  非 task.py 写入的原始 YYYY-MM-DD 字符串优先直接显示
+- **locale**：完成时间显示（09-28 trellis-freshness-time）优先
+`completedAtRealMs` → `toLocaleDateString(app lang)` +
+`toLocaleTimeString(app lang, {hour:"2-digit",minute:"2-digit"})`；
+缺失回退 task.py 原始 YYYY-MM-DD 串，再回退 completedAtMs 的
+`toLocaleDateString(app lang)`；§4.3 detail 卡完成行同走此 label（09-28）
 
 **4. Wrong vs Correct**：
 ```text
@@ -825,7 +841,7 @@ Wrong   toLocaleDateString()                    // 跟系统 locale，与 UI 语
         fetch 回包无 seq 守卫                       // 旧包渲染进新项目视图
 Correct readArchiveList() 无参；根集来自 collectKnownRootCwds()
         root 去重后才扫；回包对 seq 后才落地
-        completedAt 原串优先；mtime fallback 日期跟 i18nPayload.lang
+        completedAtRealMs 优先（日期+时:分）；回退链 completedAt 原串 → completedAtMs，全跟 i18nPayload.lang
 ```
 
 #### §4.5 注册项目根（trellis-roots 持久化 store）
