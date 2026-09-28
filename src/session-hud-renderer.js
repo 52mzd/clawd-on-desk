@@ -175,36 +175,36 @@ function trellisPanelTaskRow(entry, archived, cwd) {
 function createTrellisPanel(session, sessions) {
   const panel = document.createElement("div");
   panel.className = "trellis-task-panel";
-  const info = trellisChipInfo(session);
-  if (info) {
-    const lines = String(info.title || "").split("\n");
-    const title = document.createElement("div");
-    title.className = "trellis-detail-title";
-    title.textContent = lines[0] || "";
-    panel.appendChild(title);
-    const guide = document.createElement("div");
-    guide.className = "trellis-detail-guide";
-    guide.textContent = lines[1] || "";
-    panel.appendChild(guide);
-    if (lines.length > 2) {
-      const command = document.createElement("div");
-      command.className = "trellis-detail-guide";
-      command.textContent = lines.slice(2).join(" ");
-      panel.appendChild(command);
-    }
-  }
-  // 09-29 hud-panel-active-only (R5): every other session with a live
-  // trellis task gets a one-line summary under the owner's detail, so
-  // multi-task work reads at a glance instead of one task only.
+  // 09-29 hud-panel-active-only (R6): one summary row per session with a
+  // live trellis task (owner first) — task name, phase-color dot, running
+  // skill/command on the right. Replaces R5's owner-three-lines + grey
+  // guide rows, which read as one undifferentiated text pile; the full
+  // three lines (task/hint/command) survive in the row tooltip.
+  const headerRows = [];
+  const ownerInfo = trellisChipInfo(session);
+  if (ownerInfo) headerRows.push(ownerInfo);
   const panelSessions = Array.isArray(sessions) ? sessions : [];
   for (const other of panelSessions) {
     if (!other || typeof other !== "object" || other.id === session.id) continue;
     const otherInfo = trellisChipInfo(other);
-    if (!otherInfo) continue;
-    const summaryRow = document.createElement("div");
-    summaryRow.className = "trellis-detail-guide";
-    summaryRow.textContent = otherInfo.summary;
-    panel.appendChild(summaryRow);
+    if (otherInfo) headerRows.push(otherInfo);
+  }
+  for (const rowInfo of headerRows) {
+    const row = document.createElement("div");
+    row.className = "trellis-panel-summary";
+    row.title = rowInfo.title;
+    const dot = document.createElement("span");
+    dot.className = `trellis-dot ${rowInfo.dot}`;
+    row.appendChild(dot);
+    const name = document.createElement("span");
+    name.className = "trellis-panel-summary-title";
+    name.textContent = rowInfo.taskName;
+    row.appendChild(name);
+    const side = document.createElement("span");
+    side.className = "trellis-panel-summary-side";
+    side.textContent = rowInfo.activity;
+    row.appendChild(side);
+    panel.appendChild(row);
   }
   const list = document.createElement("div");
   list.className = "trellis-panel-list";
@@ -460,13 +460,16 @@ function trellisChipInfo(session) {
   const phase = TRELLIS_PHASE_CHIP[info.phase];
   if (!phase) return null;
   let label = t(phase.key);
+  let progressText = "";
   const done = Number(info.progress && info.progress.done);
   const total = Number(info.progress && info.progress.total);
   if (Number.isFinite(done) && Number.isFinite(total) && total > 0) {
-    label += ` ${Math.max(0, Math.trunc(done))}/${Math.trunc(total)}`;
+    progressText = `${Math.max(0, Math.trunc(done))}/${Math.trunc(total)}`;
+    label += ` ${progressText}`;
   }
   const parallel = Number(info.parallelCount);
   if (Number.isFinite(parallel) && parallel > 1) {
+    progressText += ` \u00d7${Math.trunc(parallel)}`;
     label += ` \u00d7${Math.trunc(parallel)}`;
   }
   let hint = "";
@@ -503,7 +506,13 @@ function trellisChipInfo(session) {
     label,
     cls: phase.cls,
     title,
-    summary: `${info.title || info.taskPath || ""} — ${label}`,
+    // 09-29 hud-panel-active-only (R6): the panel header renders one row
+    // per session — bare task name, phase-color dot, and the running skill
+    // / command on the right (step count as fallback). The phase word and
+    // hint/command lines live in the row tooltip (title above).
+    taskName: info.title || info.taskPath || "",
+    dot: `trellis-dot-${info.phase}`,
+    activity: (info.command || info.workflowNextAction || progressText).trim(),
   };
 }
 

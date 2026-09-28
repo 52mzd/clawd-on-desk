@@ -695,8 +695,8 @@ test("HUD trellis icon button is the sole panel entry; panel rows jump to the da
   const panel = byCls(root, "trellis-task-panel");
   assert.equal(panel.length, 1, "the icon click opens the panel below the rows");
   assert.ok(byCls(root, "trellis-panel-row").length >= 2, "active + archived rows render");
-  assert.ok(byCls(panel[0], "trellis-detail-title").some((el) => el.textContent.includes("Current")),
-    "panel header keeps the old detail-row task title (tooltip template)");
+  assert.ok(byCls(panel[0], "trellis-panel-summary-title").some((el) => el.textContent.includes("Current")),
+    "panel header keeps the owner task as its first summary row");
   assert.ok(byCls(root, "trellis-btn")[0].classList.contains("active"),
     "an open panel highlights the button");
   assert.equal(byCls(root, "trellis-panel-hint").length, 0,
@@ -719,7 +719,7 @@ test("HUD trellis icon button is the sole panel entry; panel rows jump to the da
 test("panel header lists every session's trellis task, not just the owner's (09-29)", async () => {
   const { root } = await loadHud([
     { id: "s1", agentId: "claude-code", cwd: "/proj", state: "working", trellis:
-      { taskPath: ".trellis/tasks/09-27-cur", title: "Current", phase: "execute", progress: { done: 1, total: 2 }, parallelCount: 1 } },
+      { taskPath: ".trellis/tasks/09-27-cur", title: "Current", phase: "execute", progress: { done: 1, total: 2 }, parallelCount: 1, command: "trellis-check" } },
     { id: "s2", agentId: "claude-code", cwd: "/proj2", state: "working", trellis:
       { taskPath: ".trellis/tasks/09-28-sec", title: "Second", phase: "plan", progress: { done: 3, total: 7 }, parallelCount: 1 } },
   ]);
@@ -733,10 +733,13 @@ test("panel header lists every session's trellis task, not just the owner's (09-
   await flush();
   const panel = byCls(root, "trellis-task-panel")[0];
   assert.ok(panel, "the icon click opens the panel");
-  assert.ok(byCls(panel, "trellis-detail-title").some((el) => el.textContent.includes("Current")),
-    "owner detail stays as the panel head");
-  assert.ok(byCls(panel, "trellis-detail-guide").some((el) => el.textContent.includes("Second")),
-    "the other session's task gets a one-line summary in the header");
+  const names = byCls(panel, "trellis-panel-summary-title").map((el) => el.textContent);
+  assert.ok(names.some((s) => s.includes("Current")), "owner task heads the panel");
+  assert.ok(names.some((s) => s.includes("Second")),
+    "the other session's task gets its own header row");
+  const sides = byCls(panel, "trellis-panel-summary-side").map((el) => el.textContent);
+  assert.ok(sides.includes("trellis-check"), "side slot prefers the running command");
+  assert.ok(sides.includes("3/7"), "side slot falls back to the step count without a command");
 });
 test("HUD trellis panel polls fresh disk state; closing clears its timer (09-28 trellis-freshness-time)", async () => {
   let panel = { status: "ok", projects: [
@@ -844,12 +847,14 @@ test("HUD trellis panel header renders the workflow-state line when no command e
   };
   await byCls(root, "trellis-btn")[0].dispatch("click");
   await flush();
-  const guides = byCls(byCls(root, "trellis-task-panel")[0], "trellis-detail-guide");
-  assert.strictEqual(guides.length, 2, "hint row plus the ws-only third row");
-  assert.strictEqual(guides[0].textContent, "step 1/2", "the step hint keeps the second line");
-  assert.strictEqual(guides[1].textContent,
-    "planning — Load `trellis-brainstorm`; stay in planning",
-    "ws-only renders 'Status — Next-Action' passthrough (no command, no i18n key)");
+  const rows = byCls(byCls(root, "trellis-task-panel")[0], "trellis-panel-summary");
+  assert.strictEqual(rows.length, 1, "one header summary row for the owner");
+  assert.ok(String(rows[0].title).includes("step 1/2"), "the step hint lives on in the row tooltip");
+  assert.ok(String(rows[0].title).includes("planning — Load `trellis-brainstorm`; stay in planning"),
+    "ws-only 'Status — Next-Action' passthrough keeps its tooltip slot (no command, no i18n key)");
+  assert.strictEqual(byCls(rows[0], "trellis-panel-summary-side")[0].textContent,
+    "Load `trellis-brainstorm`; stay in planning",
+    "the side slot shows the live skill, not the phase word");
 });
 
 test("HUD trellis panel outlives its binding; closes when the owner session goes", async () => {
