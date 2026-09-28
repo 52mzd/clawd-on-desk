@@ -393,7 +393,10 @@ HUD 底部面板（`createTrellisPanel`，替代旧 per-session 详情行——�
 activity 侧 `readHudTaskPanel` 复用共享 per-root 遍历 + `listArchivedTasks`；
 **09-28 hud-multi-project-audit 起多项目**：cwd 只保证锚定项目进集合（过
 `isTrustedTrellisCwd`；recency 排序后**不保证位置**，见下段 recency 契约），面板覆盖全部已知 root（`collectKnownRootCwds()` 信任面，
-项目 ≤5、每项目 active 全量 + 归档 newest-first 截 3，`{status, projects:[{cwd,
+项目 ≤5（只计有任务的节）、每项目 active 全量，归档 newest-first
+截 3 **仅锚定项目携带**（09-29 hud-panel-active-only：roots 全量注册时
+归档历史把进行中任务压到 320px 内滚线以下——非锚定无 active 的项目整节
+不出，归档的家在 dashboard），`{status, projects:[{cwd,
 name, active, archived}]}`），renderer 每项目一节（`.trellis-panel-project`
 节头），行跳转用**所属节的 cwd**——非锚定项目的行不得经锚定 cwd 解析；
 换锚定会话不 refetch（payload 与单 cwd 解耦），仅冷开面板拉一次）；
