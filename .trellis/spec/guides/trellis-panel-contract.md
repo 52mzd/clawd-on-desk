@@ -388,7 +388,9 @@ activity.getKnownRoots()              // → string[]（本进程正向缓存的
 HUD 条 pin 按钮旁的**常驻 trellis 图标按钮**（`createTrellisToggleButton`）单击打开
 HUD 底部面板（`createTrellisPanel`，替代旧 per-session 详情行；09-29
 hud-panel-active-only R6 起头部是一行式会话清单——所有带 trellis 任务的
-会话各一行（owner 首位）：阶段色圆点 + 任务名 + 右侧正在执行的
+会话各一行（owner 首位）：阶段色五角星（R7 视觉打磨：CSS mask 把
+`.trellis-dot-*` 阶段色背景剪成 12px 星形，与列表行 7px 实心圆点区分
+会话级/任务级；mask data URI 见 session-hud.html）+ 任务名 + 右侧正在执行的
 skill/指令（`trellisChipInfo().activity` = command 优先，次
 workflowNextAction，兜底步数 done/total，不显示阶段词；`.trellis-panel-summary*`
 样式，同列表行 dot/ellipsis/tabular 语言）；原 owner 三行（任务/阶段
