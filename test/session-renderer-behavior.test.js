@@ -716,6 +716,28 @@ test("HUD trellis icon button is the sole panel entry; panel rows jump to the da
     "closing the panel drops the highlight");
 });
 
+test("panel header lists every session's trellis task, not just the owner's (09-29)", async () => {
+  const { root } = await loadHud([
+    { id: "s1", agentId: "claude-code", cwd: "/proj", state: "working", trellis:
+      { taskPath: ".trellis/tasks/09-27-cur", title: "Current", phase: "execute", progress: { done: 1, total: 2 }, parallelCount: 1 } },
+    { id: "s2", agentId: "claude-code", cwd: "/proj2", state: "working", trellis:
+      { taskPath: ".trellis/tasks/09-28-sec", title: "Second", phase: "plan", progress: { done: 3, total: 7 }, parallelCount: 1 } },
+  ]);
+  const byCls = (el, cls) => {
+    const out = [];
+    if (el.classList && el.classList.contains(cls)) out.push(el);
+    for (const child of (el.children || [])) out.push(...byCls(child, cls));
+    return out;
+  };
+  await byCls(root, "trellis-btn")[0].dispatch("click");
+  await flush();
+  const panel = byCls(root, "trellis-task-panel")[0];
+  assert.ok(panel, "the icon click opens the panel");
+  assert.ok(byCls(panel, "trellis-detail-title").some((el) => el.textContent.includes("Current")),
+    "owner detail stays as the panel head");
+  assert.ok(byCls(panel, "trellis-detail-guide").some((el) => el.textContent.includes("Second")),
+    "the other session's task gets a one-line summary in the header");
+});
 test("HUD trellis panel polls fresh disk state; closing clears its timer (09-28 trellis-freshness-time)", async () => {
   let panel = { status: "ok", projects: [
     { cwd: "/proj", name: "proj", active: [

@@ -387,7 +387,10 @@ activity.getKnownRoots()              // → string[]（本进程正向缓存的
 **HUD 任务面板（09-27 hud-task-panel-jump；09-27 hud-trellis-icon-entry 起入口收敛）**：
 HUD 条 pin 按钮旁的**常驻 trellis 图标按钮**（`createTrellisToggleButton`）单击打开
 HUD 底部面板（`createTrellisPanel`，替代旧 per-session 详情行——原三行内容上移为
-面板头）——图标是面板**唯一入口**（trellis chip 纯信息：渲染 + title tooltip，
+面板头；09-29 hud-panel-active-only R5 起头部不止 owner——
+其余带 trellis 任务的会话各追加一行摘要（`trellisChipInfo().summary`
+= 任务标题 — chip label，`.trellis-detail-guide` 样式，owner 三行保持不变，
+render 传 `createTrellisPanel(owner, sessions)`））——图标是面板**唯一入口**（trellis chip 纯信息：渲染 + title tooltip，
 无 click listener 无 active 态；行单击回归 fork 官方跳终端语义，见 §4.1）。
 数据走 `session-hud:trellis-panel`（invoke，payload 严格单键 `{cwd}`，
 activity 侧 `readHudTaskPanel` 复用共享 per-root 遍历 + `listArchivedTasks`；

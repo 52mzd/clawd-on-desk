@@ -172,7 +172,7 @@ function trellisPanelTaskRow(entry, archived, cwd) {
   return row;
 }
 
-function createTrellisPanel(session) {
+function createTrellisPanel(session, sessions) {
   const panel = document.createElement("div");
   panel.className = "trellis-task-panel";
   const info = trellisChipInfo(session);
@@ -192,6 +192,19 @@ function createTrellisPanel(session) {
       command.textContent = lines.slice(2).join(" ");
       panel.appendChild(command);
     }
+  }
+  // 09-29 hud-panel-active-only (R5): every other session with a live
+  // trellis task gets a one-line summary under the owner's detail, so
+  // multi-task work reads at a glance instead of one task only.
+  const panelSessions = Array.isArray(sessions) ? sessions : [];
+  for (const other of panelSessions) {
+    if (!other || typeof other !== "object" || other.id === session.id) continue;
+    const otherInfo = trellisChipInfo(other);
+    if (!otherInfo) continue;
+    const summaryRow = document.createElement("div");
+    summaryRow.className = "trellis-detail-guide";
+    summaryRow.textContent = otherInfo.summary;
+    panel.appendChild(summaryRow);
   }
   const list = document.createElement("div");
   list.className = "trellis-panel-list";
@@ -490,6 +503,7 @@ function trellisChipInfo(session) {
     label,
     cls: phase.cls,
     title,
+    summary: `${info.title || info.taskPath || ""} — ${label}`,
   };
 }
 
@@ -838,7 +852,7 @@ function render() {
   if (trellisPanel.open) {
     const owner = expanded.find((session) => session.id === trellisPanel.sessionId);
     if (owner) {
-      hudEl.appendChild(createTrellisPanel(owner));
+      hudEl.appendChild(createTrellisPanel(owner, sessions));
     } else {
       closeTrellisPanel();
     }
