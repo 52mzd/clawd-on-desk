@@ -350,10 +350,12 @@ describe("HUD global type scale (09-27 hud-panel-readability)", () => {
 describe("HUD trellis detail command line (09-27 hud-process-awareness, 09-28 ws-only)", () => {
   it("wires the process-level command row through the i18n key", () => {
     assert.match(sessionHudRenderer, /sessionHudTrellisCommand/);
-    // The command line is a third title segment (lines.slice(2)); the
-    // command branch keeps the legacy i18n wording when a marker exists.
+    // The command line is a third title segment; the command branch keeps
+    // the legacy i18n wording when a marker exists. 09-29 R6: the panel no
+    // longer splits the title into on-screen rows — chipInfo.title (with
+    // that segment inside) becomes the header row's tooltip instead.
     assert.match(sessionHudRenderer, /if \(info\.command\) \{/);
-    assert.match(sessionHudRenderer, /lines\.slice\(2\)/);
+    assert.match(sessionHudRenderer, /row\.title = rowInfo\.title/);
   });
 
   it("renders the row from workflow-state signals alone when no command exists", () => {

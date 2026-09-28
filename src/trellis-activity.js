@@ -894,6 +894,13 @@ function createTrellisActivity(options) {
     if (!taskJson.ok) return { status: "error", message: "unreadable-task-json" };
     const value = taskJson.value;
     const hasPrd = Boolean(await statQuiet(path.join(absDir, "prd.md")));
+    // task.json's own mtime ≈ the archival moment — same signal as the
+    // archive entries' completedAtRealMs (09-28 trellis-freshness-time);
+    // statQuiet failing just leaves it null.
+    const completedRealStat = await statQuiet(path.join(absDir, "task.json"));
+    const completedAtRealMs = completedRealStat && Number.isFinite(completedRealStat.mtimeMs)
+      ? completedRealStat.mtimeMs
+      : null;
     const checklist = await readChecklist(absDir);
     return {
       status: "ok",
@@ -909,6 +916,7 @@ function createTrellisActivity(options) {
         priority: normalizePriority(value.priority),
         createdAt: sanitizeTaskDate(value.createdAt),
         completedAt: sanitizeTaskDate(value.completedAt),
+        completedAtRealMs,
         archived,
         checklist: {
           items: checklist.items,
@@ -1346,7 +1354,7 @@ function createTrellisActivity(options) {
   //
   // Returns { status: "ok", tasks } newest completed first (capped for the
   // month-grouped browser view), each entry an IPC/JSON-safe object:
-  //   { taskPath, title, parent, createdAt, completedAt, completedAtMs, durationMs, cwd }
+  //   { taskPath, title, parent, createdAt, completedAt, completedAtMs, completedAtRealMs, durationMs, cwd }
   // taskPath is the full snapshot-relative posix path readTaskDetail accepts
   // (".trellis/tasks/archive/<month>/<name>") — the "/archive/" segment is
   // what the dashboard's month grouping keys on; parent is the task.json parent task NAME (or null) for the archive
@@ -1396,6 +1404,7 @@ function createTrellisActivity(options) {
         createdAt: entry.createdAt,
         completedAt: entry.completedAt,
         completedAtMs: entry.completedAtMs,
+        completedAtRealMs: entry.completedAtRealMs,
         durationMs: Number.isFinite(diff) && diff > 0 ? diff : null,
         cwd,
       };
@@ -1492,7 +1501,7 @@ function createTrellisActivity(options) {
         : await findTrellisRoot(anchorCwd);
       if (anchorRoot) {
         seenRoots.add(anchorRoot);
-        roots.push({ root: anchorRoot, cwd: anchorCwd });
+        roots.push({ root: anchorRoot, cwd: anchorCwd, anchor: true });
       }
     }
     for (const cwd of collectKnownRootCwds()) {
@@ -1501,7 +1510,7 @@ function createTrellisActivity(options) {
         : await findTrellisRoot(cwd);
       if (!root || seenRoots.has(root)) continue;
       seenRoots.add(root);
-      roots.push({ root, cwd });
+      roots.push({ root, cwd, anchor: false });
     }
     if (!roots.length) return { status: "missing" };
     // Recency order (09-28): newest-touched project first, everywhere the
@@ -1511,24 +1520,34 @@ function createTrellisActivity(options) {
     const recencies = await readRootRecencies(roots.map((entry) => entry.root));
     roots.sort((a, b) => (recencies.get(b.root) || 0) - (recencies.get(a.root) || 0));
     const projects = [];
-    for (const { root, cwd } of roots.slice(0, HUD_PANEL_PROJECT_MAX)) {
+    for (const { root, cwd, anchor } of roots) {
       const active = await collectActiveTasksInRoot(root, cwd);
-      const archived = listArchivedTasks(syncFs, path.join(root, "tasks", "archive"))
-        .sort((a, b) => {
-          const am = a.completedAtMs;
-          const bm = b.completedAtMs;
-          if (am === null && bm === null) return 0;
-          if (am === null) return 1;
-          if (bm === null) return -1;
-          return bm - am;
-        })
-        .slice(0, HUD_PANEL_ARCHIVE_MAX)
-        .map((entry) => ({
-          taskPath: `.trellis/tasks/archive/${entry.month}/${entry.name}`,
-          title: entry.title || entry.name,
-          completedAt: entry.completedAt,
-        }));
+      // 09-29 hud-panel-active-only: archived rows belong to the anchor
+      // project alone — a whole registry of roots each contributing up to
+      // 3 archived entries sinks the live tasks below the panel's 320px
+      // inner scroll. Non-anchor roots with no active task drop out of
+      // the panel entirely (the dashboard stays the archive home), and the
+      // project cap now counts sections that actually carry tasks.
+      const archived = anchor
+        ? listArchivedTasks(syncFs, path.join(root, "tasks", "archive"))
+          .sort((a, b) => {
+            const am = a.completedAtMs;
+            const bm = b.completedAtMs;
+            if (am === null && bm === null) return 0;
+            if (am === null) return 1;
+            if (bm === null) return -1;
+            return bm - am;
+          })
+          .slice(0, HUD_PANEL_ARCHIVE_MAX)
+          .map((entry) => ({
+            taskPath: `.trellis/tasks/archive/${entry.month}/${entry.name}`,
+            title: entry.title || entry.name,
+            completedAt: entry.completedAt,
+          }))
+        : [];
+      if (!active.length && !archived.length) continue;
       projects.push({ cwd, name: path.basename(path.dirname(root)), active, archived });
+      if (projects.length >= HUD_PANEL_PROJECT_MAX) break;
     }
     return { status: "ok", projects };
   }

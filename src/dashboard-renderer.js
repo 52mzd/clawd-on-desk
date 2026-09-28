@@ -3202,6 +3202,17 @@ function formatTrellisArchiveDuration(ms) {
 }
 
 function trellisArchiveCompletedLabel(task) {
+  if (typeof task.completedAtRealMs === "number" && Number.isFinite(task.completedAtRealMs)) {
+    // task.json's mtime = the archival moment (approx.) — render date + time of day.
+    // App language, not the system locale — same rule as formatResetDate.
+    try {
+      const lang = (i18nPayload && i18nPayload.lang) || "en";
+      const at = new Date(task.completedAtRealMs);
+      return `${at.toLocaleDateString(lang)} ${at.toLocaleTimeString(lang, { hour: "2-digit", minute: "2-digit" })}`;
+    } catch {
+      // fall through to the date-only chain
+    }
+  }
   if (task.completedAt) return task.completedAt;
   if (typeof task.completedAtMs === "number" && Number.isFinite(task.completedAtMs)) {
     // App language, not the system locale — same rule as formatResetDate.
@@ -3780,7 +3791,7 @@ function appendTrellisDetailMeta(card, task) {
     meta.appendChild(createText(
       "span",
       "trellis-detail-meta-item",
-      t("dashboardTrellisDetailCompleted").replace("{date}", task.completedAt)
+      t("dashboardTrellisDetailCompleted").replace("{date}", trellisArchiveCompletedLabel(task))
     ));
   }
   if (task.checklist && task.checklist.total > 0) {
@@ -5221,6 +5232,11 @@ async function init() {
       // the fetch; await our own read so the jump never lands unfiltered.
       if (!trellisView.rootsLoaded) await refreshTrellisViewRoots();
       if (payload.taskPath) {
+        // 09-28 trellis-freshness-time: the HUD panel list freezes at open
+        // time, so a jump can target a task that archived meanwhile — await
+        // fresh lists so the jump positions against current disk state.
+        await refreshTrellisActive();
+        await refreshTrellisViewArchive();
         jumpToTrellisNetworkTask(payload.taskPath, typeof payload.cwd === "string" ? payload.cwd : undefined);
       }
     });

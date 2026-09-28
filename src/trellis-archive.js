@@ -10,12 +10,16 @@
 //
 // Entry shape (frozen, IPC/JSON-safe):
 //   { name, month, dir, title, parent, hasChildren, priority, createdAt,
-//     completedAt, completedAtMs }
+//     completedAt, completedAtMs, completedAtRealMs }
 //     name/completedAt semantics mirror task.py: createdAt/completedAt are
 //     YYYY-MM-DD local-date strings, and a missing/invalid completedAt falls
 //     back to the task directory's mtime (exposed as completedAtMs only, so
 //     each consumer projects it into its own time zone — recap freezes it,
 //     the dashboard renders a local date). parent is the task.json `parent`
+//     completedAtRealMs is task.json's own mtime — an approximate archival
+//     moment (task.py rewrites task.json when stamping completedAt) the
+//     dashboard renders as date + HH:mm; null when the stat fails, and
+//     hand-edits after archival drift it.
 //     task NAME (string) or null — the dashboard's archive tree resolves it
 //     by name across months; the recap scan ignores it. priority is the
 //     normalized "p0"|"p1"|"p2" badge key (null when unset/invalid). A
@@ -87,14 +91,22 @@ function listArchivedTasks(fsApi, archiveBase, options) {
       if (completedAtMs !== null && !Number.isFinite(completedAtMs)) completedAtMs = null;
       if (completedAtMs === null) {
         // Same fallback order as the recap scan: only stat when the stored
-        // completedAt is unusable, so valid task.py archival never pays for
-        // the extra stat and a stat failure simply leaves the ms null.
+        // completedAt is unusable — a stat failure simply leaves the ms null.
         try {
           const stat = fsApi.statSync(dir);
           if (stat && Number.isFinite(stat.mtimeMs)) completedAtMs = stat.mtimeMs;
         } catch {}
       }
 
+      let completedAtRealMs = null;
+      // task.json's own mtime ≈ the archival moment (task.py rewrites
+      // task.json when stamping completedAt). Unconditional: the dashboard
+      // wants a time-of-day even for valid stored dates; a stat failure
+      // (or an fsApi without statSync) just leaves it null.
+      try {
+        const realStat = fsApi.statSync(path.join(dir, "task.json"));
+        if (realStat && Number.isFinite(realStat.mtimeMs)) completedAtRealMs = realStat.mtimeMs;
+      } catch {}
       const title = typeof taskJson.title === "string" && taskJson.title.trim()
         ? taskJson.title.trim()
         : null;
@@ -113,6 +125,7 @@ function listArchivedTasks(fsApi, archiveBase, options) {
         createdAt: isValidDateString(taskJson.createdAt) ? taskJson.createdAt : null,
         completedAt,
         completedAtMs,
+        completedAtRealMs,
       }));
     }
   }

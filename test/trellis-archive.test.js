@@ -116,6 +116,38 @@ test("falls back to the directory mtime only when completedAt is unusable", (t) 
   assert.equal(reread.get("valid").completedAtMs, Date.parse("2026-09-20"));
 });
 
+test("completedAtRealMs carries task.json's own mtime for time-of-day display", (t) => {
+  const archive = makeArchive(t, "real-ms");
+  const dir = writeArchived(archive, "2026-09", "stamped", {
+    createdAt: "2026-09-01", completedAt: "2026-09-20",
+  });
+  fs.utimesSync(
+    path.join(dir, "task.json"),
+    new Date("2026-09-20T14:32:00Z"),
+    new Date("2026-09-20T14:32:00Z")
+  );
+  const byName = new Map(listArchivedTasks(fs, archive).map((e) => [e.name, e]));
+  // completedAtMs keeps the stored-date semantics.
+  assert.equal(byName.get("stamped").completedAtMs, Date.parse("2026-09-20"));
+  // realMs exposes the file moment for the dashboard time-of-day display.
+  assert.equal(byName.get("stamped").completedAtRealMs, Date.parse("2026-09-20T14:32:00Z"));
+});
+
+test("completedAtRealMs is null when the stat fails, without touching completedAtMs", (t) => {
+  const archive = makeArchive(t, "real-ms-null");
+  writeArchived(archive, "2026-09", "valid", {
+    createdAt: "2026-09-01", completedAt: "2026-09-20",
+  });
+  const entries = listArchivedTasks(
+    { readdirSync: fs.readdirSync, readFileSync: fs.readFileSync, statSync: () => { throw new Error("boom"); } },
+    archive
+  );
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].completedAtRealMs, null);
+  assert.equal(entries[0].completedAtMs, Date.parse("2026-09-20"));
+});
+
+
 test("a missing archive base is an empty list", (t) => {
   const archive = makeArchive(t, "missing");
   assert.deepEqual(listArchivedTasks(fs, path.join(archive, "nope")), []);

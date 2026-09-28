@@ -1088,6 +1088,8 @@ describe("trellis-activity readTaskDetail", () => {
     assert.strictEqual(result.task.rawStatus, "in_progress");
     assert.strictEqual(result.task.createdAt, "2026-09-20");
     assert.strictEqual(result.task.completedAt, null);
+    // fake fs mtimes default to 0 — the point is readTaskDetail passes it through
+    assert.strictEqual(result.task.completedAtRealMs, 0);
     assert.strictEqual(result.task.archived, false);
     assert.strictEqual(result.task.checklist.total, 2);
     assert.strictEqual(result.task.checklist.done, 1);
@@ -1649,6 +1651,7 @@ describe("trellis-activity readArchiveList", () => {
       createdAt: "2026-09-18",
       completedAt: "2026-09-20",
       completedAtMs: Date.parse("2026-09-20"),
+      completedAtRealMs: 0, // fake mtimes default to 0 — the point is the projection passes it through
       durationMs: 2 * 24 * 60 * 60 * 1000,
       cwd: PROJECT,
     });
@@ -2010,11 +2013,41 @@ describe("trellis-activity readHudTaskPanel (09-27 hud-task-panel-jump, 09-28 mu
       "freshest project first, not the anchor");
     assert.deepStrictEqual(result.projects[0].active.map((t) => t.taskPath), [".trellis/tasks/09-27-cur"]);
     assert.strictEqual(result.projects[1].cwd, CWD2, "each section carries its own trusted cwd");
-    assert.strictEqual(result.projects[0].archived.length, 3, "archived capped at 3 per project");
-    assert.ok(result.projects[0].archived[0].taskPath.endsWith("old-00"), "newest first");
+    assert.deepStrictEqual(result.projects[0].archived, [], "non-anchor sections carry no archived rows (09-29)");
     assert.deepStrictEqual(h.fakeFs.writeOps, [], "read-only red line");
   });
 
+  it("only the anchor carries archived rows; archive-only roots drop out (09-29)", async () => {
+    const PROJECT3 = path.resolve("/proj3");
+    const CWD3 = path.join(PROJECT3, "app");
+    const h = makeHarness({ sessions: new Map([
+      ["s1", { agentId: "claude-code", cwd: CWD }],
+      ["s2", { agentId: "claude-code", cwd: CWD2 }],
+      ["s3", { agentId: "claude-code", cwd: CWD3 }],
+    ]) });
+    seed(h.fakeFs);
+    addTask(h.fakeFs, "09-28-other", { title: "Other", status: "planning", subtasks: [] }, { prd: true, root: PROJECT2 });
+    for (let i = 0; i < 4; i += 1) {
+      const name = `p2-old-${String(i).padStart(2, "0")}`;
+      h.fakeFs.add(path.join(PROJECT2, ".trellis", "tasks", "archive", "2026-09", name, "task.json"),
+        JSON.stringify({ title: name, status: "completed", subtasks: [],
+          completed_at: `2026-09-${String(25 - i).padStart(2, "0")}T00:00:00.000Z` }));
+    }
+    // proj3 holds only archived tasks: the panel must not list it.
+    h.fakeFs.add(path.join(PROJECT3, ".trellis", "tasks", "archive", "2026-09", "p3-old", "task.json"),
+      JSON.stringify({ title: "p3-old", status: "completed", subtasks: [],
+        completed_at: "2026-09-28T00:00:00.000Z" }));
+    h.activity.start();
+    await h.timers.runDue();
+    const result = await h.activity.readHudTaskPanel(CWD2);
+    assert.strictEqual(result.status, "ok");
+    assert.ok(!result.projects.some((p) => p.name === "proj3"), "archive-only roots drop out");
+    const anchorSection = result.projects.find((p) => p.cwd === CWD2);
+    assert.strictEqual(anchorSection.archived.length, 3, "anchor archived still capped at 3");
+    assert.ok(anchorSection.archived[0].taskPath.endsWith("p2-old-00"), "anchor archived newest first");
+    const plainSection = result.projects.find((p) => p.cwd === CWD);
+    assert.deepStrictEqual(plainSection.archived, [], "non-anchor sections carry no archived rows");
+  });
   it("answers a single section when only the anchor's root is known (no poll yet)", async () => {
     const h = makeHarness({ sessions: new Map([["s1", { agentId: "claude-code", cwd: CWD }]]) });
     seed(h.fakeFs);

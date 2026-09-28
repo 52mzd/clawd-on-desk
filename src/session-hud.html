@@ -312,6 +312,42 @@ body { padding: 2px 3px 8px; }
   max-height: 320px;
   overflow-y: auto;
 }
+/* 09-29 hud-panel-active-only (R6): header rows — one line per live session,
+   same dot/ellipsis/tabular language as the list rows below. */
+.trellis-panel-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 2px;
+  font-size: var(--hud-fs-main);
+}
+.trellis-panel-summary-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trellis-panel-summary-side {
+  flex: 0 0 auto;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--hud-fs-sub);
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+/* Header markers are stars (session level), list dots stay solid circles
+   (task level) — same phase palette, unmistakable shapes. The mask cuts
+   each .trellis-dot-* background color into a star, so no new color rules. */
+.trellis-panel-summary .trellis-dot {
+  width: 12px;
+  height: 12px;
+  --hud-star-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2.5l2.95 6.1 6.55.95-4.75 4.63 1.12 6.52L12 17.6l-5.87 3.1 1.12-6.52-4.75-4.63 6.55-.95z'/%3E%3C/svg%3E");
+  -webkit-mask: var(--hud-star-mask) center/contain no-repeat;
+  mask: var(--hud-star-mask) center/contain no-repeat;
+}
 .trellis-panel-list { margin-top: 3px; }
 /* Project section header (09-28 hud-multi-project-audit): one per project,
    visually above the per-project active/done group heads. */
@@ -464,13 +500,6 @@ body { padding: 2px 3px 8px; }
   background: rgba(255, 255, 255, 0.96);
   border: 1px solid var(--hud-border);
   overflow: hidden;
-}
-.trellis-detail-title {
-  font-size: var(--hud-fs-main);
-  color: var(--text);
-  white-space: normal;
-  word-break: break-word;
-  line-height: 1.35;
 }
 .trellis-detail-guide {
   font-size: var(--hud-fs-sub);

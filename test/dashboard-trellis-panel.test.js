@@ -847,6 +847,25 @@ describe("dashboard trellis task detail overlay", () => {
       i18n.en.dashboardTrellisDetailCompleted.replace("{date}", "2026-09-21")
     ));
   });
+  it("renders the detail card completed time as date + HH:mm from completedAtRealMs", async () => {
+    const trellis = { taskPath: ".trellis/tasks/timed", title: "Timed", phase: "done" };
+    const app = loadDashboard({
+      sessions: [bindingSession("s1", trellis)],
+      detailResult: detailOk({
+        phase: "done",
+        archived: true,
+        completedAt: "2026-09-21",
+        completedAtRealMs: Date.parse("2026-09-21T14:32:00Z"),
+        checklist: { items: [{ text: "only", checked: true }], done: 1, total: 1 },
+      }),
+    });
+    await flush();
+    await openDetail(app);
+    const text = textOf(app.overlay);
+    // Same locale rule as the archive row label — app language (en here).
+    const timedAt = new Date(Date.parse("2026-09-21T14:32:00Z"));
+    assert.ok(text.includes(`${timedAt.toLocaleDateString("en")} ${timedAt.toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit" })}`), "detail card completed time carries HH:mm");
+  });
 
   it("renders an empty-checklist note instead of an empty list", async () => {
     const trellis = { taskPath: ".trellis/tasks/t1", title: "T", phase: "plan" };
@@ -1514,6 +1533,7 @@ describe("dashboard trellis independent view", () => {
         archivedTask({ title: "Hours", durationMs: 3 * 60 * 60 * 1000 }),
         archivedTask({ title: "SameDay", durationMs: 0 }),
         archivedTask({ title: "Moved", completedAt: null }),
+        archivedTask({ title: "Timed", completedAtRealMs: Date.parse("2026-09-20T14:32:00Z") }),
       ] },
     });
     await flush();
@@ -1533,6 +1553,9 @@ describe("dashboard trellis independent view", () => {
     assert.ok(text.includes(
       new Date(Date.parse("2026-09-20")).toLocaleDateString("en")
     ), "mtime-completed tasks render a localized date");
+    // 09-28 realMs: task.json mtime renders date + time-of-day in the app language.
+    const timedAt = new Date(Date.parse("2026-09-20T14:32:00Z"));
+    assert.ok(text.includes(`${timedAt.toLocaleDateString("en")} ${timedAt.toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit" })}`), "realMs-completed tasks render date + HH:mm");
   });
 
   it("nests active children under their parent and toggles the subtree with the caret", async () => {
@@ -2591,6 +2614,41 @@ describe("dashboard trellis navigation from the HUD panel (09-27)", () => {
     assert.equal(selected.length, 1, "the target task row is selected");
   });
 
+  it("awaits fresh lists before positioning a jump at a task that archived meanwhile (09-28 trellis-freshness-time)", async () => {
+  // The HUD panel freezes at its open snapshot, so its jump can target a
+  // task that archived on disk afterwards. The view switch fires a refresh,
+  // but it is fire-and-forget — the first read still answers with the stale
+  // active placement; only the jump's own awaited re-read returns the
+  // archived truth, and the jump must position against that one.
+  let activeReads = 0;
+  const app = loadDashboard({
+  sessions: [],
+  rootsResult: { status: "ok", roots: ["/proj/one"] },
+  activeResult: () => {
+  activeReads += 1;
+  return activeReads <= 1
+  ? { status: "ok", tasks: [
+  { taskPath: ".trellis/tasks/a", title: "Task A", phase: "execute", progress: null, parent: null, cwd: "/proj/one" },
+  ] }
+  : { status: "ok", tasks: [] };
+  },
+  archiveResult: () => {
+  return activeReads <= 1
+  ? { status: "ok", tasks: [] }
+  : { status: "ok", tasks: [
+  { taskPath: ".trellis/tasks/archive/2026-09/a", title: "Task A", archived: true, cwd: "/proj/one" },
+  ] };
+  },
+  });
+  await flush();
+  app.navigateTrellis({ taskPath: ".trellis/tasks/archive/2026-09/a", cwd: "/proj/one" });
+  await flush();
+  assert.ok(!app.view.hidden, "navigation flips to the trellis view");
+  const selected = byClass(app.view, "trellis-split-row").filter((el) => el.classList.contains("is-selected"));
+  assert.equal(selected.length, 1, "the jump positions against the awaited re-read, not the stale cache");
+  assert.ok(selected[0].classList.contains("is-archived"), "the freshly archived task is selected in the archive group");
+  });
+  
   it("opens the archive group for archived targets", async () => {
     const app = loadDashboard({
       sessions: [],

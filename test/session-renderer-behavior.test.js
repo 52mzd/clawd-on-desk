@@ -271,6 +271,12 @@ async function loadHud(sessions, openResult = { status: "ok" }, panelResult = nu
   const ackCalls = [];
   let snapshotListener = null;
   let feedbackTimeout = null;
+
+  // 09-28 trellis-freshness-time: the trellis panel polls while open —
+  // record interval timers so tests can drive ticks and see clears (a
+  // bare `() => 0` keeps pollTimer falsy and hides the real paths).
+  const intervalTimers = [];
+  const clearedIntervals = [];
   const api = {
     onLangChange: () => {},
     onSessionSnapshot: (listener) => { snapshotListener = listener; },
@@ -299,7 +305,11 @@ async function loadHud(sessions, openResult = { status: "ok" }, panelResult = nu
   };
   const context = vm.createContext({
     window: { sessionHudAPI: api }, document, console, Date,
-    setInterval: () => 0,
+    setInterval: (callback) => { intervalTimers.push(callback); return intervalTimers.length; },
+    clearInterval: (id) => {
+      clearedIntervals.push(id);
+      if (Number.isInteger(id) && id >= 1 && id <= intervalTimers.length) intervalTimers[id - 1] = null;
+    },
     setTimeout: (callback) => { feedbackTimeout = callback; return 1; },
     clearTimeout: () => { feedbackTimeout = null; },
   });
@@ -308,6 +318,10 @@ async function loadHud(sessions, openResult = { status: "ok" }, panelResult = nu
   await flush();
   snapshotListener({ sessions, orderedIds: sessions.map((entry) => entry.id) });
   return {
+    // 09-28 trellis-freshness-time: drive live interval ticks (elapsed
+    // labels + the trellis panel poll) and inspect timer cleanup.
+    fireIntervals: () => { for (const callback of intervalTimers.slice()) if (callback) callback(); },
+    clearedIntervals,
     root: document.elements.get("hud"),
     openCalls,
     focusCalls,
@@ -681,8 +695,8 @@ test("HUD trellis icon button is the sole panel entry; panel rows jump to the da
   const panel = byCls(root, "trellis-task-panel");
   assert.equal(panel.length, 1, "the icon click opens the panel below the rows");
   assert.ok(byCls(root, "trellis-panel-row").length >= 2, "active + archived rows render");
-  assert.ok(byCls(panel[0], "trellis-detail-title").some((el) => el.textContent.includes("Current")),
-    "panel header keeps the old detail-row task title (tooltip template)");
+  assert.ok(byCls(panel[0], "trellis-panel-summary-title").some((el) => el.textContent.includes("Current")),
+    "panel header keeps the owner task as its first summary row");
   assert.ok(byCls(root, "trellis-btn")[0].classList.contains("active"),
     "an open panel highlights the button");
   assert.equal(byCls(root, "trellis-panel-hint").length, 0,
@@ -700,6 +714,89 @@ test("HUD trellis icon button is the sole panel entry; panel rows jump to the da
   assert.equal(byCls(root, "trellis-task-panel").length, 0, "second icon click closes");
   assert.ok(!byCls(root, "trellis-btn")[0].classList.contains("active"),
     "closing the panel drops the highlight");
+});
+
+test("panel header lists every session's trellis task, not just the owner's (09-29)", async () => {
+  const { root } = await loadHud([
+    { id: "s1", agentId: "claude-code", cwd: "/proj", state: "working", trellis:
+      { taskPath: ".trellis/tasks/09-27-cur", title: "Current", phase: "execute", progress: { done: 1, total: 2 }, parallelCount: 1, command: "trellis-check" } },
+    { id: "s2", agentId: "claude-code", cwd: "/proj2", state: "working", trellis:
+      { taskPath: ".trellis/tasks/09-28-sec", title: "Second", phase: "plan", progress: { done: 3, total: 7 }, parallelCount: 1 } },
+  ]);
+  const byCls = (el, cls) => {
+    const out = [];
+    if (el.classList && el.classList.contains(cls)) out.push(el);
+    for (const child of (el.children || [])) out.push(...byCls(child, cls));
+    return out;
+  };
+  await byCls(root, "trellis-btn")[0].dispatch("click");
+  await flush();
+  const panel = byCls(root, "trellis-task-panel")[0];
+  assert.ok(panel, "the icon click opens the panel");
+  const names = byCls(panel, "trellis-panel-summary-title").map((el) => el.textContent);
+  assert.ok(names.some((s) => s.includes("Current")), "owner task heads the panel");
+  assert.ok(names.some((s) => s.includes("Second")),
+    "the other session's task gets its own header row");
+  const sides = byCls(panel, "trellis-panel-summary-side").map((el) => el.textContent);
+  assert.ok(sides.includes("trellis-check"), "side slot prefers the running command");
+  assert.ok(sides.includes("3/7"), "side slot falls back to the step count without a command");
+});
+test("HUD trellis panel polls fresh disk state; closing clears its timer (09-28 trellis-freshness-time)", async () => {
+  let panel = { status: "ok", projects: [
+    { cwd: "/proj", name: "proj", active: [
+      { taskPath: ".trellis/tasks/09-27-x", title: "Task X", phase: "execute", progress: { done: 1, total: 3 } },
+    ], archived: [] },
+  ] };
+  const h = await loadHud([
+    { id: "s1", agentId: "claude-code", cwd: "/proj", state: "working" },
+  ], { status: "ok" }, () => panel);
+  const byCls = (el, cls) => {
+    const out = [];
+    if (el.classList && el.classList.contains(cls)) out.push(el);
+    for (const child of (el.children || [])) out.push(...byCls(child, cls));
+    return out;
+  };
+  const part = (row, cls) => (row.children || []).find((child) => child.classList && child.classList.contains(cls));
+  const rowsFor = (title) => byCls(h.root, "trellis-panel-row").filter((row) => {
+    const label = part(row, "trellis-panel-row-title");
+    return label && label.textContent === title;
+  });
+
+  const btn = byCls(h.root, "trellis-btn")[0];
+  await btn.dispatch("click");
+  await flush();
+  const coldRows = rowsFor("Task X");
+  assert.equal(coldRows.length, 1, "the cold open renders the active task");
+  assert.ok(part(coldRows[0], "trellis-dot-execute"), "it renders as in-progress");
+  assert.equal(part(coldRows[0], "trellis-panel-row-side").textContent, "1/3");
+  const coldCalls = h.openCalls.filter((c2) => c2[0] === "getTrellisPanel").length;
+  assert.ok(coldCalls >= 1, "the cold open fetched the panel");
+
+  // Meanwhile the task archived on disk — a poll tick must show it.
+  panel = { status: "ok", projects: [
+    { cwd: "/proj", name: "proj", active: [], archived: [
+      { taskPath: ".trellis/tasks/archive/2026-09/09-27-x", title: "Task X", completedAt: "2026-09-28T10:00:00.000Z" },
+    ] },
+  ] };
+  h.fireIntervals();
+  await flush();
+  assert.ok(h.openCalls.filter((c2) => c2[0] === "getTrellisPanel").length > coldCalls,
+    "the poll re-fetched the panel");
+  const freshRows = rowsFor("Task X");
+  assert.equal(freshRows.length, 1, "the fresh result re-rendered the row");
+  assert.ok(part(freshRows[0], "trellis-dot-done"), "the archived task shows the done dot");
+  assert.equal(part(freshRows[0], "trellis-panel-row-side").textContent, "09-28",
+    "the archived row shows the completion date");
+
+  // Closing the panel clears its poll timer — no more fetches.
+  await btn.dispatch("click");
+  await flush();
+  assert.ok(h.clearedIntervals.length >= 1, "closing the panel cleared an interval");
+  const afterClose = h.openCalls.filter((c2) => c2[0] === "getTrellisPanel").length;
+  h.fireIntervals();
+  await flush();
+  assert.equal(h.openCalls.filter((c2) => c2[0] === "getTrellisPanel").length, afterClose,
+    "no fetch after the poll timer is cleared");
 });
 
 test("HUD trellis panel renders one section per project; rows jump with their own cwd", async () => {
@@ -750,12 +847,14 @@ test("HUD trellis panel header renders the workflow-state line when no command e
   };
   await byCls(root, "trellis-btn")[0].dispatch("click");
   await flush();
-  const guides = byCls(byCls(root, "trellis-task-panel")[0], "trellis-detail-guide");
-  assert.strictEqual(guides.length, 2, "hint row plus the ws-only third row");
-  assert.strictEqual(guides[0].textContent, "step 1/2", "the step hint keeps the second line");
-  assert.strictEqual(guides[1].textContent,
-    "planning — Load `trellis-brainstorm`; stay in planning",
-    "ws-only renders 'Status — Next-Action' passthrough (no command, no i18n key)");
+  const rows = byCls(byCls(root, "trellis-task-panel")[0], "trellis-panel-summary");
+  assert.strictEqual(rows.length, 1, "one header summary row for the owner");
+  assert.ok(String(rows[0].title).includes("step 1/2"), "the step hint lives on in the row tooltip");
+  assert.ok(String(rows[0].title).includes("planning — Load `trellis-brainstorm`; stay in planning"),
+    "ws-only 'Status — Next-Action' passthrough keeps its tooltip slot (no command, no i18n key)");
+  assert.strictEqual(byCls(rows[0], "trellis-panel-summary-side")[0].textContent,
+    "Load `trellis-brainstorm`; stay in planning",
+    "the side slot shows the live skill, not the phase word");
 });
 
 test("HUD trellis panel outlives its binding; closes when the owner session goes", async () => {

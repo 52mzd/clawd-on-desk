@@ -35,9 +35,64 @@ const trellisPanel = {
   cwd: null,
   loading: false,
   result: null,
+  pollTimer: null,
+  fetchSeq: 0,
 };
 
+// 09-28 trellis-freshness-time: the panel used to freeze on its cold-open
+// snapshot — tasks that archived or changed phase while the panel stayed
+// open never showed up. A slow poll keeps the list honest without a push
+// channel; the seq guard drops results from a superseded fetch (the panel
+// closed and reopened, or a newer tick won the race).
+const TRELLIS_PANEL_POLL_MS = 30 * 1000;
+
+function fetchTrellisPanelResult() {
+  if (trellisPanel.loading || !trellisPanel.cwd) return;
+  if (!window.sessionHudAPI || typeof window.sessionHudAPI.getTrellisPanel !== "function") {
+    if (!trellisPanel.result) trellisPanel.result = { status: "error" };
+    return;
+  }
+  trellisPanel.loading = true;
+  const seq = ++trellisPanel.fetchSeq;
+  window.sessionHudAPI.getTrellisPanel({ cwd: trellisPanel.cwd }).then((result) => {
+    // A close or a superseding fetch won the race — drop the stale one.
+    if (!trellisPanel.open || seq !== trellisPanel.fetchSeq) return;
+    trellisPanel.loading = false;
+    trellisPanel.result = result && typeof result === "object" ? result : { status: "error" };
+    // No known .trellis root anywhere answers "missing" — there is no
+    // project content to show, leave nothing behind.
+    if (trellisPanel.result.status === "missing") {
+      closeTrellisPanel();
+    }
+    render();
+  }).catch(() => {
+    if (!trellisPanel.open || seq !== trellisPanel.fetchSeq) return;
+    trellisPanel.loading = false;
+    // A failed poll keeps the last good list; only a cold open surfaces the error.
+    if (!trellisPanel.result) {
+      trellisPanel.result = { status: "error" };
+      render();
+    }
+  });
+}
+
+function startTrellisPanelPolling() {
+  if (trellisPanel.pollTimer) return;
+  trellisPanel.pollTimer = setInterval(() => {
+    if (!trellisPanel.open) return;
+    fetchTrellisPanelResult();
+  }, TRELLIS_PANEL_POLL_MS);
+}
+
+function stopTrellisPanelPolling() {
+  if (trellisPanel.pollTimer) {
+    clearInterval(trellisPanel.pollTimer);
+    trellisPanel.pollTimer = null;
+  }
+}
+
 function closeTrellisPanel() {
+  stopTrellisPanelPolling();
   trellisPanel.open = false;
   trellisPanel.sessionId = null;
   trellisPanel.cwd = null;
@@ -60,35 +115,13 @@ function toggleTrellisPanel(session) {
     return;
   }
   trellisPanel.cwd = nextCwd;
-  // 09-28 hud-multi-project-audit: the payload covers every known project
-  // (cwd only picks which one sorts first), so a different anchor session
-  // no longer needs a refetch — only a cold open fetches.
+  // 09-28 trellis-freshness-time: cold open fetches; the poll then keeps an
+  // open panel tracking disk state without reopening. The payload covers
+  // every known project (hud-multi-project-audit), so one fetch serves all anchors.
   if (!trellisPanel.result) {
-    trellisPanel.loading = true;
-    render();
-    if (window.sessionHudAPI && typeof window.sessionHudAPI.getTrellisPanel === "function") {
-      window.sessionHudAPI.getTrellisPanel({ cwd: nextCwd }).then((result) => {
-        // A close or a superseding fetch won the race — drop the stale one.
-        if (!trellisPanel.open || trellisPanel.result || !trellisPanel.loading) return;
-        trellisPanel.loading = false;
-        trellisPanel.result = result && typeof result === "object" ? result : { status: "error" };
-        // No known .trellis root anywhere answers "missing" — there is no
-        // project content to show, leave nothing behind.
-        if (trellisPanel.result.status === "missing") {
-          closeTrellisPanel();
-        }
-        render();
-      }).catch(() => {
-        if (!trellisPanel.open || trellisPanel.result || !trellisPanel.loading) return;
-        trellisPanel.loading = false;
-        trellisPanel.result = { status: "error" };
-        render();
-      });
-    } else {
-      trellisPanel.loading = false;
-      trellisPanel.result = { status: "error" };
-    }
+    fetchTrellisPanelResult();
   }
+  startTrellisPanelPolling();
   render();
 }
 
@@ -139,26 +172,39 @@ function trellisPanelTaskRow(entry, archived, cwd) {
   return row;
 }
 
-function createTrellisPanel(session) {
+function createTrellisPanel(session, sessions) {
   const panel = document.createElement("div");
   panel.className = "trellis-task-panel";
-  const info = trellisChipInfo(session);
-  if (info) {
-    const lines = String(info.title || "").split("\n");
-    const title = document.createElement("div");
-    title.className = "trellis-detail-title";
-    title.textContent = lines[0] || "";
-    panel.appendChild(title);
-    const guide = document.createElement("div");
-    guide.className = "trellis-detail-guide";
-    guide.textContent = lines[1] || "";
-    panel.appendChild(guide);
-    if (lines.length > 2) {
-      const command = document.createElement("div");
-      command.className = "trellis-detail-guide";
-      command.textContent = lines.slice(2).join(" ");
-      panel.appendChild(command);
-    }
+  // 09-29 hud-panel-active-only (R6): one summary row per session with a
+  // live trellis task (owner first) — task name, phase-color dot, running
+  // skill/command on the right. Replaces R5's owner-three-lines + grey
+  // guide rows, which read as one undifferentiated text pile; the full
+  // three lines (task/hint/command) survive in the row tooltip.
+  const headerRows = [];
+  const ownerInfo = trellisChipInfo(session);
+  if (ownerInfo) headerRows.push(ownerInfo);
+  const panelSessions = Array.isArray(sessions) ? sessions : [];
+  for (const other of panelSessions) {
+    if (!other || typeof other !== "object" || other.id === session.id) continue;
+    const otherInfo = trellisChipInfo(other);
+    if (otherInfo) headerRows.push(otherInfo);
+  }
+  for (const rowInfo of headerRows) {
+    const row = document.createElement("div");
+    row.className = "trellis-panel-summary";
+    row.title = rowInfo.title;
+    const dot = document.createElement("span");
+    dot.className = `trellis-dot ${rowInfo.dot}`;
+    row.appendChild(dot);
+    const name = document.createElement("span");
+    name.className = "trellis-panel-summary-title";
+    name.textContent = rowInfo.taskName;
+    row.appendChild(name);
+    const side = document.createElement("span");
+    side.className = "trellis-panel-summary-side";
+    side.textContent = rowInfo.activity;
+    row.appendChild(side);
+    panel.appendChild(row);
   }
   const list = document.createElement("div");
   list.className = "trellis-panel-list";
@@ -414,13 +460,16 @@ function trellisChipInfo(session) {
   const phase = TRELLIS_PHASE_CHIP[info.phase];
   if (!phase) return null;
   let label = t(phase.key);
+  let progressText = "";
   const done = Number(info.progress && info.progress.done);
   const total = Number(info.progress && info.progress.total);
   if (Number.isFinite(done) && Number.isFinite(total) && total > 0) {
-    label += ` ${Math.max(0, Math.trunc(done))}/${Math.trunc(total)}`;
+    progressText = `${Math.max(0, Math.trunc(done))}/${Math.trunc(total)}`;
+    label += ` ${progressText}`;
   }
   const parallel = Number(info.parallelCount);
   if (Number.isFinite(parallel) && parallel > 1) {
+    progressText += ` \u00d7${Math.trunc(parallel)}`;
     label += ` \u00d7${Math.trunc(parallel)}`;
   }
   let hint = "";
@@ -457,6 +506,13 @@ function trellisChipInfo(session) {
     label,
     cls: phase.cls,
     title,
+    // 09-29 hud-panel-active-only (R6): the panel header renders one row
+    // per session — bare task name, phase-color dot, and the running skill
+    // / command on the right (step count as fallback). The phase word and
+    // hint/command lines live in the row tooltip (title above).
+    taskName: info.title || info.taskPath || "",
+    dot: `trellis-dot-${info.phase}`,
+    activity: (info.command || info.workflowNextAction || progressText).trim(),
   };
 }
 
@@ -805,7 +861,7 @@ function render() {
   if (trellisPanel.open) {
     const owner = expanded.find((session) => session.id === trellisPanel.sessionId);
     if (owner) {
-      hudEl.appendChild(createTrellisPanel(owner));
+      hudEl.appendChild(createTrellisPanel(owner, sessions));
     } else {
       closeTrellisPanel();
     }
