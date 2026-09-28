@@ -35,9 +35,64 @@ const trellisPanel = {
   cwd: null,
   loading: false,
   result: null,
+  pollTimer: null,
+  fetchSeq: 0,
 };
 
+// 09-28 trellis-freshness-time: the panel used to freeze on its cold-open
+// snapshot — tasks that archived or changed phase while the panel stayed
+// open never showed up. A slow poll keeps the list honest without a push
+// channel; the seq guard drops results from a superseded fetch (the panel
+// closed and reopened, or a newer tick won the race).
+const TRELLIS_PANEL_POLL_MS = 30 * 1000;
+
+function fetchTrellisPanelResult() {
+  if (trellisPanel.loading || !trellisPanel.cwd) return;
+  if (!window.sessionHudAPI || typeof window.sessionHudAPI.getTrellisPanel !== "function") {
+    if (!trellisPanel.result) trellisPanel.result = { status: "error" };
+    return;
+  }
+  trellisPanel.loading = true;
+  const seq = ++trellisPanel.fetchSeq;
+  window.sessionHudAPI.getTrellisPanel({ cwd: trellisPanel.cwd }).then((result) => {
+    // A close or a superseding fetch won the race — drop the stale one.
+    if (!trellisPanel.open || seq !== trellisPanel.fetchSeq) return;
+    trellisPanel.loading = false;
+    trellisPanel.result = result && typeof result === "object" ? result : { status: "error" };
+    // No known .trellis root anywhere answers "missing" — there is no
+    // project content to show, leave nothing behind.
+    if (trellisPanel.result.status === "missing") {
+      closeTrellisPanel();
+    }
+    render();
+  }).catch(() => {
+    if (!trellisPanel.open || seq !== trellisPanel.fetchSeq) return;
+    trellisPanel.loading = false;
+    // A failed poll keeps the last good list; only a cold open surfaces the error.
+    if (!trellisPanel.result) {
+      trellisPanel.result = { status: "error" };
+      render();
+    }
+  });
+}
+
+function startTrellisPanelPolling() {
+  if (trellisPanel.pollTimer) return;
+  trellisPanel.pollTimer = setInterval(() => {
+    if (!trellisPanel.open) return;
+    fetchTrellisPanelResult();
+  }, TRELLIS_PANEL_POLL_MS);
+}
+
+function stopTrellisPanelPolling() {
+  if (trellisPanel.pollTimer) {
+    clearInterval(trellisPanel.pollTimer);
+    trellisPanel.pollTimer = null;
+  }
+}
+
 function closeTrellisPanel() {
+  stopTrellisPanelPolling();
   trellisPanel.open = false;
   trellisPanel.sessionId = null;
   trellisPanel.cwd = null;
@@ -60,35 +115,13 @@ function toggleTrellisPanel(session) {
     return;
   }
   trellisPanel.cwd = nextCwd;
-  // 09-28 hud-multi-project-audit: the payload covers every known project
-  // (cwd only picks which one sorts first), so a different anchor session
-  // no longer needs a refetch — only a cold open fetches.
+  // 09-28 trellis-freshness-time: cold open fetches; the poll then keeps an
+  // open panel tracking disk state without reopening. The payload covers
+  // every known project (hud-multi-project-audit), so one fetch serves all anchors.
   if (!trellisPanel.result) {
-    trellisPanel.loading = true;
-    render();
-    if (window.sessionHudAPI && typeof window.sessionHudAPI.getTrellisPanel === "function") {
-      window.sessionHudAPI.getTrellisPanel({ cwd: nextCwd }).then((result) => {
-        // A close or a superseding fetch won the race — drop the stale one.
-        if (!trellisPanel.open || trellisPanel.result || !trellisPanel.loading) return;
-        trellisPanel.loading = false;
-        trellisPanel.result = result && typeof result === "object" ? result : { status: "error" };
-        // No known .trellis root anywhere answers "missing" — there is no
-        // project content to show, leave nothing behind.
-        if (trellisPanel.result.status === "missing") {
-          closeTrellisPanel();
-        }
-        render();
-      }).catch(() => {
-        if (!trellisPanel.open || trellisPanel.result || !trellisPanel.loading) return;
-        trellisPanel.loading = false;
-        trellisPanel.result = { status: "error" };
-        render();
-      });
-    } else {
-      trellisPanel.loading = false;
-      trellisPanel.result = { status: "error" };
-    }
+    fetchTrellisPanelResult();
   }
+  startTrellisPanelPolling();
   render();
 }
 

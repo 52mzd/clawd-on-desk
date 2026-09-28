@@ -1649,6 +1649,7 @@ describe("trellis-activity readArchiveList", () => {
       createdAt: "2026-09-18",
       completedAt: "2026-09-20",
       completedAtMs: Date.parse("2026-09-20"),
+      completedAtRealMs: 0, // fake mtimes default to 0 — the point is the projection passes it through
       durationMs: 2 * 24 * 60 * 60 * 1000,
       cwd: PROJECT,
     });

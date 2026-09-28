@@ -1346,7 +1346,7 @@ function createTrellisActivity(options) {
   //
   // Returns { status: "ok", tasks } newest completed first (capped for the
   // month-grouped browser view), each entry an IPC/JSON-safe object:
-  //   { taskPath, title, parent, createdAt, completedAt, completedAtMs, durationMs, cwd }
+  //   { taskPath, title, parent, createdAt, completedAt, completedAtMs, completedAtRealMs, durationMs, cwd }
   // taskPath is the full snapshot-relative posix path readTaskDetail accepts
   // (".trellis/tasks/archive/<month>/<name>") — the "/archive/" segment is
   // what the dashboard's month grouping keys on; parent is the task.json parent task NAME (or null) for the archive
@@ -1396,6 +1396,7 @@ function createTrellisActivity(options) {
         createdAt: entry.createdAt,
         completedAt: entry.completedAt,
         completedAtMs: entry.completedAtMs,
+        completedAtRealMs: entry.completedAtRealMs,
         durationMs: Number.isFinite(diff) && diff > 0 ? diff : null,
         cwd,
       };
