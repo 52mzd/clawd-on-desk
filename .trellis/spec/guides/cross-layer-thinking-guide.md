@@ -266,6 +266,34 @@ its worst-case input now that the result gets persisted, how would
 I undo that write, and who else judged this input safe for a
 read-only purpose?"
 
+### Mistake 11: Non-Code Downstream Anchors Rot When Implementation Shape Changes
+
+Code has call sites a compiler or grep can find; two other kinds of
+consumers anchor on the *shape* of the implementation and rot silently:
+
+1. **Source-text assertions** — tests that `assert.match(source, /fragment/)`
+   pin an implementation snippet (e.g. `lines.slice(2)`) to guard a contract
+   (i18n wiring). Deleting the snippet breaks the suite — but only at the
+   next full run, and renaming a concept breaks it just the same.
+2. **Spec prose** — `.trellis/spec/**` describes UI shape in words ("阶段色
+   圆点"). Visual iterations (dot → ring → star) change reality; no test can
+   fail on prose, so the spec quietly describes a dead UI.
+
+Measured 09-29 (hud-panel-active-only R6/R7): three drift events in one
+task — a style-test assertion on `lines.slice(2)` failed the first full
+run, the panel spec still said "圆点" after two marker redesigns, and the
+task PRD's 非目标 contradicted a later requirement round.
+
+Checklist: after changing an implementation's shape —
+
+- [ ] Grep the OLD fragment/keyword across `test/` and `.trellis/spec/`;
+      every hit is either updated in the same commit or consciously kept
+      (say why in the commit message)
+- [ ] Re-anchor source-text assertions on the new stable seam, not on a
+      more brittle fragment than before
+- [ ] Spec prose naming the changed shape gets the same rename in the same
+      commit — a later `docs(spec):` catch-up is a smell, not a plan
+
 ## Checklist for Cross-Layer Features
 
 Before implementation:
