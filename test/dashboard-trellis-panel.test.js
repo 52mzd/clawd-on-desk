@@ -847,6 +847,25 @@ describe("dashboard trellis task detail overlay", () => {
       i18n.en.dashboardTrellisDetailCompleted.replace("{date}", "2026-09-21")
     ));
   });
+  it("renders the detail card completed time as date + HH:mm from completedAtRealMs", async () => {
+    const trellis = { taskPath: ".trellis/tasks/timed", title: "Timed", phase: "done" };
+    const app = loadDashboard({
+      sessions: [bindingSession("s1", trellis)],
+      detailResult: detailOk({
+        phase: "done",
+        archived: true,
+        completedAt: "2026-09-21",
+        completedAtRealMs: Date.parse("2026-09-21T14:32:00Z"),
+        checklist: { items: [{ text: "only", checked: true }], done: 1, total: 1 },
+      }),
+    });
+    await flush();
+    await openDetail(app);
+    const text = textOf(app.overlay);
+    // Same locale rule as the archive row label — app language (en here).
+    const timedAt = new Date(Date.parse("2026-09-21T14:32:00Z"));
+    assert.ok(text.includes(`${timedAt.toLocaleDateString("en")} ${timedAt.toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit" })}`), "detail card completed time carries HH:mm");
+  });
 
   it("renders an empty-checklist note instead of an empty list", async () => {
     const trellis = { taskPath: ".trellis/tasks/t1", title: "T", phase: "plan" };

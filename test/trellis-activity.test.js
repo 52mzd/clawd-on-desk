@@ -1088,6 +1088,8 @@ describe("trellis-activity readTaskDetail", () => {
     assert.strictEqual(result.task.rawStatus, "in_progress");
     assert.strictEqual(result.task.createdAt, "2026-09-20");
     assert.strictEqual(result.task.completedAt, null);
+    // fake fs mtimes default to 0 — the point is readTaskDetail passes it through
+    assert.strictEqual(result.task.completedAtRealMs, 0);
     assert.strictEqual(result.task.archived, false);
     assert.strictEqual(result.task.checklist.total, 2);
     assert.strictEqual(result.task.checklist.done, 1);

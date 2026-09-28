@@ -894,6 +894,13 @@ function createTrellisActivity(options) {
     if (!taskJson.ok) return { status: "error", message: "unreadable-task-json" };
     const value = taskJson.value;
     const hasPrd = Boolean(await statQuiet(path.join(absDir, "prd.md")));
+    // task.json's own mtime ≈ the archival moment — same signal as the
+    // archive entries' completedAtRealMs (09-28 trellis-freshness-time);
+    // statQuiet failing just leaves it null.
+    const completedRealStat = await statQuiet(path.join(absDir, "task.json"));
+    const completedAtRealMs = completedRealStat && Number.isFinite(completedRealStat.mtimeMs)
+      ? completedRealStat.mtimeMs
+      : null;
     const checklist = await readChecklist(absDir);
     return {
       status: "ok",
@@ -909,6 +916,7 @@ function createTrellisActivity(options) {
         priority: normalizePriority(value.priority),
         createdAt: sanitizeTaskDate(value.createdAt),
         completedAt: sanitizeTaskDate(value.completedAt),
+        completedAtRealMs,
         archived,
         checklist: {
           items: checklist.items,

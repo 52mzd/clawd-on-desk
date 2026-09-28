@@ -3791,7 +3791,7 @@ function appendTrellisDetailMeta(card, task) {
     meta.appendChild(createText(
       "span",
       "trellis-detail-meta-item",
-      t("dashboardTrellisDetailCompleted").replace("{date}", task.completedAt)
+      t("dashboardTrellisDetailCompleted").replace("{date}", trellisArchiveCompletedLabel(task))
     ));
   }
   if (task.checklist && task.checklist.total > 0) {
