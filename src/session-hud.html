@@ -338,6 +338,19 @@ body { padding: 2px 3px 8px; }
   opacity: 0.7;
   font-variant-numeric: tabular-nums;
 }
+/* Header dots are rings (session level), list dots stay solid (task level) —
+   same phase palette, different shape. Colors mirror .trellis-dot-* below. */
+.trellis-panel-summary .trellis-dot {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+  border: 2px solid;
+}
+.trellis-panel-summary .trellis-dot-plan { border-color: #2563eb; }
+.trellis-panel-summary .trellis-dot-execute { border-color: #16a34a; }
+.trellis-panel-summary .trellis-dot-check { border-color: #9333ea; }
+.trellis-panel-summary .trellis-dot-finish { border-color: #b45309; }
+.trellis-panel-summary .trellis-dot-done { border-color: #6b7280; }
 .trellis-panel-list { margin-top: 3px; }
 /* Project section header (09-28 hud-multi-project-audit): one per project,
    visually above the per-project active/done group heads. */
