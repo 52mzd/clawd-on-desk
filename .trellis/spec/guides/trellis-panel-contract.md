@@ -1184,6 +1184,7 @@ parent 嵌套成树」的代码。当前实现：`src/dashboard-trellis-panel.js
 | 陌生 cwd 能探测任意 .trellis | readTaskDetail 直接 findTrellisRoot(renderer 的 cwd) | cwd 必须过 isTrustedTrellisCwd 三源（见 §4.3）；两平台都要有用例 |
 | 独立视图活跃任务每条出现两次 | 注册根与子目录会话解析同一 root，readActiveList 无 root 去重 | seenRoots/rootToCwd 按 root 去重（§4.4/§4.6）+ 双源共享 root 回归用例 |
 | 归档区所有月份合进单个组（月浏览器失效） | 月提取把全路径 taskPath 当 archive-relative 形态切第一段（得到 `.trellis` 而非月份）——形态认知错位，且当时无 month 断言故绿灯 | 提取锚定 `/archive/` 段（`trellisArchiveMonthOf`）+ 形状表测试含 legacy 形态（§4.8）；改 taskPath 形态时同步改所有消费方提取逻辑 |
+| 新注册项目在 Dashboard 任务/归档列表静默消失（HUD 锚定会话却正常） | `collectKnownRootCwds` 消费窗口本地写死 32，小于注册面 `MAX_ROOTS=64`，按注册序 `slice` 截掉第 33+ 个项目；症状酷似「新项目数据格式不兼容」 | cap 引用 `TRELLIS_ROOTS_MAX`（§4 已知 root 窗口契约）+ 满额注册回归用例（§6） |
 
 ### 6. 测试断言点（review 必查）
 
@@ -1193,6 +1194,8 @@ parent 嵌套成树」的代码。当前实现：`src/dashboard-trellis-panel.js
   profile 的拒收
 - stop() 后已排入 timer 不再执行（token 守卫）
 - 阶段气泡：首轮 seed 静默；同 task+phase 10s 不重弹、rapid window 可见时
+- 满额注册：注册满 `TRELLIS_ROOTS_MAX` 个 root 时最后一个 root 的任务在
+  readActiveList / readArchiveList 仍可见（防消费窗口再退化成独立常数）
 
 ### 7. Wrong vs Correct
 
