@@ -985,3 +985,23 @@ git merge origin/main（上游 v1.2.0，48 提交）进本地二开 main，6 处
 ### Status
 
 [OK] **Completed**
+
+
+## Session 37: 读取端分组 + 会话命名双 PR 提交上游
+<!-- trellis-session: v=2 fp=0a25e904d3d9a8a5 -->
+
+**Date**: 2026-09-30
+**Task**: 读取端分组 + 会话命名双 PR 提交上游
+**Branch**: `main`
+
+### Summary
+
+按维护者 #1069/#1072 指定方向完成两个独立 upstream PR：#1085 读取端分组（loader 全量 probe 200 条分 confirmed/other 组、跨目录按 sessionId 找 transcript 救回 worktree 会话、miss 维持 null fail-open、renderer 折叠组默认收起带计数、七语言 i18n、两缓 readdir 性能 1.8ms 实测/19ms 最坏）+ #1086 会话命名（transcript 头部增长窗口提取首条用户消息当标题、斜杠命令兜底、meta 行加 8 位短 ID，真实数据 17/18 无标题问题解决）。回复 #1072 review 评论（含 /var/folders/lf/52fj1381495ghldnpy7byxq80000gn/T/ 会话与 2.1.284 daemon 观察）并体面关闭。demo 集成分支实机验证 Dashboard 效果。worktree 隔离双 PR 工作流沉淀至 repository-sync-guide。
+
+### Git Commits
+
+(No commits - planning session)
+
+### Status
+
+[OK] **Completed**
