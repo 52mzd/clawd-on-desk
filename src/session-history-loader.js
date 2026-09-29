@@ -96,12 +96,19 @@ function loadResumableSessionHistory(options = {}) {
     const transcript = profileVerified
       ? probeTranscript(record.agentId, record.sessionId, record.cwd, record.profile, options)
       : null;
+    let title = record.title || null;
+    if (!title && transcript === true) {
+      const transcriptPath = transcriptPathFor(
+        record.sessionId, record.cwd, record.profile, options,
+      );
+      if (transcriptPath) title = extractTitleFromTranscript(transcriptPath);
+    }
     rows.push({
       agentId: record.agentId,
       sessionId: record.sessionId,
       historyKey: record.historyKey,
       cwd: record.cwd,
-      title: record.title,
+      title,
       lastState: record.lastState,
       firstSeenAt: record.firstSeenAt,
       lastEventAt: record.lastEventAt,
@@ -114,6 +121,69 @@ function loadResumableSessionHistory(options = {}) {
     if (rows.length >= limit) break;
   }
   return rows;
+}
+
+/**
+ * Most sessions never carry a title in their hook payloads, so the resume
+ * list shows opaque session ids. The first thing the user actually typed
+ * names the session better than anything else clawd has: read it from the
+ * transcript's head — a growing window with a hard cap, never the whole
+ * file — and only for rows whose transcript the probe already confirmed,
+ * because a vanished file has nothing to name.
+ */
+function extractTitleFromTranscript(transcriptPath) {
+  let size;
+  try {
+    size = fs.statSync(transcriptPath).size;
+  } catch {
+    return null;
+  }
+  for (const window of [16 * 1024, 64 * 1024, 256 * 1024, 1024 * 1024]) {
+    const read = Math.min(window, size);
+    let text;
+    try {
+      const fd = fs.openSync(transcriptPath, "r");
+      const buf = Buffer.alloc(read);
+      fs.readSync(fd, buf, 0, read, 0);
+      fs.closeSync(fd);
+      text = buf.toString("utf8");
+    } catch {
+      return null;
+    }
+    let command = null;
+    for (const line of text.split("\n")) {
+      if (!line.trim()) continue;
+      let entry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue; // a line cut off by the window, or a huge single record
+      }
+      if (entry.type !== "user" || entry.isMeta || entry.isSidechain) continue;
+      const content = entry.message && entry.message.content;
+      const raw = typeof content === "string" ? content
+        : Array.isArray(content)
+          ? (content.find((part) => part.type === "text") || {}).text || ""
+          : "";
+      const clean = String(raw).trim().replace(/\s+/g, " ");
+      if (!clean || clean.includes("tool_result")) continue;
+      const slash = clean.match(/^<command-message>([\w:-]+)/);
+      if (slash) {
+        if (!command) command = `/${slash[1]}`;
+        continue;
+      }
+      if (clean.startsWith("<")) continue; // other machine-generated wrappers
+      return clean.slice(0, 80);
+    }
+    if (read >= size) return command; // whole file scanned, no plain prompt
+  }
+  return null;
+}
+
+function transcriptPathFor(sessionId, cwd, profile, options = {}) {
+  const dirName = encodeClaudeProjectDir(cwd);
+  const projectsDir = dirName && getClaudeProjectsDir(profile, options);
+  return projectsDir ? path.join(projectsDir, dirName, `${sessionId}.jsonl`) : null;
 }
 
 /**

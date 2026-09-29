@@ -64,6 +64,16 @@ describe("session history loader", () => {
     fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), '{"type":"user"}\n');
   }
 
+  // A transcript whose lines the test controls, for title extraction cases.
+  function writeTranscriptLines(sessionId, entries, cwd = projectCwd) {
+    const dir = path.join(claudeProjectsDir, encodeClaudeProjectDir(cwd));
+    fs.mkdirSync(dir, { recursive: true });
+    const body = entries
+      .map((entry) => (typeof entry === "string" ? entry : JSON.stringify(entry)))
+      .join("\n");
+    fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), body ? `${body}\n` : "");
+  }
+
   function loadOpts(extra = {}) {
     return {
       historyDir,
@@ -274,6 +284,58 @@ describe("session history loader", () => {
       record("s", T0, BOOT_A, { assistant_last_output: "secret", prompt: "secret" });
       const [row] = loadResumableSessionHistory(loadOpts());
       assert.ok(!JSON.stringify(row).includes("secret"));
+    });
+
+    it("names a session from its first prompt when no title was recorded", () => {
+      record("titled", T0, BOOT_A, { session_title: "" });
+      writeTranscriptLines("titled", [
+        { type: "last-prompt", leafUuid: "leaf" },
+        { type: "attachment", attachment: { path: "notes.txt" } },
+        { type: "user", message: { role: "user", content: "Fix the theme loader crash" } },
+        { type: "assistant", message: { role: "assistant", content: "On it" } },
+      ]);
+
+      const [row] = loadResumableSessionHistory(loadOpts());
+      assert.equal(row.title, "Fix the theme loader crash");
+    });
+
+    it("skips metadata rows and falls back to the slash command that started the session", () => {
+      record("cmd", T0, BOOT_A, { session_title: "" });
+      writeTranscriptLines("cmd", [
+        { type: "user", isMeta: true, message: { role: "user", content: "meta noise" } },
+        { type: "user", message: { role: "user", content: "<command-message>specrune-init</command-message>" } },
+        { type: "user", message: { role: "user", content: [{ type: "tool_result", content: "x" }] } },
+      ]);
+
+      const [row] = loadResumableSessionHistory(loadOpts());
+      assert.equal(row.title, "/specrune-init");
+    });
+
+    it("keeps reading when the transcript head is one huge record", () => {
+      record("big", T0, BOOT_A, { session_title: "" });
+      writeTranscriptLines("big", [
+        JSON.stringify({ type: "attachment", data: "x".repeat(20 * 1024) }),
+        { type: "user", message: { role: "user", content: "After the big line" } },
+      ]);
+
+      const [row] = loadResumableSessionHistory(loadOpts());
+      assert.equal(row.title, "After the big line");
+    });
+
+    it("never overrides a recorded title, nor names rows it cannot confirm", () => {
+      record("named", T0, BOOT_A, { session_title: "Recorded title" });
+      writeTranscriptLines("named", [
+        { type: "user", message: { role: "user", content: "From transcript" } },
+      ]);
+      // An empty transcript file probes as false — nothing to name.
+      record("gone", T0 + 1000, BOOT_A, { session_title: "" });
+      writeTranscriptLines("gone", []);
+
+      const rows = loadResumableSessionHistory(loadOpts());
+      const named = rows.find((row) => row.sessionId === "named");
+      const gone = rows.find((row) => row.sessionId === "gone");
+      assert.equal(named.title, "Recorded title");
+      assert.equal(gone.title, null);
     });
   });
 
