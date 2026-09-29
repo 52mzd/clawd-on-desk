@@ -531,6 +531,12 @@ entry.id 直接当外部工具记录 id 用的代码都会静默失配（HUD 徽
   implement.md 读取（存在或 ENOENT）与 task.json 同轮共享 per-round
   `taskReads` 缓存（同任务去重，+1 readFile/轮）；无 .trellis 根时
   零新增 IO；parallelCount 的 30s root summary **不**读 implement.md。
+- **已知 root 窗口 = 注册上限**：`collectKnownRootCwds` 的 cap 必须引用
+  `trellis-roots` 的 `TRELLIS_ROOTS_MAX`，不得本地写死——写死 32 时第 33+ 个
+  注册项目按注册序被 `slice` 静默截出 readActiveList / readArchiveList /
+  readHudTaskPanel 的非锚定部分，症状是「新注册项目识别不了」（09-30
+  SpecRune 实测，索引 32 落帽檐；`listChildProjectRoots` 的
+  `CHILD_PROJECT_MAX` 是另一概念，保持独立）。
 - **HUD Trellis 面板高度**（09-27 hud-trellis-icon-entry 起 chip 纯信息，
   面板由 pin 旁 trellis 图标按钮打开）：面板在会话行下方插入
   `.trellis-task-panel` 弹性块，显示任务名 + 引导行 + 任务列表。
