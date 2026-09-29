@@ -909,3 +909,57 @@ issue #1069 预告评论后提两个官方 PR：#1071（acceptFirstMouse cherry-
 ### Status
 
 [OK] **Completed**
+
+
+## Session 34: HUD Trellis 面板聚焦进行中任务（R1-R7）
+<!-- trellis-session: v=2 fp=1811da812e0c20e5 -->
+
+**Date**: 2026-09-29
+**Task**: HUD Trellis 面板聚焦进行中任务（R1-R7）
+**Branch**: `main`
+
+### Summary
+
+根因：33 个注册 roots 各带 ≤3 归档行把 active 任务压到 320px 内滚线以下。R1-R4 归档只属 anchor 项目、无任务整节不出；R5 头部多会话摘要；R6 一行式会话清单（阶段色标记 + 任务名 + 右侧正在执行的 skill/指令，command>NextAction>步数，原三行进 hover tooltip）；R7 空心环迭代为 12px 五角星（CSS mask 剪阶段色，列表实心点区分层级）。check 抓出 style 断言过期/spec 描述漂移，沉淀 cross-layer guide Mistake 11（非代码下游锚点腐烂）。全量 11801/0 fail。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `64024abf` | feat(trellis): HUD 面板归档只属锚定项目 — 非锚定只收 active，无任务整节不出 |
+| `312450f1` | feat(trellis): HUD 面板头部多会话任务摘要 — 每个带任务的会话各一行 |
+| `f2125cb1` | feat(trellis): HUD 面板头部一行式会话清单 — R6 阶段色点 + skill/指令右槽 |
+| `a1eac1e1` | fix(trellis): HUD 头部圆点改空心环 — 会话级与列表任务级实心点区分 |
+| `e3bef376` | fix(trellis): HUD 头部标记改五角星 — mask 剪阶段色，12px |
+| `3303b65c` | docs(spec): 面板头部标记 R7 五角星 — 修正圆点描述漂移 + prd R7 记录 |
+| `35174703` | docs(spec): cross-layer guide 增 Mistake 11 — 实现形态变更时非代码下游锚点腐烂 |
+| `b5ad6e78` | docs(spec): guides index 补 cross-layer 触发场景 — 重构改实现形态（Mistake 11） |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 35: 修复 Trellis 注册项目 32 截断，SpecRune 恢复识别
+<!-- trellis-session: v=2 fp=b5ba70b23ec397ad -->
+
+**Date**: 2026-09-30
+**Task**: 修复 Trellis 注册项目 32 截断，SpecRune 恢复识别
+**Branch**: `main`
+
+### Summary
+
+定位 clawd app 无法识别 SpecRune 任务/prd 的根因：trellis-activity 的 KNOWN_ROOTS_MAX=32 消费窗口小于 trellis-roots 注册上限 64，第 33+ 个注册项目按注册序被 slice 静默截出 readActiveList/readArchiveList/HUD 非锚定部分。改为 import TRELLIS_ROOTS_MAX 同源（61809e24），补满额注册回归用例 ×2，真机重启截屏验证 HUD 恢复显示 SpecRune 活动任务（execute 7/26）与 3 条归档。知识沉淀：panel-contract §4 契约行 + §5 失败模式 + §6 断言点，code-reuse guide Pattern 3 补配对上限同源实例。全量 11803 测试 0 失败。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `61809e24` | fix(trellis): 已注册项目 32 截断对齐注册面上限 — SpecRune 等第 33+ 项目恢复识别 |
+| `2c4cea7c` | docs(spec): 只读感知契约补「已知 root 窗口 = 注册上限」— 09-30 SpecRune 截断教训 |
+| `52b5ec08` | docs(spec): code-reuse Pattern 3 补 09-30 root 截断实例 — 配对上限必须同源 |
+| `3ff1fd92` | docs(spec): 只读感知 §5 失败模式表与 §6 断言点补满额注册条目 — 与 §4 契约行闭环 |
+
+### Status
+
+[OK] **Completed**
