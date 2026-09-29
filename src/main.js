@@ -489,11 +489,12 @@ let feishuApprovalSyncPromise = Promise.resolve();
 let feishuApprovalConfigSignature = "";
 let feishuSessionAutomationRouteSignature = "";
 let feishuApprovalSecretsRevision = 0;
-// One-way Slack notifier. Unlike Feishu there is no connection to restart, but
-// queued automatic sends must never cross a configuration boundary. The
-// revision invalidates work captured before a preference or secret change.
+// One-way Slack notifier. Unlike Feishu there is no connection to restart.
+// Queued automatic sends re-read the destination and the per-event gates before
+// each attempt, so a preference or secret change is picked up without a
+// revision counter that would also discard real backlogs on every settings
+// click.
 let slackNotifyClient = null;
-let slackNotifyConfigRevision = 0;
 const shortcutHandlers = {
   togglePet: () => togglePetVisibility(),
   quickSelectSession: () => showQuickSelect(),
@@ -1145,7 +1146,7 @@ const petWindowRuntime = createPetWindowRuntime({
   getMiniMode: () => _mini.getMiniMode(),
   getMiniTransitioning: () => _mini.getMiniTransitioning(),
   getMiniContainedSeam: () => _mini.getContainedSeam(),
-  getMiniPeekOffset: () => _mini.PEEK_OFFSET,
+  getMiniPeekOffset: () => _mini.getMiniPeekOffset(),
   getCurrentPixelSize: () => getCurrentPixelSize(),
   getEffectiveCurrentPixelSize: (workArea) => getEffectiveCurrentPixelSize(workArea),
   getAllowEdgePinning: () => allowEdgePinningCached,
@@ -2352,6 +2353,7 @@ const _stateCtx = {
   set miniSleepPeeked(v) { _mini.setMiniSleepPeeked(v); },
   get miniPeeked() { return _mini.getMiniPeeked(); },
   set miniPeeked(v) { _mini.setMiniPeeked(v); },
+  cancelPendingMiniPeek: (resetState) => _mini.cancelPendingMiniPeek(resetState),
   get idlePaused() { return idlePaused; },
   set idlePaused(v) { idlePaused = v; },
   get forceEyeResend() { return forceEyeResend; },
@@ -2382,7 +2384,7 @@ const _stateCtx = {
   isAgentNotificationHookEnabled: (agentId) =>
     _runtimeAgentGate.isAgentNotificationHookEnabled(agentId),
   resolveAgentDisplayName: _resolveAgentDisplayName,
-  miniPeekIn: () => miniPeekIn(),
+  miniPeekIn: (mode) => miniPeekIn(mode),
   miniPeekOut: () => miniPeekOut(),
   buildContextMenu: () => buildContextMenu(),
   buildTrayMenu: () => buildTrayMenu(),
@@ -2820,6 +2822,7 @@ const _tickCtx = {
   set miniSleepPeeked(v) { _mini.setMiniSleepPeeked(v); },
   get miniPeeked() { return _mini.getMiniPeeked(); },
   set miniPeeked(v) { _mini.setMiniPeeked(v); },
+  cancelPendingMiniPeek: (resetState) => _mini.cancelPendingMiniPeek(resetState),
   get mouseOverPet() { return mouseOverPet; },
   set mouseOverPet(v) { mouseOverPet = v; },
   get forceEyeResend() { return forceEyeResend; },
@@ -2833,7 +2836,7 @@ const _tickCtx = {
   applyState,
   getIdleVisualChoice,
   getEffectiveAccessoryIds: getEffectivePetAccessoryIds,
-  miniPeekIn: () => miniPeekIn(),
+  miniPeekIn: (mode) => miniPeekIn(mode),
   miniPeekOut: () => miniPeekOut(),
   getObjRect,
   getHitRectScreen,
@@ -3224,6 +3227,24 @@ const _serverCtx = {
   dismissOpencodeFamilyPermissionResolvedExternally,
   syncPermissionShortcuts,
   permLog,
+  // #898: the settings watcher pauses Claude hook auto-repair when settings.json
+  // shrinks suspiciously (a third-party overwrite). The server already dedups to
+  // once per persisting shrink via its shrinkNotified flag; surface that pause
+  // as an active Windows tray balloon so the user knows repair is on hold without
+  // opening Doctor — mirroring fireCodexHookNudge's balloon.
+  notifySuspiciousShrink: () => {
+    try {
+      if (process.platform !== "win32") return;
+      const tray = _menu && typeof _menu.getTray === "function" ? _menu.getTray() : null;
+      trayBalloonOwner.show(tray, {
+        iconType: "warning",
+        title: translate("claudeHookGuardNudgeTitle"),
+        content: translate("claudeHookGuardNudgeBody"),
+      });
+    } catch (err) {
+      console.warn("Clawd: Claude hook guard balloon failed:", err && err.message);
+    }
+  },
 };
 const _server = require("./server")(_serverCtx);
 const { startHttpServer, getHookServerPort } = _server;
@@ -3951,7 +3972,6 @@ function writeSlackNotifySecrets(secrets) {
     platform: process.platform,
   });
   if (result && result.status === "ok") {
-    slackNotifyConfigRevision += 1;
     broadcastSlackNotifyStatus();
   }
   return result;
@@ -3962,7 +3982,6 @@ function getSlackNotifyClient() {
     slackNotifyClient = createSlackNotifyClient({
       getConfig: () => getSlackNotifyPrefs(),
       getSecrets: () => getSlackNotifySecrets(),
-      getConfigRevision: () => slackNotifyConfigRevision,
       getLang: () => _settingsController.get("lang") || lang || "en",
       log: slackNotifyLog,
     });
@@ -4679,7 +4698,10 @@ const _menuCtx = {
   get isQuitting() { return isQuitting; },
   set isQuitting(v) { isQuitting = v; },
   get menuOpen() { return menuOpen; },
-  set menuOpen(v) { menuOpen = v; },
+  set menuOpen(v) {
+    if (v) _mini.cancelPendingMiniPeek(true);
+    menuOpen = v;
+  },
   get tray() { return tray; },
   set tray(v) { tray = v; },
   get contextMenuOwner() { return contextMenuOwner; },
@@ -4993,7 +5015,6 @@ _settingsController.subscribeKey("feishuApproval", () => {
   }
 });
 _settingsController.subscribeKey("slackNotify", () => {
-  slackNotifyConfigRevision += 1;
   broadcastSlackNotifyStatus();
 });
 _settingsController.subscribeKey("mobilePreviewEnabled", (enabled) => {
@@ -5567,7 +5588,10 @@ function createWindow() {
       if (themeRuntime.isReloadInProgress()) return;
       petWindowRuntime.recoverVisiblePetAfterRendererLoad();
     },
-    setDragLocked: (value) => { petWindowRuntime.setDragLocked(value); },
+    setDragLocked: (value) => {
+      if (value) _mini.cancelPendingMiniPeek(true);
+      petWindowRuntime.setDragLocked(value);
+    },
     setMouseOverPet: (value) => { mouseOverPet = !!value; },
     cancelRoam: () => _roam.cancelRoam(),
     beginDragSnapshot: () => beginDragSnapshot(),
@@ -5801,6 +5825,9 @@ const _miniCtx = {
   get doNotDisturb() { return doNotDisturb; },
   set doNotDisturb(v) { doNotDisturb = v; },
   get currentState() { return _state.getCurrentState(); },
+  get mouseOverPet() { return mouseOverPet; },
+  get dragLocked() { return petWindowRuntime.isDragLocked(); },
+  get menuOpen() { return menuOpen; },
   notifyUpdaterSilentExit: () => notifyUpdaterSilentExit(),
   SIZES,
   getCurrentPixelSize,
@@ -5817,6 +5844,7 @@ const _miniCtx = {
   clampToScreenVisual,
   getNearestWorkArea,
   getPetWindowBounds,
+  getHitRectScreen,
   applyPetWindowBounds,
   applyPetWindowPosition,
   setViewportOffsetY,
