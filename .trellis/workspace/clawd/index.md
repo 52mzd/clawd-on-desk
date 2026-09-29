@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 35
+- **Total Sessions**: 36
 - **Last Active**: 2026-09-30
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~965 | Active |
+| `journal-1.md` | ~987 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 36 | 2026-09-30 | 上游 v1.2.0 同步合入 fork main | `c7e5f818` | `main` |
 | 35 | 2026-09-30 | 修复 Trellis 注册项目 32 截断，SpecRune 恢复识别 | `61809e24`, `2c4cea7c`, `52b5ec08`, `3ff1fd92` | `main` |
 | 34 | 2026-09-29 | HUD Trellis 面板聚焦进行中任务（R1-R7） | `64024abf`, `312450f1`, `f2125cb1`, `a1eac1e1`, `e3bef376`, `3303b65c`, `35174703`, `b5ad6e78` | `main` |
 | 33 | 2026-09-28 | recency 选键 bug break-loop 复盘与 spec 沉淀 | `5d5c5d81`, `75b5702f` | `main` |

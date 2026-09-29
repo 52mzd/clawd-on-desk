@@ -963,3 +963,25 @@ issue #1069 预告评论后提两个官方 PR：#1071（acceptFirstMouse cherry-
 ### Status
 
 [OK] **Completed**
+
+
+## Session 36: 上游 v1.2.0 同步合入 fork main
+<!-- trellis-session: v=2 fp=092c614647a8c739 -->
+
+**Date**: 2026-09-30
+**Task**: 上游 v1.2.0 同步合入 fork main
+**Branch**: `main`
+
+### Summary
+
+git merge origin/main（上游 v1.2.0，48 提交）进本地二开 main，6 处冲突按裁决表解决（.gitignore 并集、版本 1.2.0-trellis.1.0、contributors 上游映射赢+保留 fork null、version-contract 测试取本地动态断言、theme-state-ui 上游全收淘汰本地陈旧行）；新增 release note release-v1.2.0-trellis.1.0.md；npm test 11993 pass / 0 fail；verify-release-contributors exit 0；dev app 冒烟通过（桌宠+HUD 在位）。为后续读取端分组 PR 提供干净基线。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c7e5f818` | Merge upstream v1.2.0 (48 commits) into fork main |
+
+### Status
+
+[OK] **Completed**
