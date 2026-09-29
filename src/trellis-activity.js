@@ -39,7 +39,7 @@ const path = require("path");
 const { parseImplementChecklist, truncateNextStep } = require("./trellis-checklist");
 const { compareDocNames } = require("./trellis-doc-renderer");
 const { listArchivedTasks, normalizePriority, MONTH_DIR_PATTERN } = require("./trellis-archive");
-const { normalizeRootPath } = require("./trellis-roots");
+const { normalizeRootPath, TRELLIS_ROOTS_MAX } = require("./trellis-roots");
 const {
   sessionPointerKey,
   trellisPlatformFor,
@@ -242,8 +242,11 @@ function createTrellisActivity(options) {
   }
 
   // Registered roots first, then cwds that positively resolved a .trellis
-  // root this process, capped so a one-shot scan stays bounded.
-  const KNOWN_ROOTS_MAX = 32;
+  // root this process, capped so a one-shot scan stays bounded. The cap is
+  // the roots store's own registration limit (MAX_ROOTS), not a local
+  // number: a local 32 here silently dropped every 33rd+ registration —
+  // measured 09-30, SpecRune sat at index 32 and vanished from every list.
+  const KNOWN_ROOTS_MAX = TRELLIS_ROOTS_MAX;
 
   function collectKnownRootCwds() {
     const out = [...persistedRoots];

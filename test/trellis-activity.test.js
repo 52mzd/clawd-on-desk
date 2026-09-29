@@ -13,6 +13,7 @@ const {
   makeSessionKey,
   parseSessionKey,
 } = require("../src/session-key");
+const { TRELLIS_ROOTS_MAX } = require("../src/trellis-roots");
 
 const PROJECT = path.resolve("/proj");
 const CWD = path.join(PROJECT, "app");
@@ -1715,6 +1716,25 @@ describe("trellis-activity readArchiveList", () => {
     assert.strictEqual(result.tasks[0].title, "One");
   });
 
+  it("reaches the last registered root at a full registry (09-30: a local 32 cut it)", async () => {
+    // The consumer window must equal the registration cap: with all
+    // TRELLIS_ROOTS_MAX slots taken, the LAST registration's archive still
+    // has to show up (a local KNOWN_ROOTS_MAX = 32 cut index 32+ silently).
+    const h = makeArchiveHarness();
+    const roots = [];
+    for (let i = 0; i < TRELLIS_ROOTS_MAX; i += 1) roots.push(path.resolve(`/proj-r${i}`));
+    const last = roots[roots.length - 1];
+    h.fakeFs.add(
+      path.join(last, ".trellis", "tasks", "archive", "2026-09", "09-30-last", "task.json"),
+      JSON.stringify({ title: "Last", createdAt: "2026-09-29", completedAt: "2026-09-30" }),
+    );
+    h.activity.setPersistedRoots(roots);
+
+    const result = await h.activity.readArchiveList();
+    assert.strictEqual(result.status, "ok");
+    assert.deepStrictEqual(result.tasks.map((t) => t.title), ["Last"]);
+  });
+
   it("falls back to the archive mtime for completion order and labels", async () => {
     const h = makeArchiveHarness();
     const noDate = addArchived(h.fakeFs, "2026-09", "manual-move", {
@@ -1910,6 +1930,22 @@ describe("trellis-activity readActiveList", () => {
     assert.strictEqual(result.status, "ok");
     assert.deepStrictEqual(result.tasks.map((t) => t.title), ["B", "A"],
       "the emptied-dir project leads on its directory mtime");
+  });
+
+  it("lists the last registered root at a full registry (09-30: a local 32 cut it)", async () => {
+    // The consumer window must equal the registration cap: with all
+    // TRELLIS_ROOTS_MAX slots taken, the LAST registration's tasks still
+    // have to show up (a local KNOWN_ROOTS_MAX = 32 cut index 32+ silently).
+    const h = makeHarness();
+    const roots = [];
+    for (let i = 0; i < TRELLIS_ROOTS_MAX; i += 1) roots.push(path.resolve(`/proj-r${i}`));
+    addTask(h.fakeFs, "09-30-last", { title: "Last", status: "in_progress", subtasks: [] },
+      { prd: true, root: roots[roots.length - 1] });
+    h.activity.setPersistedRoots(roots);
+
+    const result = await h.activity.readActiveList();
+    assert.strictEqual(result.status, "ok");
+    assert.deepStrictEqual(result.tasks.map((t) => t.title), ["Last"]);
   });
 });
 
