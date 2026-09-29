@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "语法检查、test runner、渲染器测试、审查线——check 阶段的验证标准"}
+{"file": ".trellis/spec/frontend/renderer-guidelines.md", "reason": "审查 D3 改动是否符合 overlay 状态对象与事件清理规范"}

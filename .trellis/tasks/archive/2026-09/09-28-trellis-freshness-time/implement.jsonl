@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/renderer-guidelines.md", "reason": "DOM 构建、signature 重渲染、overlay 状态对象模式、事件清理——D3 HUD 轮询与面板重绘的核心规范"}
+{"file": ".trellis/spec/frontend/ipc-guidelines.md", "reason": "preload 暴露、严格 payload、信任帧——D3 复用 session-hud:trellis-panel 通道时的边界背景"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "D1 跨 renderer/main/磁盘三层数据流，字段新增的边界思考"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "一窗一 renderer 的布局与共享模块规则，确认改动落点"}
