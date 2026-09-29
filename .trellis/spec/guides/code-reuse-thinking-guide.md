@@ -63,6 +63,17 @@ grep -r "keyword" .
 
 **Good**: Single source of truth, import everywhere
 
+**v7 实例（09-30 SpecRune 截断）**：注册面 `trellis-roots` 的 `MAX_ROOTS = 64`
+与消费面 `trellis-activity` 本地写死的 `KNOWN_ROOTS_MAX = 32` 各自为政——
+`collectKnownRootCwds()` 按注册序 `slice(0, 32)`，第 33+ 个注册项目（SpecRune
+索引 32）静默消失于 Dashboard 任务/归档列表，注册成功但永不生效、无任何报错。
+症状极具误导性：看起来像「新项目的数据格式不兼容」，实际是消费窗口比注册
+窗口窄。教训：**写 `slice(0, N)` 前先问「谁可能超过 N」——凡是与某个存储/注册
+上限配对的消费上限，必须 import 同一常量**；而碰巧同值、概念独立的数字
+（如 `CHILD_PROJECT_MAX`）保持分离。判别技巧：部分链路通、部分链路断时，
+断链共同经过的代码点就是病灶（HUD anchor 通 / readActiveList 断 →
+collectKnownRootCwds）。
+
 ### Pattern 4: Repeated Payload Field Extraction
 
 **Bad**: Multiple consumers cast the same JSON/event fields locally:
