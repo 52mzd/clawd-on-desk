@@ -44,9 +44,15 @@ function getClaudeProjectsDir(profile, options = {}) {
  * hiding a session the user could actually resume is the worse error. Only a
  * present project directory with the transcript absent is a confident no.
  *
+ * When the recorded cwd has no project directory at all, the session is still
+ * looked up by id across the other project directories, because that is what
+ * `claude --resume <id>` itself does — a worktree or moved checkout keeps a
+ * resumable transcript under a different directory. A miss stays "unknown",
+ * never "gone": the transcript may live somewhere this scan cannot see.
+ *
  * Returns true (present), false (confidently missing), or null (unknown).
  */
-function probeTranscript(agentId, sessionId, cwd, profile, options = {}) {
+function probeTranscript(agentId, sessionId, cwd, profile, options = {}, projectEntriesCache = null) {
   if (agentId !== "claude-code") return null;
   try {
     if (!sessionId || normalizeClaudeSessionId(sessionId) !== sessionId) return null;
@@ -60,7 +66,7 @@ function probeTranscript(agentId, sessionId, cwd, profile, options = {}) {
     const stat = fs.lstatSync(projectDir);
     if (!stat.isDirectory() || stat.isSymbolicLink()) return null;
   } catch {
-    return null; // no such project dir — cannot tell, so do not claim.
+    return findTranscriptAcrossProjects(projectsDir, sessionId, projectEntriesCache) ? true : null;
   }
   try {
     const transcript = path.join(projectDir, `${sessionId}.jsonl`);
@@ -71,12 +77,63 @@ function probeTranscript(agentId, sessionId, cwd, profile, options = {}) {
   }
 }
 
+// `projectEntriesCache` lets one loadResumableSessionHistory pass share its
+// directory listings instead of re-reading the filesystem per row: the
+// projects root's subdirectories once, and each subdirectory's file names
+// once, so a full 200-record miss scan costs ~1 readdir per directory rather
+// than a lstat per record-directory pair.
+function findTranscriptAcrossProjects(projectsDir, sessionId, projectEntriesCache) {
+  const cache = projectEntriesCache || new Map();
+  let subdirs = cache.get(projectsDir);
+  if (subdirs === undefined) {
+    try {
+      subdirs = fs.readdirSync(projectsDir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink())
+        .map((entry) => entry.name);
+    } catch {
+      subdirs = null;
+    }
+    cache.set(projectsDir, subdirs);
+  }
+  if (!subdirs) return false;
+  for (const name of subdirs) {
+    const dir = path.join(projectsDir, name);
+    let fileNames = cache.get(dir);
+    if (fileNames === undefined) {
+      try {
+        fileNames = fs.readdirSync(dir);
+      } catch {
+        fileNames = null;
+      }
+      cache.set(dir, fileNames);
+    }
+    if (!fileNames || !fileNames.includes(`${sessionId}.jsonl`)) continue;
+    // The name matches; verify it is a real transcript before claiming it.
+    try {
+      const stat = fs.lstatSync(path.join(dir, `${sessionId}.jsonl`));
+      if (stat.isFile() && !stat.isSymbolicLink() && stat.size > 0) return true;
+    } catch { /* keep scanning the other project directories */ }
+  }
+  return false;
+}
+
 /**
  * History rows ready for the Dashboard's resume list.
  *
  * Sessions already present in the live snapshot are filtered out: the
  * Dashboard shows those in its own list, and offering "resume" for a
  * conversation that is running would invite a duplicate process.
+ *
+ * Every stored record is probed, not just the first `limit`: the store keeps
+ * up to 200 files and ranks them by recency, so records whose cwd never held
+ * a transcript (daemon-born rows, vanished worktrees) must not be able to
+ * crowd resumable sessions out of the visible list before the probe runs.
+ * Rows split into two groups instead:
+ *   - "confirmed": the transcript probe says present. These keep the recency
+ *     ranking and fill the visible list up to `limit`.
+ *   - "other": probe false, unknown, or a v1 profile that cannot be probed.
+ *     Every one of them is still returned, behind the confirmed rows, for the
+ *     Dashboard's collapsed group — the probe is a hint, never a gate.
  */
 function loadResumableSessionHistory(options = {}) {
   const limit = Number.isFinite(options.limit) && options.limit > 0
@@ -86,17 +143,20 @@ function loadResumableSessionHistory(options = {}) {
     ? options.activeRawSessionIds
     : new Set();
 
-  // Over-read, because the active filter below removes rows after ranking.
-  const records = loadSessionHistory({ ...options, limit: limit + activeRawSessionIds.size });
+  const records = loadSessionHistory({ ...options, limit: undefined });
+  const projectEntriesCache = new Map();
 
-  const rows = [];
+  const confirmed = [];
+  const other = [];
   for (const record of records) {
     if (activeRawSessionIds.has(record.sessionId)) continue;
     const profileVerified = record.version >= 2 && !!normalizeClaudeProfile(record.profile);
     const transcript = profileVerified
-      ? probeTranscript(record.agentId, record.sessionId, record.cwd, record.profile, options)
+      ? probeTranscript(
+        record.agentId, record.sessionId, record.cwd, record.profile, options, projectEntriesCache,
+      )
       : null;
-    rows.push({
+    const row = {
       agentId: record.agentId,
       sessionId: record.sessionId,
       historyKey: record.historyKey,
@@ -110,10 +170,11 @@ function loadResumableSessionHistory(options = {}) {
       // null means "could not determine" — the row is still offered.
       transcriptPresent: transcript,
       resumeDisabledReason: profileVerified ? null : "profile-unverified",
-    });
-    if (rows.length >= limit) break;
+      group: profileVerified && transcript === true ? "confirmed" : "other",
+    };
+    (row.group === "confirmed" ? confirmed : other).push(row);
   }
-  return rows;
+  return [...confirmed.slice(0, limit), ...other];
 }
 
 /**

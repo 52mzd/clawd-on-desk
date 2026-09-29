@@ -151,7 +151,7 @@ describe("session history loader", () => {
           { kind: "default", configDir: null }, loadOpts()),
         false,
       );
-      // No project dir at all -> unknown, never a claim.
+      // No project dir at all, and no sibling holds the id -> unknown.
       assert.equal(
         probeTranscript("claude-code", "anything", path.join(root, "elsewhere"),
           { kind: "default", configDir: null }, loadOpts()),
@@ -161,6 +161,24 @@ describe("session history loader", () => {
       assert.equal(probeTranscript(
         "codex", "x", projectCwd, { kind: "default", configDir: null }, loadOpts(),
       ), null);
+    });
+
+    it("locates a transcript under a sibling project directory when the recorded cwd maps to none", () => {
+      writeTranscript("has-transcript", path.join(root, "worktree"));
+      // `claude --resume <id>` looks the id up across project directories, so
+      // a worktree record must read as present even though its recorded cwd
+      // has no directory of its own.
+      assert.equal(
+        probeTranscript("claude-code", "has-transcript", path.join(root, "old-checkout"),
+          { kind: "default", configDir: null }, loadOpts()),
+        true,
+      );
+      // Nothing anywhere holds this id — still "unknown", never "gone".
+      assert.equal(
+        probeTranscript("claude-code", "not-anywhere", path.join(root, "old-checkout"),
+          { kind: "default", configDir: null }, loadOpts()),
+        null,
+      );
     });
   });
 
@@ -185,6 +203,8 @@ describe("session history loader", () => {
         const customRow = rows.find((row) => row.historyKey === customRecord.record.historyKey);
         assert.equal(defaultRow.transcriptPresent, true);
         assert.equal(customRow.transcriptPresent, false);
+        assert.equal(defaultRow.group, "confirmed");
+        assert.equal(customRow.group, "other");
         assert.notEqual(defaultRow.historyKey, customRow.historyKey);
         assert.equal(Object.prototype.hasOwnProperty.call(defaultRow, "profile"), false);
         assert.equal(JSON.stringify(rows).includes(customConfigDir), false);
@@ -224,22 +244,25 @@ describe("session history loader", () => {
       assert.equal(row.sessionId, "legacy-session");
       assert.equal(row.resumeDisabledReason, "profile-unverified");
       assert.equal(row.transcriptPresent, null);
+      assert.equal(row.group, "other");
       assert.match(row.historyKey, /^[a-f0-9]{32}$/);
       assert.equal(resolveResumeTarget("claude-code", row.historyKey, loadOpts()), null);
     });
 
-    it("offers interrupted rows first and flags a missing transcript", () => {
+    it("puts resumable rows ahead and keeps a flagged missing transcript behind them", () => {
       record("interrupted-one", T0);
       record("ended-one", T0 + 1000, BOOT_A, { event: "SessionEnd", state: "idle" });
       writeTranscript("ended-one");
 
       const rows = loadResumableSessionHistory(loadOpts());
-      assert.deepEqual(rows.map((r) => r.sessionId), ["interrupted-one", "ended-one"]);
-      assert.equal(rows[0].interrupted, true);
-      assert.equal(rows[0].transcriptPresent, false, "no transcript was written for it");
-      assert.equal(rows[1].interrupted, false);
-      assert.equal(rows[1].transcriptPresent, true);
-      assert.equal(rows[0].cwd, projectCwd);
+      assert.deepEqual(rows.map((r) => r.sessionId), ["ended-one", "interrupted-one"]);
+      assert.equal(rows[0].interrupted, false);
+      assert.equal(rows[0].transcriptPresent, true);
+      assert.equal(rows[0].group, "confirmed");
+      assert.equal(rows[1].interrupted, true);
+      assert.equal(rows[1].transcriptPresent, false, "no transcript was written for it");
+      assert.equal(rows[1].group, "other");
+      assert.equal(rows[1].cwd, projectCwd);
     });
 
     it("still offers a row whose transcript state is unknown", () => {
@@ -248,6 +271,7 @@ describe("session history loader", () => {
       const rows = loadResumableSessionHistory(loadOpts());
       assert.equal(rows.length, 1);
       assert.equal(rows[0].transcriptPresent, null);
+      assert.equal(rows[0].group, "other");
     });
 
     it("hides sessions that are already live on screen", () => {
@@ -258,16 +282,60 @@ describe("session history loader", () => {
         activeRawSessionIds: new Set(["running-now"]),
       }));
       assert.deepEqual(rows.map((r) => r.sessionId), ["finished"]);
+      assert.equal(rows[0].group, "other");
     });
 
     it("honours the row limit after the active filter", () => {
-      for (let i = 0; i < 5; i++) record(`s-${i}`, T0 + i * 1000);
+      for (let i = 0; i < 5; i++) {
+        record(`s-${i}`, T0 + i * 1000);
+        writeTranscript(`s-${i}`);
+      }
       const rows = loadResumableSessionHistory(loadOpts({
         limit: 2,
         activeRawSessionIds: new Set(["s-4"]),
       }));
       assert.equal(rows.length, 2);
       assert.ok(!rows.some((r) => r.sessionId === "s-4"));
+      assert.ok(rows.every((r) => r.group === "confirmed"), "the limit caps the visible list only");
+    });
+
+    it("keeps a resumable row visible when unresumable records rank newer", () => {
+      // Thirty recency-ranked records without transcripts would fill the
+      // whole visible list under a first-N read; grouping must keep the one
+      // older resumable session on it instead.
+      for (let i = 0; i < 30; i++) record(`ghost-${i}`, T0 - 1000 + i);
+      record("real", T0 - 100_000);
+      writeTranscript("real");
+
+      const rows = loadResumableSessionHistory(loadOpts());
+      assert.equal(rows[0].sessionId, "real");
+      assert.equal(rows[0].group, "confirmed");
+      assert.equal(rows.filter((r) => r.group === "other").length, 30);
+      assert.ok(rows.filter((r) => r.group === "confirmed").length <= 25);
+    });
+
+    it("finds a transcript under another project directory when the recorded cwd has none", () => {
+      record("moved", T0, BOOT_A, { cwd: path.join(root, "old-checkout") });
+      writeTranscript("moved", path.join(root, "worktree"));
+
+      const rows = loadResumableSessionHistory(loadOpts());
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].sessionId, "moved");
+      assert.equal(rows[0].transcriptPresent, true);
+      assert.equal(rows[0].group, "confirmed");
+    });
+
+    it("keeps an unknown verdict for a record no directory holds at all", () => {
+      // A daemon-born record whose cwd never mapped to a project directory:
+      // the cross-directory scan runs and misses, so the row folds away as
+      // "other" without the probe ever claiming the transcript is gone.
+      record("daemon-born", T0, BOOT_A, { cwd: "/" });
+      writeTranscript("unrelated", path.join(root, "some-project"));
+
+      const rows = loadResumableSessionHistory(loadOpts());
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].transcriptPresent, null);
+      assert.equal(rows[0].group, "other");
     });
 
     it("never returns prompts or responses", () => {
