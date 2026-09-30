@@ -317,3 +317,189 @@ describe('trellis wizard developer name (09-27)', () => {
     assert.strictEqual(root.querySelector('[data-user]').attributes.placeholder !== undefined, true);
   });
 });
+
+// 09-30: a dialog closed (cancel / re-open / close()) while its IPC reply is
+// still in flight must not let that reply render into — or execute against —
+// whichever dialog is open when it lands. The dry run is the slow call in
+// practice, so these tests hand-resolve it after the dialog has moved on.
+
+const PROJECT_A = { path: '/p/A', name: 'A', installed: true, platforms: [] };
+const PROJECT_B = { path: '/p/B', name: 'B', installed: true, platforms: [] };
+
+function raceUpgradePlan(projectPath) {
+  return {
+    upgradable: true,
+    current: '1.0.0',
+    to: '1.1.0',
+    command: { bin: 'trellis', args: ['update', '--force', '--migrate'], cwd: projectPath },
+  };
+}
+
+function raceAddPlan(projectPath, platforms) {
+  return {
+    name: projectPath.slice(-1),
+    added: Array.isArray(platforms) ? platforms : [],
+    command: { bin: 'trellis', args: ['init', '--gemini', '-y'], cwd: projectPath },
+  };
+}
+
+function makeRaceApi() {
+  const calls = { dryRun: [], preview: [], upgrade: [], add: [] };
+  const pendingDryRun = {};
+  return {
+    calls,
+    resolveDryRun(projectPath, output) {
+      const resolve = pendingDryRun[projectPath];
+      assert.ok(resolve, `a dry run for ${projectPath} is pending`);
+      delete pendingDryRun[projectPath];
+      resolve({ status: 'ok', result: { output } });
+    },
+    trellisDryRun(projectPath) {
+      calls.dryRun.push(projectPath);
+      return new Promise((resolve) => { pendingDryRun[projectPath] = resolve; });
+    },
+    trellisPreview(payload) {
+      calls.preview.push(payload);
+      const projectPath = payload.paths[0];
+      return Promise.resolve({
+        status: 'ok',
+        plan: [raceUpgradePlan(projectPath)],
+        addPlan: [raceAddPlan(projectPath, payload.platforms)],
+      });
+    },
+    trellisUpgradeProject(projectPath) {
+      calls.upgrade.push(projectPath);
+      // Never settles: keeps the dialog in the `running` stage for the test.
+      return new Promise(() => {});
+    },
+    trellisAddPlatform(projectPath, added, userName) {
+      calls.add.push({ projectPath, added, userName });
+      return new Promise(() => {});
+    },
+    trellisUserSuggestion() {
+      return Promise.resolve({ status: 'ok', name: '' });
+    },
+  };
+}
+
+function mountedRoot(document) {
+  const root = document.body.children[0];
+  assert.ok(root, 'the wizard mounted a root element');
+  return root;
+}
+
+describe('trellis wizard stale callbacks (09-30)', () => {
+  it('drops a cancelled upgrade preview instead of rendering it into the next add-platform dialog', async () => {
+    const { wizard, document } = loadWizard();
+    const api = makeRaceApi();
+    const bridge = makeBridge(api);
+
+    wizard.openUpgradePreview(bridge, PROJECT_A);
+    const rootA = mountedRoot(document);
+    await flush();
+    assert.deepStrictEqual(api.calls.dryRun, ['/p/A'], 'dry run started for A');
+
+    button(rootA, 'cancel').dispatch('click');
+    assert.strictEqual(document.body.children.length, 0, 'cancel removed the A dialog');
+
+    wizard.openAddPlatform(bridge, PROJECT_B, CATALOG, '');
+    const rootB = mountedRoot(document);
+    await flush();
+    const htmlBefore = rootB.innerHTML;
+    assert.ok(rootB.querySelector('[data-platform]'), 'B shows the platform selection');
+
+    api.resolveDryRun('/p/A', 'A DRY RUN OUTPUT');
+    await flush();
+
+    assert.strictEqual(rootB.innerHTML, htmlBefore, 'the stale A reply left the B dialog untouched');
+    assert.ok(!rootB.innerHTML.includes('A DRY RUN OUTPUT'), 'no A output in the B dialog');
+    assert.strictEqual(
+      rootB.querySelectorAll('[data-wizard]').some((el) => el.getAttribute('data-wizard') === 'upgrade'),
+      false,
+      'no upgrade button appeared in the add-platform dialog',
+    );
+    assert.deepStrictEqual(api.calls.upgrade, [], 'trellisUpgradeProject was never called');
+  });
+
+  it('keeps B\'s own dry run when A\'s replaced upgrade preview replies later', async () => {
+    const { wizard, document } = loadWizard();
+    const api = makeRaceApi();
+    const bridge = makeBridge(api);
+
+    wizard.openUpgradePreview(bridge, PROJECT_A);
+    await flush();
+    wizard.openUpgradePreview(bridge, PROJECT_B);
+    const rootB = mountedRoot(document);
+    await flush();
+    assert.deepStrictEqual(api.calls.dryRun, ['/p/A', '/p/B']);
+
+    api.resolveDryRun('/p/B', 'B DRY RUN OUTPUT');
+    await flush();
+    assert.ok(rootB.innerHTML.includes('B DRY RUN OUTPUT'), 'B renders its own dry run');
+    button(rootB, 'upgrade');
+
+    api.resolveDryRun('/p/A', 'A DRY RUN OUTPUT');
+    await flush();
+    assert.ok(rootB.innerHTML.includes('B DRY RUN OUTPUT'), 'B output survives the stale A reply');
+    assert.ok(!rootB.innerHTML.includes('A DRY RUN OUTPUT'), 'A output never reaches the B dialog');
+    assert.deepStrictEqual(api.calls.upgrade, [], 'nothing executed');
+  });
+
+  it('does not overwrite the running stage of B with a stale preview from A', async () => {
+    const { wizard, document } = loadWizard();
+    const api = makeRaceApi();
+    const bridge = makeBridge(api);
+
+    wizard.openUpgradePreview(bridge, PROJECT_A);
+    await flush();
+    wizard.openUpgradePreview(bridge, PROJECT_B);
+    const rootB = mountedRoot(document);
+    await flush();
+    api.resolveDryRun('/p/B', 'B DRY RUN OUTPUT');
+    await flush();
+
+    button(rootB, 'upgrade').dispatch('click');
+    await flush();
+    assert.deepStrictEqual(api.calls.upgrade, ['/p/B'], 'upgrade runs against B');
+    const runningHtml = rootB.innerHTML;
+    // `makeBridge().t` echoes the key, which `tr()` treats as a miss, so the
+    // rendered text is the English fallback.
+    assert.ok(runningHtml.includes('Running…'), 'B shows the running hint');
+    assert.strictEqual(rootB.querySelectorAll('[data-wizard]').length, 0, 'no buttons while running');
+
+    api.resolveDryRun('/p/A', 'A DRY RUN OUTPUT');
+    await flush();
+    assert.strictEqual(rootB.innerHTML, runningHtml, 'the running view is untouched');
+    assert.strictEqual(rootB.querySelectorAll('[data-wizard]').length, 0, 'no upgrade button re-appeared');
+    assert.deepStrictEqual(api.calls.upgrade, ['/p/B'], 'no second upgrade');
+
+    // Backdrop click is ignored while running: proves the stage is still
+    // `running`, not reset by the stale render.
+    rootB.dispatch('click');
+    assert.strictEqual(document.body.children[0], rootB, 'stage is still running, backdrop click ignored');
+  });
+
+  it('produces no unhandled rejection when the dialog is closed and the reply lands later', async () => {
+    const { wizard, document } = loadWizard();
+    const api = makeRaceApi();
+    const bridge = makeBridge(api);
+
+    wizard.openUpgradePreview(bridge, PROJECT_A);
+    await flush();
+    wizard.close();
+    assert.strictEqual(document.body.children.length, 0, 'dialog gone');
+
+    let unhandled = 0;
+    const onUnhandled = () => { unhandled += 1; };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      api.resolveDryRun('/p/A', 'A DRY RUN OUTPUT');
+      await flush();
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+    assert.strictEqual(unhandled, 0, 'a stale reply after close() must be dropped silently');
+    assert.strictEqual(document.body.children.length, 0, 'nothing was mounted by the stale reply');
+    assert.deepStrictEqual(api.calls.upgrade, []);
+  });
+});
