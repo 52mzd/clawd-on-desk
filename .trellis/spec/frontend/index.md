@@ -15,7 +15,7 @@
 | Guide | 内容 | 适用场景 |
 |-------|------|---------|
 | [Directory Structure](./directory-structure.md) | 每窗口一 renderer + preload + html/css 配对布局 | 新增窗口/浮层 |
-| [Renderer Guidelines](./renderer-guidelines.md) | DOM 构建、signature 重渲染、overlay 状态对象模式、事件清理、HUD 颜色主题变量 | 写/改任何 renderer |
+| [Renderer Guidelines](./renderer-guidelines.md) | DOM 构建、signature 重渲染、overlay 状态对象模式、事件清理、HUD 颜色主题变量、UI 格式两轮触发器 | 写/改任何 renderer |
 | [IPC Guidelines](./ipc-guidelines.md) | preload 暴露、严格 payload、信任帧、运行时类型校验 | 新增渲染↔主进程通道 |
 | [i18n Guidelines](./i18n-guidelines.md) | 七语言键完整性、取词约定 | 任何用户可见文案 |
 | [Quality Guidelines](./quality-guidelines.md) | 语法检查、test runner、渲染器测试、审查线 | 提交前 |
