@@ -1137,3 +1137,25 @@ x86 实机装 x64 包暴露两问题，实证闭环：①设置页显示 0.3.10 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 44: 多装列表底距微调
+<!-- trellis-session: v=2 fp=db054a9ca94ede80 -->
+
+**Date**: 2026-10-01
+**Task**: 多装列表底距微调
+**Branch**: `main`
+
+### Summary
+
+命令块圆角与卡片底边重合：末条 install :last-child 补 12px 底距对齐 .row 节奏
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2503e3bb` | fix(trellis): 多装列表末条补 12px 底距——命令块圆角不再压卡片底边 |
+
+### Status
+
+[OK] **Completed**
