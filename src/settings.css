@@ -5452,32 +5452,23 @@ html, body {
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   user-select: text;
 }
-/* 10-01 multi-detect (revised): one entry per discovered CLI install. The
-   path column leads so every row aligns; badges (in use / latest / older)
-   and the version ride the right edge. The older row adds an indented
-   copy-only cleanup command line — displayed, never executed. */
+/* 10-01 multi-detect (revised; ui-polish): two lines per install. Line 1 is
+   path + version — the version is the only right-hand element so every row's
+   right edge aligns. Line 2 is a left-anchored pill badge line (rank first,
+   in-use second) borrowing the .agent-badge pill language. The older row
+   adds an indented tinted command block — displayed, never executed. */
 .trellis-cli-install {
   min-width: 0;
+  margin-top: 4px;
+}
+.trellis-cli-install + .trellis-cli-install {
+  margin-top: 8px;
 }
 .trellis-cli-install-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
   min-width: 0;
-}
-.trellis-cli-install-badge {
-  flex: 0 0 auto;
-  font-size: 11px;
-  font-weight: 500;
-}
-.trellis-cli-install-badge.is-in-use,
-.trellis-cli-install-badge.is-latest {
-  color: var(--text-secondary);
-  opacity: 0.9;
-}
-.trellis-cli-install-badge.is-outdated {
-  color: var(--warning-action);
 }
 .trellis-cli-install-path {
   flex: 1 1 auto;
@@ -5498,12 +5489,57 @@ html, body {
   opacity: 0.9;
   font-variant-numeric: tabular-nums;
 }
+.trellis-cli-install-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.trellis-cli-install-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+/* Same palette as .agent-badge.integration (green = newest). */
+.trellis-cli-install-badge.is-latest {
+  background: rgba(16, 120, 87, 0.1);
+  color: #187253;
+}
+/* Same palette as .agent-badge.accent (brand orange = what Clawd runs). */
+.trellis-cli-install-badge.is-in-use {
+  background: rgba(217, 119, 87, 0.12);
+  color: var(--accent);
+}
+/* Same palette as .agent-badge.integration.hook-warning (amber = removable). */
+.trellis-cli-install-badge.is-outdated {
+  background: rgba(180, 120, 20, 0.14);
+  color: #9a6700;
+}
+@media (prefers-color-scheme: dark) {
+  .trellis-cli-install-badge.is-latest {
+    background: rgba(140, 233, 154, 0.12);
+    color: #8ce99a;
+  }
+  .trellis-cli-install-badge.is-outdated {
+    background: rgba(246, 195, 67, 0.16);
+    color: #f6c343;
+  }
+}
 .trellis-cli-install-cmd {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 2px;
+  margin-top: 4px;
+  margin-left: 8px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.05);
   min-width: 0;
+}
+@media (prefers-color-scheme: dark) {
+  .trellis-cli-install-cmd { background: rgba(255, 255, 255, 0.07); }
 }
 .trellis-cli-install-cmd-text {
   flex: 1 1 auto;

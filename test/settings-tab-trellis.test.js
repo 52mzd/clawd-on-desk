@@ -341,6 +341,23 @@ describe("settings-tab-trellis", () => {
     assert.ok(rendered.includes("0.7.0-beta.4") && rendered.includes("0.3.10"), "versions render per row");
     assert.ok(rendered.includes(cleanup), "the cleanup command is displayed, not just copied blind");
 
+    // Badges live on their own line under the path+version row, rank first
+    // and in-use second, so badge text length cannot shift the row's right
+    // edge (the alignment complaint from the first revision's field report).
+    const badgeRows = [];
+    walk(panel, (element) => {
+      const cls = typeof element.className === "string" ? element.className : "";
+      if (cls.split(/\s+/).includes("trellis-cli-install-badges")) badgeRows.push(element);
+    });
+    assert.deepStrictEqual(
+      badgeRows.map((row) => row.children.map((child) => child.textContent)),
+      [
+        ["trellisCliInstallLatest", "trellisCliInstallActive"],
+        ["trellisCliInstallExtra"],
+      ],
+      "one badge line per install; rank precedes the in-use badge",
+    );
+
     // The command line (with its copy button) rides the outdated install only.
     // Exact-class match: a `\b` regex would also hit `-cmd-text` (the hyphen
     // counts as a boundary).
