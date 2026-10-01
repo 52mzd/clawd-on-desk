@@ -41,14 +41,20 @@ function getClaudeProjectsDir(profile, options = {}) {
  *
  * Deliberately fails open. The directory layout above is Claude Code's private
  * detail, so an unrecognized shape must read as "unknown", never as "gone" —
- * hiding a session the user could actually resume is the worse error. Only a
- * present project directory with the transcript absent is a confident no.
+ * hiding a session the user could actually resume is the worse error.
  *
- * When the recorded cwd has no project directory at all, the session is still
- * looked up by id across the other project directories, because that is what
- * `claude --resume <id>` itself does — a worktree or moved checkout keeps a
- * resumable transcript under a different directory. A miss stays "unknown",
- * never "gone": the transcript may live somewhere this scan cannot see.
+ * When the transcript is not in the recorded cwd's project directory — or the
+ * cwd maps to no project directory at all — the session is still looked up by
+ * id across the other project directories, because that is what
+ * `claude --resume <id>` itself does; a worktree or moved checkout keeps a
+ * resumable transcript under a different directory. "Confidently missing"
+ * therefore means, per path: (a) the cwd's project directory exists, the
+ * transcript is absent from it, and the cross-directory scan completed
+ * without finding the id; (b) the cwd has no project directory and the scan
+ * completed without finding the id — in that branch a miss still reads as
+ * "unknown", because a moved checkout makes where the transcript should live
+ * itself uncertain. An unreadable projects root or subdirectory keeps every
+ * verdict at "unknown".
  *
  * Returns true (present), false (confidently missing), or null (unknown).
  */
@@ -66,24 +72,54 @@ function probeTranscript(agentId, sessionId, cwd, profile, options = {}, project
     const stat = fs.lstatSync(projectDir);
     if (!stat.isDirectory() || stat.isSymbolicLink()) return null;
   } catch {
-    return findTranscriptAcrossProjects(projectsDir, sessionId, projectEntriesCache) ? true : null;
+    return findTranscriptAcrossProjects(projectsDir, sessionId, projectEntriesCache) === true ? true : null;
   }
   try {
     const transcript = path.join(projectDir, `${sessionId}.jsonl`);
     const stat = fs.lstatSync(transcript);
     return stat.isFile() && !stat.isSymbolicLink() && stat.size > 0;
   } catch (err) {
-    return err && err.code === "ENOENT" ? false : null;
+    if (!err || err.code !== "ENOENT") return null;
+    return findTranscriptAcrossProjects(projectsDir, sessionId, projectEntriesCache);
   }
 }
 
 // `projectEntriesCache` lets one loadResumableSessionHistory pass share its
 // directory listings instead of re-reading the filesystem per row: the
-// projects root's subdirectories once, and each subdirectory's file names
-// once, so a full 200-record miss scan costs ~1 readdir per directory rather
-// than a lstat per record-directory pair.
+// projects root's subdirectories once, each subdirectory's file names once,
+// and one shared file-name index, so a full 200-record miss scan costs
+// ~1 readdir per directory regardless of how many records miss.
+const TRANSCRIPT_INDEX_KEY = "\0transcript-index";
+
+// Returns true (present), false (scanned every project directory and the id
+// is nowhere), or null (cannot scan: the projects root, or one of its
+// subdirectories, is unreadable — absence cannot be claimed from a scan that
+// could not run or could not finish).
 function findTranscriptAcrossProjects(projectsDir, sessionId, projectEntriesCache) {
   const cache = projectEntriesCache || new Map();
+  const indexKey = projectsDir + TRANSCRIPT_INDEX_KEY;
+  let index = cache.get(indexKey);
+  if (index === undefined) {
+    index = buildTranscriptIndex(projectsDir, cache);
+    cache.set(indexKey, index);
+  }
+  if (!index) return null;
+  const dirs = index.files.get(`${sessionId}.jsonl`);
+  if (!dirs) return index.complete ? false : null;
+  for (const dir of dirs) {
+    // The name matches; verify it is a real transcript before claiming it.
+    try {
+      const stat = fs.lstatSync(path.join(dir, `${sessionId}.jsonl`));
+      if (stat.isFile() && !stat.isSymbolicLink() && stat.size > 0) return true;
+    } catch { /* keep scanning the other project directories */ }
+  }
+  return null; // named in the index, but no copy could be verified
+}
+
+// One pass over the projects root: every subdirectory's file names folded
+// into Map<fileName, dirPath[]>. `complete` records whether every directory
+// could be listed — an unreadable one means the scan cannot claim absence.
+function buildTranscriptIndex(projectsDir, cache) {
   let subdirs = cache.get(projectsDir);
   if (subdirs === undefined) {
     try {
@@ -95,7 +131,9 @@ function findTranscriptAcrossProjects(projectsDir, sessionId, projectEntriesCach
     }
     cache.set(projectsDir, subdirs);
   }
-  if (!subdirs) return false;
+  if (!subdirs) return null;
+  let complete = true;
+  const files = new Map();
   for (const name of subdirs) {
     const dir = path.join(projectsDir, name);
     let fileNames = cache.get(dir);
@@ -107,14 +145,17 @@ function findTranscriptAcrossProjects(projectsDir, sessionId, projectEntriesCach
       }
       cache.set(dir, fileNames);
     }
-    if (!fileNames || !fileNames.includes(`${sessionId}.jsonl`)) continue;
-    // The name matches; verify it is a real transcript before claiming it.
-    try {
-      const stat = fs.lstatSync(path.join(dir, `${sessionId}.jsonl`));
-      if (stat.isFile() && !stat.isSymbolicLink() && stat.size > 0) return true;
-    } catch { /* keep scanning the other project directories */ }
+    if (!fileNames) {
+      complete = false;
+      continue;
+    }
+    for (const fileName of fileNames) {
+      const known = files.get(fileName);
+      if (known) known.push(dir);
+      else files.set(fileName, [dir]);
+    }
   }
-  return false;
+  return { files, complete };
 }
 
 /**
@@ -170,11 +211,29 @@ function loadResumableSessionHistory(options = {}) {
       // null means "could not determine" — the row is still offered.
       transcriptPresent: transcript,
       resumeDisabledReason: profileVerified ? null : "profile-unverified",
-      group: profileVerified && transcript === true ? "confirmed" : "other",
+      // A row leads the visible list only when a resume from it can work:
+      // the transcript must be present AND the recorded cwd must still exist
+      // (resolveResumeTarget refuses vanished folders, so leading with them
+      // would offer a resume that always fails). Rows that fail either check
+      // still render, folded, with their button untouched.
+      group: profileVerified && transcript === true && isExistingDirectory(record.cwd)
+        ? "confirmed"
+        : "other",
     };
     (row.group === "confirmed" ? confirmed : other).push(row);
   }
   return [...confirmed.slice(0, limit), ...other];
+}
+
+// resolveResumeTarget's folder check, shared with the confirmed grouping: a
+// resume target must be an absolute path to a directory that still exists.
+function isExistingDirectory(candidate) {
+  if (typeof candidate !== "string" || !candidate || !path.isAbsolute(candidate)) return false;
+  try {
+    return fs.lstatSync(candidate).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -195,11 +254,7 @@ function resolveResumeTarget(agentId, historyKey, options = {}) {
   if (!match) return null;
   const profile = match.version >= 2 ? normalizeClaudeProfile(match.profile) : null;
   if (!profile) return null;
-  if (!match.cwd || !path.isAbsolute(match.cwd)) return null;
-  try {
-    const stat = fs.lstatSync(match.cwd);
-    if (!stat.isDirectory()) return null;
-  } catch {
+  if (!isExistingDirectory(match.cwd)) {
     return null; // the project folder is gone; resuming there would fail anyway.
   }
   return {

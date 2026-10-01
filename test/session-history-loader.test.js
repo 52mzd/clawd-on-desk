@@ -180,6 +180,89 @@ describe("session history loader", () => {
         null,
       );
     });
+
+    it("looks across project directories when the recorded cwd's own directory exists but holds no transcript", () => {
+      // The #1072 worktree shape: the recorded cwd is a checkout that other
+      // sessions used (its project directory exists), while this session's
+      // transcript lives under the worktree's directory. The ENOENT branch
+      // must still find it.
+      writeTranscript("placeholder", projectCwd); // gives projectCwd its own directory
+      writeTranscript("wt-session", path.join(root, "worktree"));
+      assert.equal(
+        probeTranscript("claude-code", "wt-session", projectCwd,
+          { kind: "default", configDir: null }, loadOpts()),
+        true,
+      );
+      // Project directory present, transcript absent from it, and the
+      // completed cross-directory scan found the id nowhere — that is now a
+      // confident no, not an unknown.
+      assert.equal(
+        probeTranscript("claude-code", "gone-session", projectCwd,
+          { kind: "default", configDir: null }, loadOpts()),
+        false,
+      );
+    });
+
+    it("keeps an unreadable projects root or subdirectory at unknown, never missing", (t) => {
+      writeTranscript("placeholder", projectCwd); // the ENOENT branch needs the dir to exist
+      // The projects root cannot be listed: the scan cannot even run.
+      const readdir = fs.readdirSync;
+      t.mock.method(fs, "readdirSync", (dir, ...args) => {
+        if (path.resolve(String(dir)) === path.resolve(claudeProjectsDir)) {
+          throw Object.assign(new Error("denied"), { code: "EACCES" });
+        }
+        return readdir(dir, ...args);
+      });
+      assert.equal(
+        probeTranscript("claude-code", "gone-session", projectCwd,
+          { kind: "default", configDir: null }, loadOpts()),
+        null,
+      );
+      // One subdirectory cannot be listed: the scan ran but is incomplete, so
+      // a miss still cannot claim absence. The directory must exist first, or
+      // it never enters the scan at all.
+      const subdir = path.join(claudeProjectsDir, encodeClaudeProjectDir(path.join(root, "worktree")));
+      writeTranscript("unrelated", path.join(root, "worktree"));
+      t.mock.restoreAll();
+      t.mock.method(fs, "readdirSync", (dir, ...args) => {
+        if (path.resolve(String(dir)) === path.resolve(subdir)) {
+          throw Object.assign(new Error("denied"), { code: "EACCES" });
+        }
+        return readdir(dir, ...args);
+      });
+      assert.equal(
+        probeTranscript("claude-code", "gone-session", projectCwd,
+          { kind: "default", configDir: null }, loadOpts()),
+        null,
+      );
+    });
+
+    it("shares one directory listing per directory, however many records miss", (t) => {
+      // Every miss used to re-walk every project directory's file names
+      // (records × directories). With the shared file-name index a load
+      // costs one readdir of the projects root plus one per subdirectory —
+      // assert the structure, not milliseconds.
+      writeTranscript("unrelated-a", path.join(root, "worktree"));
+      writeTranscript("unrelated-b", path.join(root, "other-project"));
+      for (let i = 0; i < 5; i++) {
+        record(`daemon-${i}`, T0 - i, BOOT_A, { cwd: path.join(root, "ghost-checkout") });
+      }
+      const readdir = fs.readdirSync;
+      let projectReaddirs = 0;
+      t.mock.method(fs, "readdirSync", (dir, ...args) => {
+        const resolved = path.resolve(String(dir));
+        if (resolved === path.resolve(claudeProjectsDir)
+          || resolved.startsWith(`${path.resolve(claudeProjectsDir)}${path.sep}`)) {
+          projectReaddirs += 1;
+        }
+        return readdir(dir, ...args);
+      });
+      const rows = loadResumableSessionHistory(loadOpts());
+      assert.equal(rows.length, 5);
+      assert.ok(rows.every((row) => row.group === "other"));
+      // projects root + worktree + other-project, once each for five misses.
+      assert.equal(projectReaddirs, 3);
+    });
   });
 
   describe("resume list", () => {
@@ -315,6 +398,9 @@ describe("session history loader", () => {
     });
 
     it("finds a transcript under another project directory when the recorded cwd has none", () => {
+      // The cwd must exist for the row to lead the list (resolveResumeTarget
+      // would refuse it otherwise), so build it before recording.
+      fs.mkdirSync(path.join(root, "old-checkout"));
       record("moved", T0, BOOT_A, { cwd: path.join(root, "old-checkout") });
       writeTranscript("moved", path.join(root, "worktree"));
 
@@ -323,6 +409,23 @@ describe("session history loader", () => {
       assert.equal(rows[0].sessionId, "moved");
       assert.equal(rows[0].transcriptPresent, true);
       assert.equal(rows[0].group, "confirmed");
+      assert.equal(resolveResumeTarget("claude-code", rows[0].historyKey, loadOpts()).cwd,
+        path.join(root, "old-checkout"));
+    });
+
+    it("folds a cross-directory hit whose recorded cwd has vanished", () => {
+      // Transcript found elsewhere, but the checkout is gone: a resume would
+      // fail, so the row must not lead the list — still offered, still
+      // clickable, folded away.
+      record("moved", T0, BOOT_A, { cwd: path.join(root, "old-checkout") });
+      writeTranscript("moved", path.join(root, "worktree"));
+
+      const rows = loadResumableSessionHistory(loadOpts());
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].transcriptPresent, true);
+      assert.equal(rows[0].group, "other");
+      assert.equal(rows[0].resumeDisabledReason, null);
+      assert.equal(resolveResumeTarget("claude-code", rows[0].historyKey, loadOpts()), null);
     });
 
     it("keeps an unknown verdict for a record no directory holds at all", () => {
