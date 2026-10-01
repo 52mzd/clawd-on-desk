@@ -1049,3 +1049,25 @@ x86 实机装 x64 包暴露两问题，实证闭环：①设置页显示 0.3.10 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 40: 多装检测修订——判定改版本新旧
+<!-- trellis-session: v=2 fp=16abefd335ab3a3c -->
+
+**Date**: 2026-10-01
+**Task**: 多装检测修订——判定改版本新旧
+**Branch**: `main`
+
+### Summary
+
+实机反馈四点落地：可清理判定从 PATH 首命中改为版本严格旧（compareVersions 简化 semver，null/同版本永不标）——根因是 GUI 增强 PATH 序与用户 shell PATH 序相反，PATH 序判多余会把终端真正在用的 ~/.npm-global 安装错标可删；active 保留但文案改「Clawd 当前使用」澄清 app 视角；outdated 行渲染 cleanup 命令文本（mono 可选中）+ 复制按钮，复制内容可见；路径列提前作左对齐锚点修行内参差。缺 outdated 旧 payload 降级。定向 126 + 全量 12020 pass，spec 四条硬约束同步。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e2a3200d` | fix(trellis): 多装检测修订——可清理判定改版本新旧、清理命令可见、行内对齐 |
+
+### Status
+
+[OK] **Completed**
