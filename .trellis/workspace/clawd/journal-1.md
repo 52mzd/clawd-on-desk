@@ -1071,3 +1071,25 @@ x86 实机装 x64 包暴露两问题，实证闭环：①设置页显示 0.3.10 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 41: 多装 CLI 列表 UI 重排（两行结构+胶囊徽标+命令块缩进）
+<!-- trellis-session: v=2 fp=bd55693d3cb47051 -->
+
+**Date**: 2026-10-01
+**Task**: 多装 CLI 列表 UI 重排（两行结构+胶囊徽标+命令块缩进）
+**Branch**: `main`
+
+### Summary
+
+实机反馈『可以了但 UI 难看没对齐』：根因是单行五段横排（路径flex:1把徽标+版本推到右端，徽标文案长短不一令两行右端基准线浮动）+徽标无胶囊形态+命令行无缩进。改为两行结构：行1路径(左)+版本(唯一右置元素,tabular)，行2胶囊徽标行(rank先于in-use，三态色借.agent-badge色板：最新绿/旧版amber/Clawd使用accent)，outdated命令块缩进+底色；条目间距8px。判定逻辑/payload/i18n零变更，测试补徽标DOM序deepStrictEqual断言，全量12020 pass，提交8ea7896e。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8ea7896e` | feat(trellis): 多装 CLI 列表 UI 重排——两行结构 + 胶囊徽标 + 命令块缩进 |
+
+### Status
+
+[OK] **Completed**
