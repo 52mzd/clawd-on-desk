@@ -1159,3 +1159,25 @@ x86 实机装 x64 包暴露两问题，实证闭环：①设置页显示 0.3.10 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 45: 复制按钮改名清理代码
+<!-- trellis-session: v=2 fp=da7c141cf85c63fe -->
+
+**Date**: 2026-10-01
+**Task**: 复制按钮改名清理代码
+**Branch**: `main`
+
+### Summary
+
+trellisCopyCleanup 文案按用户复检改『复制清理代码』（zh/zh-TW/ko/ja；en/pt-BR/es 本就 cleanup 措辞）
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7a935661` | fix(trellis): 清理命令复制按钮改名「复制清理代码」——与命令语义对齐 |
+
+### Status
+
+[OK] **Completed**
