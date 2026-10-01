@@ -1582,7 +1582,7 @@ registerTrellisIpc({ ..., env: { PATH: augmentedCliPath(process.env.PATH) } })
   padding 时贴 border，与标题差 16px）。「Clawd 当前使用」徽标按用户格式
   移除渲染（payload `active` 字段保留，契约不变）。outdated 行下挂**缩进+底色**
   的命令块（命令文本本体 mono 可选中）+ 复制按钮（label `trellisCopyCleanup`
-  「复制旧版代码」，区别于通用「复制」）——复制什么必须
+  「复制清理代码」，区别于通用「复制」）——复制什么必须
   可见，不留盲盒，缩进+底色声明它与旧版条目的隶属关系。四条硬约束：① `cleanup`/`outdated` 均在
   **cli 层生成**随 payload 下发——renderer（vm 沙箱脚本）无法 require 主进程模块，且
   命令构造与 argv 冻结同一红线（只在 main 构造）；② **app 绝不执行清理命令**——全链路
