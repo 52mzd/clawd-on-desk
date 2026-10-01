@@ -1204,3 +1204,26 @@ break-loop 复盘五轮 UI 迭代（格式返工四轮）：沉淀「UI 格式�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 47: PR #1085/#1086 owner review 修订：三态跨目录/索引/标题对齐
+<!-- trellis-session: v=2 fp=e945cc4bfce9e9d6 -->
+
+**Date**: 2026-10-02
+**Task**: PR #1085/#1086 owner review 修订：三态跨目录/索引/标题对齐
+**Branch**: `main`
+
+### Summary
+
+按 rullerzhou-afk 的 review 修订两个 PR 并推 fork：#1085 跨目录查找三态化（false 仅出自完整扫描）+每次加载文件名索引消 O(记录×文件) 开销+抽 isExistingDirectory 使 confirmed 要求 cwd 现存+i18n 七语种点明未确认+文档两处（12067 测试过）；#1086 标题复用 extractPromptTitle（40字/密钥终局）+null 守卫与整体 try/catch+tool_result 结构判断+command 提升不丢+mtime/size 缓存（11487 测试过）。本机无 cwd=/ 记录可统计。两 PR 均逐条中文回复 review（含 eugenewang P1 说明待 #1085 落地跟进）。坑：sandbox 内 cd 不跨命令持久，三次命令落错仓库，改用 git -C 与绝对路径；#1085 文档改动一度误落主仓库已还原。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `48aaa625` | fix(history): 跨目录查找三态化并共享文件名索引 |
+| `e49a063f` | fix(history): 标题规则对齐 live、健壮性与提取缓存 |
+
+### Status
+
+[OK] **Completed**
