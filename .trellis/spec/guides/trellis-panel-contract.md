@@ -38,7 +38,8 @@ paths:
 createTrellisCli({ execFileImpl?, env?, platform?, timeoutMs? })
 
 // 每条命令一个函数，返回值统一带 ok / output
-readGlobalVersion()                     // → { installed: boolean, version: string|null }
+readGlobalVersion()                     // → { installed: boolean, version: string|null, path: string|null }（10-01 起 path = 实际命中的二进制，诊断双装 CLI；win32 恒 null）
+resolveTrellisBinPath(pathEnv, options?) // → string | null；与 spawn 同一 PATH 逐目录 fs 解析（isFile + X_OK），不解析 .cmd shim
 fetchRemoteChannels()                   // → { channels: {latest,beta,rc} } | { error }
 updateProject(projectPath)              // → { ok, from, to, output }
 addPlatforms(projectPath, platformIds)  // → { ok, added: string[], output }
@@ -71,7 +72,7 @@ upgradeGlobal(channel?)                 // → { ok, from, to, output }
 | 通道 | 入参 | 返回 |
 | --- | --- | --- |
 | `settings:trellis-scan` | `{ channel? }` | `{ status, roots, channels, remote, scans, projects, global, platformCatalog, channelCatalog }` |
-| `settings:trellis-set-roots` | `{ roots }` | `{ status }`（**必经 `settings-controller`**） |
+| `settings:trellis-set-roots` | `{ roots }` | `{ status, roots }`（**必经 `settings-controller`**；提交成功后经 `options.syncScanRoots` 单向喂 Dashboard rootsStore，语义见 §4.5） |
 | `settings:trellis-add-platform` | `{ path, platforms: [id] }` | `{ status, added }` |
 | `settings:trellis-upgrade-global` | `{ channel? }` | `{ status, from, to }` |
 
@@ -870,7 +871,7 @@ Correct readArchiveList() 无参；根集来自 collectKnownRootCwds()
 
 **2. Signatures**：
 - `createTrellisRootsStore({ fs?, filePath?, warn? })` →
-  `{ load(), list(), listPicks(), recordPick(), removePick(), add(root), remove(root) }`；默认文件
+  `{ load(), list(), listPicks(), recordPick(), removePick(), add(root), remove(root), registerScanRoots(projectRoots) }`；默认文件
   `~/.clawd/trellis-roots.json`，v1 形态 `{version:1, roots:[...], picks:[{picked, roots:[...]}]}`
   （**不足 prefs**，与 roam-area.json 同层，settings schema/controller 零接触）。
   legacy 纯字符串数组自动迁移：按未覆盖根的父目录推断 pick 行
@@ -878,7 +879,9 @@ Correct readArchiveList() 无参；根集来自 collectKnownRootCwds()
 - `add`/`remove` 返回 `{status: ok|duplicate|limit|invalid|not-found,
   roots?}`；cap 64（`TRELLIS_ROOTS_MAX`）；`remove` 会同步剪枝 pick
   簿记（根耗尽的 pick 随之消失）；`recordPick`/`removePick` 返回
-  `{status: ok|invalid|not-found, roots?, removed?}`
+  `{status: ok|invalid|not-found, roots?, removed?}`；`registerScanRoots`
+  （10-01）批量幂等 add，返回 `{status:"ok", added, duplicate, limit}` 汇总
+  （非字符串/空白条目静默跳过，满额计 limit 不抛错）
 - `normalizeRootPath(p)`：`path.normalize` + 去尾分隔符（**不做
   case folding**）；持久化集合的 canonical 形式
 
@@ -897,6 +900,15 @@ Correct readArchiveList() 无参；根集来自 collectKnownRootCwds()
   **红线：向上爬命中杂散 `~/.trellis`（全局 trellis 安装）时 projectRoot
   === homedir → 拒绝注册**——$HOME 一旦入册会吞掉其下所有项目，与
   picker 流程防 home 是同一条防线（本机实测存在 `~/.trellis`）
+- **Settings 扫描根单向同步（10-01 trellis-cli-roots-unify）**：
+  `settings:trellis-set-roots` 提交成功（controller 返回 ok 才喂）后 main
+  `syncScanRootsToDashboard(roots)`——`scanRoots` 扫描 → 只留
+  `installed === true` 的项目路径 → `registerScanRoots` 批量幂等入册；
+  真新增（`outcome.added > 0`）才 `broadcastTrellisRootsChanged`。ipc 层经
+  `options.syncScanRoots` 回调注入（不直接持有 rootsStore），回调 throw 被
+  吞掉、set-roots 结果不受影响。**喂新不级联**：Settings 删扫描根不动
+  rootsStore——roots 可能来自面板 picker / 会话发现，扫描根不是唯一真相源。
+  启动时 backfill 一次（`broadcast: false` 不推事件），失败仅 console.warn
 - **变更后事件推送**（09-28 dashboard-trellis-sync）：roots 集合真变化
   （手动 add/remove/removePick/自动注册）后 main
   `broadcastTrellisRootsChanged` → `dashboard:trellis-roots-changed`
@@ -938,6 +950,19 @@ Correct readArchiveList() 无参；根集来自 collectKnownRootCwds()
   同 taskPath 时带 cwd 的 jump 选中 owning root chip 且另一 root 的行
   被滤出；cwd 归属不到任何注册 root 时保持合并视图（active chip 无
   title，不 fallback 陈旧 overviewRoot）
+- `test/trellis-roots.test.js`（10-01 批量喂新）：registerScanRoots 批量
+  add 计数（added/duplicate/limit）、幂等重跑零新增、非数组全 0、满额计
+  limit 不抛错
+- `test/trellis-ipc.test.js`（10-01 同步时序）：提交成功才喂且喂入的是
+  **归一化后**的 roots；controller 拒绝不喂；sync 抛错时 set-roots 仍返回
+  ok（同步已提交语义）
+- `test/trellis-cli.test.js`（10-01）：readGlobalVersion 带 `path`（PATH
+  隔离用例断言 `path: null`；真 bin 目录用例断言命中路径）；
+  `resolveTrellisBinPath` 首个可执行命中 / 无执行位继续扫 / 找不到 null /
+  win32 恒 null；`augmentedCliPath` 四用户级 bin 追加在 `~/.local/bin`
+  之后 + nvm 版本目录全量追加、numeric 倒序
+- `test/settings-tab-trellis.test.js`（10-01）：scan 报 `global.path` 时
+  版本旁渲染 `.trellis-cli-path`（双装化石的诊断线索）；无 path 时零节点
 
 #### §4.6 独立 Trellis 视图（v7 起唯一任务视图 + readActiveList）
 
@@ -1495,7 +1520,8 @@ PATH — callers that need extra lookup paths must pass them in `env` themselves
 ```js
 // src/trellis-cli.js
 function augmentedCliPath(basePath, options = {}) -> string
-//   options: { platform?: NodeJS.Platform, home?: string }
+//   options: { platform?: NodeJS.Platform, home?: string, fs?: object }
+//   （fs 注入仅为测试；nvm 版本目录枚举需要 readdirSync）
 
 // src/trellis-ipc.js —— env 经 mergedExecutionEnv 叠加到 process.env 之上
 function createTrellisCli(options = {})   // options.env?: object
@@ -1512,8 +1538,8 @@ registerTrellisIpc({ ..., env: { PATH: augmentedCliPath(process.env.PATH) } })
 | `options.platform` | 默认 `process.platform`；**`win32` 时原样返回**（不增强） |
 | `options.home` | 默认 `os.homedir()`；用于拼 `<home>/.local/bin` |
 | 返回值 | 去重后的 PATH 字符串；分隔符按 platform（`;` / `:`） |
-| 增强目录 | `/opt/homebrew/bin`（Apple Silicon Homebrew）、`/usr/local/bin`（Intel Homebrew / 手工安装）、`<home>/.local/bin` |
-| 顺序 | 原 PATH **保持原序**，增强目录**追加在尾部** |
+| 增强目录 | `/opt/homebrew/bin`（Apple Silicon Homebrew）、`/usr/local/bin`（Intel Homebrew / 手工安装）、`<home>/.local/bin`，随后（10-01）`<home>/.npm-global/bin`（npm 官方排障文档推荐的自定义 prefix）、`<home>/.bun/bin`、`<home>/Library/pnpm`、`<home>/.volta/bin`，最后 `~/.nvm/versions/node/<v>/bin` **全版本枚举**（numeric 倒序，新版本先命中；readdir 失败 = 无 nvm，静默跳过） |
+| 顺序 | 原 PATH **保持原序**，增强目录**追加在尾部**——已有环境命中结果不变（10-01 的扩充也全部在旧目录之后） |
 | Windows | 走 `shell: true` + `PATHEXT` 解析 `.cmd` shim，无需增强 |
 
 ### 4. Validation & Error Matrix
@@ -1529,11 +1555,15 @@ registerTrellisIpc({ ..., env: { PATH: augmentedCliPath(process.env.PATH) } })
 ### 5. Good/Base/Bad Cases
 
 - **Good**：`augmentedCliPath("/usr/bin:/bin", { platform: "darwin", home: "/Users/x" })`
-  → `"/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin:/Users/x/.local/bin"`
+  → `"/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin:/Users/x/.local/bin:/Users/x/.npm-global/bin:/Users/x/.bun/bin:/Users/x/Library/pnpm:/Users/x/.volta/bin"`（+ nvm 各版本 bin，若存在）
 - **Base**：开发模式 `npm start` —— 继承 shell PATH，**即使不传 `env` 也能找到**（掩盖问题）
 - **Bad**：打包版 + 调用点不传 `env`
   → PATH 仅 `/usr/bin:/bin:/usr/sbin:/sbin` → `execFile("trellis")` ENOENT
   → Settings → Trellis 报「PATH 中未找到 trellis CLI」
+- **Bad（10-01 实机案例，PATH 能找到但找到错的）**：旧 prefix 化石留在 `/usr/local/bin`
+  （0.3.10），真身在 `~/.npm-global/bin`（不在旧增强列表）——GUI 调用化石 CLI，版本显示
+  与终端对不上、`upgrade` 命令不存在。**PATH 找得到 ≠ 找得对**，所以有了下节
+  `readGlobalVersion().path` 的可见性契约
 
 ### 6. Tests Required
 
@@ -1543,6 +1573,8 @@ registerTrellisIpc({ ..., env: { PATH: augmentedCliPath(process.env.PATH) } })
 | 同上 | 已在 PATH 中的目录不重复 |
 | 同上 | `platform: "win32"` 原样返回 |
 | 同上 | 空 `basePath` 仍产出增强目录、不以 `:` 开头 |
+| 同上（10-01） | 四个用户级 bin 追加在 `~/.local/bin` 之后（既有命中不变） |
+| 同上（10-01） | nvm 版本目录全量追加、numeric 倒序、非目录项忽略、缺失不抛错 |
 | **缺失（TODO）** | `main.js` 调用点是否传了 `env` —— 目前无自动化守卫 |
 
 ### 7. Wrong vs Correct

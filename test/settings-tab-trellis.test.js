@@ -270,6 +270,40 @@ async function scanWith(session, result) {
 }
 
 describe("settings-tab-trellis", () => {
+  // 10-01 trellis-cli-roots-unify: the resolved binary path is the one clue
+  // that makes a stale duplicate CLI install visible next to the version.
+  it("shows the resolved CLI path next to the global version when the scan reports one", async () => {
+    const session = loadTab();
+    session.api.trellisScan = () => Promise.resolve(makeScanResult({
+      global: { installed: true, version: "0.3.10", path: "/usr/local/bin/trellis" },
+    }));
+    findButton(renderPanel(session.core, session), "trellisRefresh").dispatch("click");
+    await flushPromises();
+
+    const panel = renderPanel(session.core, session);
+    assert.ok(
+      texts(panel).some((text) => text.includes("/usr/local/bin/trellis")),
+      "the duplicate-install clue must be visible",
+    );
+  });
+
+  it("renders no CLI path node when the scan cannot resolve one", async () => {
+    const session = loadTab();
+    session.api.trellisScan = () => Promise.resolve(makeScanResult({
+      global: { installed: true, version: "0.6.17" },
+    }));
+    findButton(renderPanel(session.core, session), "trellisRefresh").dispatch("click");
+    await flushPromises();
+
+    const panel = renderPanel(session.core, session);
+    let sawPathNode = false;
+    walk(panel, (element) => {
+      const cls = typeof element.className === "string" ? element.className : "";
+      if (/\btrellis-cli-path\b/.test(cls)) sawPathNode = true;
+    });
+    assert.strictEqual(sawPathNode, false, "no path, no node — nothing to guess");
+  });
+
   it("renders the empty-state guidance before anything is scanned", () => {
     const { core } = loadTab();
     const panel = renderPanel(core);

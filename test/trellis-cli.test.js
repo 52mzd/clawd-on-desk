@@ -10,6 +10,7 @@ const { execFile: realExecFile } = require("node:child_process");
 const {
   createTrellisCli,
   augmentedCliPath,
+  resolveTrellisBinPath,
   resolveUserName,
   buildInitArgs,
   normalizeUserName,
@@ -444,9 +445,22 @@ describe("failure handling", () => {
 describe("readGlobalVersion", () => {
   it("parses a version with a v prefix and trailing newline", async () => {
     const stub = makeExecFileStub({ trellis: { stdout: "v0.6.17\n" } });
-    const result = await cliWith(stub).readGlobalVersion();
-    assert.deepStrictEqual(result, { installed: true, version: "0.6.17", error: null });
+    // An isolated PATH keeps `path` a stable null — this machine's real PATH
+    // may carry a trellis binary, and the assertion is byte-exact.
+    const result = await cliWith(stub, { env: { PATH: "/nonexistent" } }).readGlobalVersion();
+    assert.deepStrictEqual(result, { installed: true, version: "0.6.17", error: null, path: null });
     assert.deepStrictEqual(stub.calls[0].args, ["--version"]);
+  });
+
+  it("reports the resolved binary path alongside the version", async () => {
+    const binDir = makeTmpDir();
+    const binPath = path.join(binDir, "trellis");
+    fs.writeFileSync(binPath, "#!/bin/sh\necho 0.6.17\n");
+    fs.chmodSync(binPath, 0o755);
+    const stub = makeExecFileStub({ trellis: { stdout: "0.6.17\n" } });
+    const result = await cliWith(stub, { env: { PATH: binDir } }).readGlobalVersion();
+    assert.strictEqual(result.installed, true);
+    assert.strictEqual(result.path, binPath);
   });
 
   it("reports not installed when the binary is missing", async () => {
@@ -623,5 +637,84 @@ describe("augmentedCliPath", () => {
     assert.ok(out.includes("/usr/local/bin"));
     assert.ok(out.includes("/h/.local/bin"));
     assert.ok(!out.startsWith(":"));
+  });
+
+  it("appends the user-scoped package-manager bins after the legacy ones", () => {
+    // nvm enumeration stubbed out (no .nvm here) so the assertion is exactly
+    // about the fixed user-scoped list and its position.
+    const out = augmentedCliPath("/usr/bin:/bin", {
+      platform: "darwin",
+      home: "/Users/tester",
+      fs: { readdirSync: () => { throw new Error("ENOENT"); } },
+    });
+    const parts = out.split(":");
+    const userBins = [
+      "/Users/tester/.npm-global/bin",
+      "/Users/tester/.bun/bin",
+      "/Users/tester/Library/pnpm",
+      "/Users/tester/.volta/bin",
+    ];
+    for (const dir of userBins) assert.ok(parts.includes(dir), dir);
+    // Everything new lands after ~/.local/bin, so an environment that already
+    // resolves a CLI keeps resolving the same one.
+    const local = parts.indexOf("/Users/tester/.local/bin");
+    for (const dir of userBins) assert.ok(parts.indexOf(dir) > local, dir);
+  });
+
+  it("enumerates every nvm node version's bin, newest first", () => {
+    const fsStub = { readdirSync: () => [
+      { name: "v18.20.4", isDirectory: () => true },
+      { name: "v22.14.0", isDirectory: () => true },
+      { name: "v9.1.0", isDirectory: () => true },
+      { name: "stray.txt", isDirectory: () => false },
+    ] };
+    const out = augmentedCliPath("/usr/bin:/bin", { platform: "linux", home: "/h", fs: fsStub });
+    const parts = out.split(":");
+    const v22 = parts.indexOf("/h/.nvm/versions/node/v22.14.0/bin");
+    const v18 = parts.indexOf("/h/.nvm/versions/node/v18.20.4/bin");
+    const v9 = parts.indexOf("/h/.nvm/versions/node/v9.1.0/bin");
+    assert.ok(v22 !== -1 && v18 !== -1 && v9 !== -1, "every version dir present");
+    assert.ok(v22 < v18 && v18 < v9, "numeric order, newest version first");
+    assert.ok(!parts.some((dir) => dir.includes("stray")), "non-directory entries ignored");
+  });
+});
+
+describe("resolveTrellisBinPath", () => {
+  it("returns the first executable trellis on the PATH", () => {
+    const first = makeTmpDir();
+    const second = makeTmpDir();
+    for (const dir of [first, second]) {
+      const bin = path.join(dir, "trellis");
+      fs.writeFileSync(bin, "#!/bin/sh\n");
+      fs.chmodSync(bin, 0o755);
+    }
+    assert.strictEqual(
+      resolveTrellisBinPath(`${first}:${second}`),
+      path.join(first, "trellis"),
+    );
+  });
+
+  it("skips a trellis without the execute bit and keeps scanning", () => {
+    const noExec = makeTmpDir();
+    const exec = makeTmpDir();
+    fs.writeFileSync(path.join(noExec, "trellis"), "#!/bin/sh\n");
+    fs.chmodSync(path.join(noExec, "trellis"), 0o644);
+    const bin = path.join(exec, "trellis");
+    fs.writeFileSync(bin, "#!/bin/sh\n");
+    fs.chmodSync(bin, 0o755);
+    assert.strictEqual(resolveTrellisBinPath(`${noExec}:${exec}`), bin);
+  });
+
+  it("reports null when no directory carries a trellis", () => {
+    const empty = makeTmpDir();
+    assert.strictEqual(resolveTrellisBinPath(`${empty}:/nonexistent`), null);
+    assert.strictEqual(resolveTrellisBinPath(undefined), null);
+  });
+
+  it("never resolves on win32, where the spawn goes through a shell", () => {
+    assert.strictEqual(
+      resolveTrellisBinPath("C:\\bin", { platform: "win32" }),
+      null,
+    );
   });
 });

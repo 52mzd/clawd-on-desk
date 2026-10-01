@@ -206,7 +206,27 @@ function createTrellisRootsStore(options = {}) {
     return { status: "ok", roots: roots.slice() };
   }
 
-  return { load, list, listPicks, recordPick, removePick, add, remove };
+  // Batch registration for the Settings → Dashboard roots sync (10-01):
+  // already-registered paths are no-ops and the store cap silently stops the
+  // overflow, while the counts tell the caller whether anything changed (and
+  // so whether the Dashboard needs a roots-changed push). Feed-only by
+  // design: nothing here ever removes a root — sync never cascades deletes,
+  // because a Dashboard root may also come from the panel picker or session
+  // discovery.
+  function registerScanRoots(projectRoots) {
+    const result = { status: "ok", added: 0, duplicate: 0, limit: 0 };
+    const list = Array.isArray(projectRoots) ? projectRoots : [];
+    for (const root of list) {
+      if (typeof root !== "string" || !root.trim()) continue;
+      const outcome = add(root);
+      if (outcome.status === "ok") result.added += 1;
+      else if (outcome.status === "duplicate") result.duplicate += 1;
+      else if (outcome.status === "limit") result.limit += 1;
+    }
+    return result;
+  }
+
+  return { load, list, listPicks, recordPick, removePick, add, remove, registerScanRoots };
 }
 
 module.exports = { createTrellisRootsStore, normalizeRootPath, TRELLIS_ROOTS_MAX: MAX_ROOTS };

@@ -212,14 +212,46 @@ const GUI_PATH_EXTRA_DIRS = Object.freeze([
   "/usr/local/bin", // Homebrew Intel and manual installs
 ]);
 
+// User-scoped global-bin roots of the JS package managers, relative to $HOME.
+// None of them is in launchd's PATH, and only ~/.local/bin was covered before,
+// so a trellis installed through any of them was invisible to the GUI. The
+// order after GUI_PATH_EXTRA_DIRS + ~/.local/bin keeps every environment that
+// already resolves a CLI resolving the same one.
+const USER_PATH_EXTRA_DIRS = Object.freeze([
+  ".npm-global/bin", // npm with the sudo-free prefix its own docs recommend
+  ".bun/bin", // bun
+  "Library/pnpm", // pnpm global bin (macOS default location)
+  ".volta/bin", // volta
+]);
+
+// nvm keeps one prefix per installed node version under
+// ~/.nvm/versions/node/<v>, so every version's bin is enumerated — newest
+// version first, matching the nvm use order users expect. Read errors mean
+// "no nvm here" and stay silent.
+function listNvmVersionBins(homeDir, options = {}) {
+  const fsImpl = options.fs || fs;
+  const versionsRoot = path.posix.join(homeDir, ".nvm", "versions", "node");
+  let names;
+  try {
+    names = fsImpl.readdirSync(versionsRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+  names.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+  return names.map((name) => path.posix.join(versionsRoot, name, "bin"));
+}
+
 function augmentedCliPath(basePath, options = {}) {
   const platform = options.platform || process.platform;
   const delimiter = platform === "win32" ? ";" : ":";
   const parts = String(basePath || "").split(delimiter).filter(Boolean);
   if (platform !== "win32") {
-    for (const dir of GUI_PATH_EXTRA_DIRS) {
-      if (!parts.includes(dir)) parts.push(dir);
-    }
+    const push = (dir) => {
+      if (dir && !parts.includes(dir)) parts.push(dir);
+    };
+    for (const dir of GUI_PATH_EXTRA_DIRS) push(dir);
     let home = typeof options.home === "string" ? options.home : "";
     if (!home) {
       try {
@@ -229,11 +261,36 @@ function augmentedCliPath(basePath, options = {}) {
       }
     }
     if (home) {
-      const localBin = path.posix.join(home.replace(/\\/g, "/"), ".local", "bin");
-      if (!parts.includes(localBin)) parts.push(localBin);
+      const homeDir = home.replace(/\\/g, "/");
+      push(path.posix.join(homeDir, ".local", "bin"));
+      for (const dir of USER_PATH_EXTRA_DIRS) push(path.posix.join(homeDir, dir));
+      for (const dir of listNvmVersionBins(homeDir, options)) push(dir);
     }
   }
   return parts.join(delimiter);
+}
+
+// Absolute path of the `trellis` the spawn PATH would actually run, or null.
+// Same lookup order as execFile: the first PATH entry carrying an executable
+// `trellis` wins. Pure fs — never spawns — and null on win32, where the spawn
+// goes through a shell that resolves `.cmd` shims this lookup cannot model.
+function resolveTrellisBinPath(basePath, options = {}) {
+  const platform = options.platform || process.platform;
+  if (platform === "win32") return null;
+  const fsImpl = options.fs || fs;
+  const parts = String(basePath || "").split(":").filter(Boolean);
+  for (const dir of parts) {
+    const candidate = path.join(dir, TRELLIS_BIN);
+    try {
+      // statSync follows npm's bin symlink; accessSync proves executability.
+      if (!fsImpl.statSync(candidate).isFile()) continue;
+      fsImpl.accessSync(candidate, fsImpl.constants.X_OK);
+      return candidate;
+    } catch {
+      // absent or not executable — keep scanning the remaining entries
+    }
+  }
+  return null;
 }
 
 function createTrellisCli(options = {}) {
@@ -304,6 +361,10 @@ function createTrellisCli(options = {}) {
       installed: result.ok,
       version,
       error: result.ok ? null : result.message,
+      // Resolved with the SAME PATH the spawn above used, so what the UI
+      // shows is where that version actually came from — the one clue that
+      // makes a stale duplicate install visible next to the version number.
+      path: resolveTrellisBinPath(executionEnv.PATH, { platform }),
     };
   }
 
@@ -476,6 +537,7 @@ function createTrellisCli(options = {}) {
 module.exports = {
   createTrellisCli,
   augmentedCliPath,
+  resolveTrellisBinPath,
   resolveUserName,
   buildInitArgs,
   normalizeUserName,

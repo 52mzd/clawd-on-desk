@@ -803,6 +803,16 @@ function openUpgradePreviewWizard(project) {
     version.className = "trellis-version";
     version.textContent = tf("trellisGlobalCurrent", { version: global.version || "—" });
     control.appendChild(version);
+    // Where that version actually came from (10-01): the resolved binary
+    // path, so a stale duplicate install shows itself next to the number.
+    // Absent (win32, or the resolver found nothing) renders nothing.
+    if (typeof global.path === "string" && global.path) {
+      const cliPath = document.createElement("span");
+      cliPath.className = "trellis-cli-path";
+      cliPath.textContent = global.path;
+      cliPath.title = global.path;
+      control.appendChild(cliPath);
+    }
     const target = document.createElement("span");
     target.className = "trellis-version";
     target.textContent = `${t("trellisGlobalUpgradeTarget")}:`;

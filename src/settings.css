@@ -5439,6 +5439,19 @@ html, body {
   color: var(--text-secondary);
   white-space: nowrap;
 }
+/* The actual binary the panel's CLI calls resolved to — shown next to the
+   version so a stale duplicate install is visible at a glance. */
+.trellis-cli-path {
+  font-size: 11px;
+  color: var(--text-secondary);
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  user-select: text;
+}
 .trellis-command {
   flex: 1;
   display: flex;

@@ -128,6 +128,39 @@ describe("trellis-roots store", () => {
     assert.strictEqual(store.list().length, TRELLIS_ROOTS_MAX);
   });
 
+  // 10-01 trellis-cli-roots-unify: the Settings → Dashboard sync feeds the
+  // scanned project roots in one batch — idempotent, feed-only.
+  it("registerScanRoots batches adds and counts duplicate/limit outcomes", () => {
+    const { store } = makeHarness();
+    store.load();
+    assert.deepStrictEqual(
+      store.registerScanRoots(["/codes/alpha/", "/codes/beta", "/codes/alpha", " ", 42, null]),
+      { status: "ok", added: 2, duplicate: 1, limit: 0 },
+    );
+    assert.deepStrictEqual(store.list(), [path.join("/codes", "alpha"), path.join("/codes", "beta")]);
+
+    // Re-running the same batch is a pure no-op: nothing added, no error.
+    assert.deepStrictEqual(
+      store.registerScanRoots(["/codes/alpha", "/codes/beta"]),
+      { status: "ok", added: 0, duplicate: 2, limit: 0 },
+    );
+
+    // Non-arrays and empty input settle as "nothing happened".
+    assert.deepStrictEqual(
+      store.registerScanRoots("not-an-array"),
+      { status: "ok", added: 0, duplicate: 0, limit: 0 },
+    );
+
+    // The cap silently stops the overflow; the caller sees how many. The two
+    // roots already registered leave MAX-2 slots for the MAX+5 batch.
+    const overflow = Array.from({ length: TRELLIS_ROOTS_MAX + 5 }, (_, i) => `/proj/p${i}`);
+    const outcome = store.registerScanRoots(overflow);
+    assert.strictEqual(outcome.status, "ok");
+    assert.strictEqual(outcome.added, TRELLIS_ROOTS_MAX - 2);
+    assert.strictEqual(outcome.limit, 7);
+    assert.strictEqual(store.list().length, TRELLIS_ROOTS_MAX);
+  });
+
   it("recordPick persists bookkeeping; picks survive a reload", () => {
     const { store, fs, filePath } = makeHarness();
     store.load();

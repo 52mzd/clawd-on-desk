@@ -91,6 +91,7 @@ const {
 const { registerSettingsIpc } = require("./settings-ipc");
 const { registerTrellisIpc } = require("./trellis-ipc");
 const { augmentedCliPath } = require("./trellis-cli");
+const { scanRoots: scanTrellisRoots } = require("./trellis-scanner");
 const createSettingsEffectRouter = require("./settings-effect-router");
 const { createRecapRuntime } = require("./recap-runtime");
 const { computeTrellisDailyCounts } = require("./recap-trellis");
@@ -2551,6 +2552,27 @@ function autoRegisterDiscoveredRoot(trellisDir) {
   if (outcome.status !== "ok") return;
   syncTrellisPersistedRoots();
   broadcastTrellisRootsChanged();
+}
+
+// 10-01 trellis-cli-roots-unify: Settings → Dashboard one-way feed. The scan
+// roots a user manages in Settings are parent directories; their installed
+// direct children are Dashboard-view projects, so every save registers those
+// project roots (idempotently, feed-only — removal never cascades, because a
+// Dashboard root may also come from the panel picker or session discovery).
+// `broadcast: false` covers the startup backfill: no Dashboard window exists
+// yet and a fresh open reads the store anyway.
+function syncScanRootsToDashboard(roots, options = {}) {
+  if (!Array.isArray(roots) || roots.length === 0) return;
+  const installed = scanTrellisRoots(roots)
+    .flatMap((scan) => (scan && scan.projects) || [])
+    .filter((project) => project && project.installed === true)
+    .map((project) => project.path);
+  if (installed.length === 0) return;
+  const outcome = _trellisRootsStore.registerScanRoots(installed);
+  if (outcome.added > 0) {
+    syncTrellisPersistedRoots();
+    if (options.broadcast !== false) broadcastTrellisRootsChanged();
+  }
 }
 
 // Expand the picker's "picked" folder into the project roots that would
@@ -5307,7 +5329,21 @@ const trellisIpcRuntime = registerTrellisIpc({
   // 09-28 hud-multi-project-audit: recency order for the Settings scan —
   // newest-touched project first, same rule as the HUD panel / chips.
   readRootRecencies: (roots) => _trellisActivity.readRootRecencies(roots),
+  // 10-01 trellis-cli-roots-unify: after a successful scan-roots save, feed
+  // the installed project roots into the Dashboard's independent roots store.
+  syncScanRoots: (roots) => syncScanRootsToDashboard(roots),
 });
+
+// Startup backfill (10-01): machines that configured Settings scan roots
+// before this sync existed get their projects into the Dashboard view now.
+try {
+  syncScanRootsToDashboard(
+    _settingsController.getSnapshot().trellisScanRoots,
+    { broadcast: false },
+  );
+} catch (err) {
+  console.warn("Clawd: trellis scan-roots startup sync failed:", err && err.message);
+}
 
 const sessionHistoryRuntime = createSessionHistoryRuntime({
   getSessions: () => _state.sessions,
