@@ -38,7 +38,7 @@ paths:
 createTrellisCli({ execFileImpl?, env?, platform?, timeoutMs? })
 
 // 每条命令一个函数，返回值统一带 ok / output
-readGlobalVersion()                     // → { installed, version, path, error, installs }（10-01 起 path = 首命中二进制；installs = 全量安装 [{path, version, active, cleanup, outdated}]，PATH 序，active = 首命中（GUI PATH 视角）；outdated = 存在**严格更新**可解析版本（10-01 修订：版本序，非 PATH 序）；win32 installs 恒 []）
+readGlobalVersion()                     // → { installed, version, path, error, installs }（10-01 起 path = 首命中二进制；installs = 全量安装 [{path, version, active, cleanup, outdated}]，**版本新→旧序**（ui-flow 起稳定排序：不可解析版本 compare 0 保持扫描原位；active = 首命中（GUI PATH 视角），标记在排序前打、随条目走不随下标走）；outdated = 存在**严格更新**可解析版本（10-01 修订：版本序，非 PATH 序）；win32 installs 恒 []）
 scanTrellisBinPaths(pathEnv, options?)  // → string[]；全量收集可执行 trellis（resolveTrellisBinPath 的复数版；win32 → []）
 resolveTrellisBinPath(pathEnv, options?) // → string | null = scanTrellisBinPaths(...)[0] ?? null
 buildCleanupCommand(binPath, options?)  // → string | null；可复制清理命令（npm 布局 `npm uninstall -g <pkg> --prefix <p>` / 非布局 `rm -f`；prefix 不可写加 sudo；realpath 失败 null）——**只显示不执行红线**
@@ -1573,14 +1573,16 @@ registerTrellisIpc({ ..., env: { PATH: augmentedCliPath(process.env.PATH) } })
   不是 PATH 序（修订根因）**：GUI 的增强 PATH 序（`/usr/local/bin` 在 `~/.npm-global/bin`
   前）可与用户 shell PATH 序相反——按 PATH 序判「多余」会把用户终端真正在用的安装错标
   可删（x86 实机实测踩中）；改为 `compareVersions` 严格旧才 `outdated:true`，版本解析
-  失败/同版本永不标。UI（10-01 ui-online 单行结构，第三轮实机反馈定稿）：每个安装
-  **一行** = 路径（左锚点，mono，flex:0 1 auto 窄窗先收缩 ellipsis）→ 胶囊徽标紧随
-  （**rank 先于 in-use**，语义紧贴它描述的对象）→ 版本号（`margin-left:auto`
-  **唯一**右置元素，tabular-nums——右缘跨行对齐的前提）；徽标三态配色借
-  `.agent-badge` 色板（最新=绿 / 旧版（可清理）=amber / Clawd 当前使用=accent）。
-  两版历史教训：徽标行内右置且无形态 → 「没对齐」；徽标独立成行 → 「信息拆散，
-  逻辑编排有问题」——对齐靠布局（版本右置锚定）解决，不牺牲单行直觉性。
-  outdated 行下挂**缩进+底色**的命令块（命令文本本体 mono 可选中）+ 复制按钮——复制什么必须
+  失败/同版本永不标。UI（10-01 ui-flow，第四轮实机反馈按用户格式规格定稿）：
+  installs 由 cli 层**版本新→旧**排序下发（renderer vm 沙箱零 require 无
+  compareVersions，排序必须留在 cli 层）；每个安装**一行行内文字流** =
+  `序号.` + 标签胶囊（最新=绿 / 旧版（建议清理）=amber）+ `版本号：<v>` +
+  `安装路径：<p>`（mono，超宽 ellipsis 收缩）；条目行 `padding: 0 16px` 对齐
+  `.row` 的 16px 左内距——与标题 desc 行左缘对齐（对齐根因：裸 div 无 .row
+  padding 时贴 border，与标题差 16px）。「Clawd 当前使用」徽标按用户格式
+  移除渲染（payload `active` 字段保留，契约不变）。outdated 行下挂**缩进+底色**
+  的命令块（命令文本本体 mono 可选中）+ 复制按钮（label `trellisCopyCleanup`
+  「复制旧版代码」，区别于通用「复制」）——复制什么必须
   可见，不留盲盒，缩进+底色声明它与旧版条目的隶属关系。四条硬约束：① `cleanup`/`outdated` 均在
   **cli 层生成**随 payload 下发——renderer（vm 沙箱脚本）无法 require 主进程模块，且
   命令构造与 argv 冻结同一红线（只在 main 构造）；② **app 绝不执行清理命令**——全链路
@@ -1599,10 +1601,10 @@ registerTrellisIpc({ ..., env: { PATH: augmentedCliPath(process.env.PATH) } })
 | 同上（10-01） | 四个用户级 bin 追加在 `~/.local/bin` 之后（既有命中不变） |
 | 同上（10-01） | nvm 版本目录全量追加、numeric 倒序、非目录项忽略、缺失不抛错 |
 | 同上（10-01 二段） | scanTrellisBinPaths 全量收集/无命中 []/win32 []；readGlobalVersion 双装 installs 两条、PATH 序定 active、version 各对应；PATH 无 trellis 零 spawn |
-| 同上（10-01 修订） | readGlobalVersion：**PATH 翻转只换 active 不换 outdated**（版本序判旧）；版本 null 永不 outdated；同版本互不标 |
+| 同上（10-01 修订） | readGlobalVersion：**PATH 翻转只换 active 不换 outdated**（版本序判旧）；installs **版本降序**（PATH 序相反时数组翻转、active 随条目走，ui-flow）；版本 null 永不 outdated；同版本互不标 |
 | 同上（10-01 修订） | compareVersions：数值段/release>prerelease/标识符序（数字段<字母段、少者低）/解析失败 0 |
 | 同上（10-01 二段） | buildCleanupCommand：npm 布局 uninstall --prefix、不可写 prefix 加 sudo、非布局 rm 回退、空格路径单引号、realpath 失败 null |
-| `test/settings-tab-trellis.test.js`（10-01 修订） | ≥2 条渲染列表（三态徽标 + 逐行版本 + **命令文本可见** + 复制写剪贴板）；缺 outdated 旧 payload 降级零命令行；单装/缺 installs 零渲染；（10-01 ui-online）每行 = [路径, 徽标…（rank 先于 in-use）, 版本] 同一 installRow（deepStrictEqual 锁 DOM 序） |
+| `test/settings-tab-trellis.test.js`（10-01 修订） | ≥2 条渲染列表（行内流 `N. 徽标 版本号：v 安装路径：p` + **命令文本可见** + trellisCopyCleanup 复制写剪贴板 + active 徽标**不再渲染**）；缺 outdated 旧 payload 降级零命令行；单装/缺 installs 零渲染；（ui-flow）deepStrictEqual 锁行内 DOM 序 [序号, 徽标, 版本label+值, 路径label, 路径值] |
 | `test/trellis-ipc.test.js`（10-01 二段） | scan payload 的 `global.installs` 逐字节透传（renderer 零生成的前提） |
 | **缺失（TODO）** | `main.js` 调用点是否传了 `env` —— 目前无自动化守卫 |
 

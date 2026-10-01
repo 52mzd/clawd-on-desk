@@ -245,9 +245,9 @@ function openUpgradePreviewWizard(project) {
     return badge;
   }
 
-  function buildCopyButton(text) {
+  function buildCopyButton(text, labelKey = "trellisCopy") {
     return helpers.buildButton({
-      label: t("trellisCopy"),
+      label: t(labelKey),
       size: "compact",
       tone: "quiet",
       onClick: () => {
@@ -821,42 +821,48 @@ function openUpgradePreviewWizard(project) {
       control.appendChild(cliPath);
     }
     // Multiple installs (10-01 multi-detect; revised to version rank): show
-    // them all — "in use by Clawd" marks what THIS app resolves (GUI PATH
-    // order), while "older (safe to remove)" is decided by version age in
-    // main, never by PATH rank. Each install is ONE line: path first (left
-    // anchor), the rank badge and in-use badge follow it (rank first), and
-    // the version is the only right-hand element (margin-left:auto) so every
-    // row's right edge aligns while a whole install reads in a single
-    // left-to-right pass. The cleanup command rides an indented tinted block
-    // under the older install, displayed as text with a copy button; nothing
-    // here ever executes it.
+    // them all — the cli layer ships them newest-first, and each install is
+    // one inline text flow: "N. <rank badge> Version: v Install path: p"
+    // (path mono, ellipsizes when long). Every entry line starts at the same
+    // left edge as the heading row above it (.row's 16px padding), so the
+    // numbered entries read as a list under "Detected N CLI installs". The
+    // cleanup command rides an indented tinted block under the older
+    // install, displayed as text with a copy button; nothing here ever
+    // executes it.
     if (Array.isArray(global.installs) && global.installs.length > 1) {
       rows.push(buildDescRow(tf("trellisCliInstallsTitle", { count: global.installs.length })));
+      let index = 0;
       for (const install of global.installs) {
         if (!install || typeof install.path !== "string" || !install.path) continue;
+        index += 1;
         const wrap = document.createElement("div");
         wrap.className = "trellis-cli-install";
         const installRow = document.createElement("div");
         installRow.className = "trellis-cli-install-row";
-        const installPath = document.createElement("span");
-        installPath.className = "trellis-cli-install-path";
-        installPath.textContent = install.path;
-        installPath.title = install.path;
-        installRow.appendChild(installPath);
+        const num = document.createElement("span");
+        num.className = "trellis-cli-install-num";
+        num.textContent = `${index}.`;
+        installRow.appendChild(num);
         const outdated = install.outdated === true;
         installRow.appendChild(buildInstallBadge(
           outdated ? t("trellisCliInstallExtra") : t("trellisCliInstallLatest"),
           outdated ? "is-outdated" : "is-latest",
         ));
-        if (install.active === true) {
-          installRow.appendChild(buildInstallBadge(t("trellisCliInstallActive"), "is-in-use"));
-        }
         if (install.version) {
           const version = document.createElement("span");
-          version.className = "trellis-cli-install-version";
-          version.textContent = install.version;
+          version.className = "trellis-cli-install-meta";
+          version.textContent = `${t("trellisCliVersionLabel")} ${install.version}`;
           installRow.appendChild(version);
         }
+        const pathLabel = document.createElement("span");
+        pathLabel.className = "trellis-cli-install-meta";
+        pathLabel.textContent = t("trellisCliPathLabel");
+        installRow.appendChild(pathLabel);
+        const installPath = document.createElement("span");
+        installPath.className = "trellis-cli-install-path";
+        installPath.textContent = install.path;
+        installPath.title = install.path;
+        installRow.appendChild(installPath);
         wrap.appendChild(installRow);
         if (outdated && typeof install.cleanup === "string" && install.cleanup) {
           const cmdRow = document.createElement("div");
@@ -866,7 +872,7 @@ function openUpgradePreviewWizard(project) {
           cmdText.textContent = install.cleanup;
           cmdText.title = install.cleanup;
           cmdRow.appendChild(cmdText);
-          cmdRow.appendChild(buildCopyButton(install.cleanup));
+          cmdRow.appendChild(buildCopyButton(install.cleanup, "trellisCopyCleanup"));
           wrap.appendChild(cmdRow);
         }
         rows.push(wrap);

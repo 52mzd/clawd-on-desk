@@ -5452,15 +5452,15 @@ html, body {
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   user-select: text;
 }
-/* 10-01 multi-detect (revised; ui-online): one line per install — path leads
-   (left anchor), the rank badge and in-use badge follow it (rank first), and
-   the version is the only right-hand element (margin-left:auto) so every
-   row's right edge aligns while a whole install reads in one left-to-right
-   pass. Badges borrow the .agent-badge pill language. The older row adds an
-   indented tinted command block — displayed, never executed. */
+/* 10-01 multi-detect (revised; ui-flow): one inline flow per install —
+   "N. <rank badge> Version: v Install path: p". The 16px horizontal padding
+   matches .row so the entries line up with the "Detected N installs"
+   heading above them (the field-report alignment complaint). The older
+   entry adds an indented tinted command block — displayed, never executed. */
 .trellis-cli-install {
   min-width: 0;
   margin-top: 4px;
+  padding: 0 16px;
 }
 .trellis-cli-install + .trellis-cli-install {
   margin-top: 8px;
@@ -5471,6 +5471,19 @@ html, body {
   gap: 6px;
   min-width: 0;
 }
+.trellis-cli-install-num {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.trellis-cli-install-meta {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
 .trellis-cli-install-path {
   flex: 0 1 auto;
   min-width: 0;
@@ -5478,18 +5491,10 @@ html, body {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-secondary);
-  opacity: 0.8;
+  opacity: 0.9;
   font-size: 11px;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   user-select: text;
-}
-.trellis-cli-install-version {
-  flex: 0 0 auto;
-  margin-left: auto;
-  font-size: 11px;
-  color: var(--text-secondary);
-  opacity: 0.9;
-  font-variant-numeric: tabular-nums;
 }
 .trellis-cli-install-badge {
   flex: 0 0 auto;
@@ -5503,11 +5508,6 @@ html, body {
 .trellis-cli-install-badge.is-latest {
   background: rgba(16, 120, 87, 0.1);
   color: #187253;
-}
-/* Same palette as .agent-badge.accent (brand orange = what Clawd runs). */
-.trellis-cli-install-badge.is-in-use {
-  background: rgba(217, 119, 87, 0.12);
-  color: var(--accent);
 }
 /* Same palette as .agent-badge.integration.hook-warning (amber = removable). */
 .trellis-cli-install-badge.is-outdated {

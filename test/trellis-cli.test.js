@@ -511,17 +511,21 @@ describe("readGlobalVersion", () => {
       outdated: true,
     });
 
-    // PATH order decides Active — never outdated. Flipping the PATH swaps the
-    // active marker but the older install stays the removable one: the GUI's
-    // PATH order is not the user's shell PATH order, so version age (not PATH
-    // rank) is the only safe "safe to remove" signal.
+    // PATH order decides Active — never outdated — but the array itself is
+    // NEWEST-FIRST (ui-flow): flipping the PATH swaps the active marker (it
+    // travels with its entry, not its index) while the older install stays
+    // the removable one: the GUI's PATH order is not the user's shell PATH
+    // order, so version age (not PATH rank) is the only safe "safe to
+    // remove" signal.
     const flipped = await cliWith(stub, { env: { PATH: `${fossil}:${fresh}` } }).readGlobalVersion();
     assert.strictEqual(flipped.path, fossilBin);
     assert.strictEqual(flipped.version, "0.3.10");
-    assert.strictEqual(flipped.installs[0].active, true);
-    assert.strictEqual(flipped.installs[1].active, false);
-    assert.strictEqual(flipped.installs[0].outdated, true);
-    assert.strictEqual(flipped.installs[1].outdated, false);
+    assert.strictEqual(flipped.installs[0].path, freshBin, "newest first regardless of PATH order");
+    assert.strictEqual(flipped.installs[1].path, fossilBin);
+    assert.strictEqual(flipped.installs[0].active, false, "active travels with the first-hit entry");
+    assert.strictEqual(flipped.installs[1].active, true);
+    assert.strictEqual(flipped.installs[0].outdated, false);
+    assert.strictEqual(flipped.installs[1].outdated, true);
   });
 
   it("never flags an unparsable or equal-version install as outdated", async () => {

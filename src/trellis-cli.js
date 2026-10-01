@@ -488,6 +488,11 @@ function createTrellisCli(options = {}) {
       entry.outdated = newest !== null && entry.version !== null
         && compareVersions(entry.version, newest) < 0;
     }
+    // Newest first (10-01 ui-flow): the renderer runs in a sandbox without
+    // compareVersions, so the display order is decided here. Stable sort —
+    // unparsable versions compare 0 and keep their scan order; `active` was
+    // stamped before the sort and travels with its entry.
+    installs.sort((a, b) => compareVersions(b.version || "0", a.version || "0"));
     return {
       installed: headline.ok,
       version: headline.version,

@@ -128,7 +128,8 @@ function makeStrings() {
     "trellisRootUnreadable", "trellisNoProjectsUnreadable", "trellisChannelAuto",
     "trellisUpgradeAllCount",
     "trellisActiveTasks", "trellisPhasePlan", "trellisPhaseExecute", "trellisPhaseFinish", "trellisPhaseDone",
-    "trellisCliInstallsTitle", "trellisCliInstallActive", "trellisCliInstallExtra", "trellisCliInstallLatest",
+    "trellisCliInstallsTitle", "trellisCliInstallExtra", "trellisCliInstallLatest",
+    "trellisCliVersionLabel", "trellisCliPathLabel", "trellisCopyCleanup",
   ];
   const strings = {};
   for (const key of keys) strings[key] = key;
@@ -335,16 +336,19 @@ describe("settings-tab-trellis", () => {
     assert.ok(rendered.includes("installs:2"), "the count reaches the copy");
     assert.ok(rendered.some((text) => text.includes("/h/.npm-global/bin/trellis")));
     assert.ok(rendered.some((text) => text.includes("/usr/local/bin/trellis")));
-    assert.ok(rendered.includes("trellisCliInstallActive"));
+    assert.ok(!rendered.includes("trellisCliInstallActive"), "the spec'd format has no in-use badge");
     assert.ok(rendered.includes("trellisCliInstallLatest"), "the newest install is labelled Latest");
     assert.ok(rendered.includes("trellisCliInstallExtra"), "the older install is labelled removable");
-    assert.ok(rendered.includes("0.7.0-beta.4") && rendered.includes("0.3.10"), "versions render per row");
+    assert.ok(
+      rendered.some((text) => text.includes("0.7.0-beta.4"))
+        && rendered.some((text) => text.includes("0.3.10")),
+      "versions render per row",
+    );
     assert.ok(rendered.includes(cleanup), "the cleanup command is displayed, not just copied blind");
 
-    // One line per install: path, then the badges (rank first, in-use
-    // second) right behind it, then the version — a whole install reads in a
-    // single left-to-right pass (the "split across two lines" complaint from
-    // the second revision's field report).
+    // One inline flow per install (ui-flow field spec): "N. <rank badge>
+    // Version: v Install path: p" — numbered entries newest-first, every
+    // line at the same left edge as the heading above it.
     const installRows = [];
     walk(panel, (element) => {
       const cls = typeof element.className === "string" ? element.className : "";
@@ -353,10 +357,10 @@ describe("settings-tab-trellis", () => {
     assert.deepStrictEqual(
       installRows.map((row) => row.children.map((child) => child.textContent)),
       [
-        ["/h/.npm-global/bin/trellis", "trellisCliInstallLatest", "trellisCliInstallActive", "0.7.0-beta.4"],
-        ["/usr/local/bin/trellis", "trellisCliInstallExtra", "0.3.10"],
+        ["1.", "trellisCliInstallLatest", "trellisCliVersionLabel 0.7.0-beta.4", "trellisCliPathLabel", "/h/.npm-global/bin/trellis"],
+        ["2.", "trellisCliInstallExtra", "trellisCliVersionLabel 0.3.10", "trellisCliPathLabel", "/usr/local/bin/trellis"],
       ],
-      "path, badges (rank first), version all on one row",
+      "N. <rank badge> Version: v Install path: p — one inline flow per install",
     );
 
     // The command line (with its copy button) rides the outdated install only.
@@ -368,7 +372,7 @@ describe("settings-tab-trellis", () => {
       if (cls.split(/\s+/).includes("trellis-cli-install-cmd")) cmdRows.push(element);
     });
     assert.strictEqual(cmdRows.length, 1);
-    const copyButton = findButton(cmdRows[0], "trellisCopy");
+    const copyButton = findButton(cmdRows[0], "trellisCopyCleanup");
     assert.ok(copyButton, "the command line carries a copy button");
     copyButton.dispatch("click");
     await flushPromises();
