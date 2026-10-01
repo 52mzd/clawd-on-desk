@@ -1115,3 +1115,25 @@ x86 实机装 x64 包暴露两问题，实证闭环：①设置页显示 0.3.10 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 43: 多装列表格式规格化（第四轮）
+<!-- trellis-session: v=2 fp=3cd86f68a1644ed5 -->
+
+**Date**: 2026-10-01
+**Task**: 多装列表格式规格化（第四轮）
+**Branch**: `main`
+
+### Summary
+
+按用户格式规格：cli 层版本降序下发 installs（active 随条目走）；行内流 N.标签+版本号：v+安装路径：p；16px 左内距对齐 .row 标题；『旧版（建议清理）』『复制旧版代码』i18n×7；移除 active 徽标渲染（payload 保留）
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `52012c75` | feat(trellis): 多装列表按用户格式规格重排——序号+标签+版本号+路径行内流，最新置顶 |
+
+### Status
+
+[OK] **Completed**

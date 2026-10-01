@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 42
+- **Total Sessions**: 43
 - **Last Active**: 2026-10-01
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1117 | Active |
+| `journal-1.md` | ~1139 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 43 | 2026-10-01 | 多装列表格式规格化（第四轮） | `52012c75` | `main` |
 | 42 | 2026-10-01 | 多装 CLI 列表单行编排回归 | `7e9b12c6` | `main` |
 | 41 | 2026-10-01 | 多装 CLI 列表 UI 重排（两行结构+胶囊徽标+命令块缩进） | `8ea7896e` | `main` |
 | 40 | 2026-10-01 | 多装检测修订——判定改版本新旧 | `e2a3200d` | `main` |
