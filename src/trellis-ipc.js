@@ -189,6 +189,13 @@ function registerTrellisIpc(options = {}) {
   const readRootRecencies = typeof options.readRootRecencies === "function"
     ? options.readRootRecencies
     : null;
+  // Optional Settings → Dashboard roots sync (10-01): invoked with the
+  // normalized roots AFTER the prefs write succeeded. main owns the roots
+  // store, the scanner and the roots-changed push; a throw here must never
+  // fail the set-roots call itself.
+  const syncScanRoots = typeof options.syncScanRoots === "function"
+    ? options.syncScanRoots
+    : null;
   // Fail closed: a missing guard and a throwing guard both deny every call. A
   // permissive default here would silently turn any renderer into a write
   // surface, and a leaked exception message would hand the renderer internals.
@@ -267,12 +274,21 @@ function registerTrellisIpc(options = {}) {
   });
 
   // settings-controller is the only writer — this handler never touches disk.
+  // The roots sync below runs after the write committed and is best-effort:
+  // its failures warn and never change the set-roots result.
   handle("settings:trellis-set-roots", async (_event, payload) => {
     const roots = normalizeRoots(payload && payload.roots, prefs);
     if (!roots) return { status: "error", message: "roots must be an array of strings" };
     const result = await settingsController.applyUpdate("trellisScanRoots", roots);
     if (!result || result.status !== "ok") {
       return result || { status: "error", message: "trellisScanRoots update returned no result" };
+    }
+    if (syncScanRoots) {
+      try {
+        syncScanRoots(roots);
+      } catch (err) {
+        console.warn("Clawd: trellis scan-roots sync failed:", err && err.message);
+      }
     }
     return { status: "ok", roots };
   });

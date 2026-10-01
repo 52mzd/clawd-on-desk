@@ -200,6 +200,50 @@ function parseVersionOutput(text) {
   return match ? match[0] : null;
 }
 
+const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/;
+
+function parseSemver(value) {
+  const match = String(value || "").match(SEMVER_RE);
+  if (!match) return null;
+  return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]), pre: match[4] == null ? null : match[4] };
+}
+
+// Simplified semver ordering for the "which install is older" call: numeric
+// segments compare numerically, a release outranks its prereleases, and two
+// prereleases compare by dot-separated identifier (numeric identifiers
+// numerically, ranking below alphanumeric; fewer identifiers rank lower).
+// Anything unparsable is "not comparable" → 0, so an unreadable version can
+// never be flagged outdated — never tell the user to delete what we can't read.
+function compareVersions(a, b) {
+  const pa = parseSemver(a);
+  const pb = parseSemver(b);
+  if (!pa || !pb) return 0;
+  for (const key of ["major", "minor", "patch"]) {
+    if (pa[key] !== pb[key]) return pa[key] < pb[key] ? -1 : 1;
+  }
+  if (pa.pre === null && pb.pre === null) return 0;
+  if (pa.pre === null) return 1;
+  if (pb.pre === null) return -1;
+  const idsA = pa.pre.split(".");
+  const idsB = pb.pre.split(".");
+  for (let i = 0; i < Math.max(idsA.length, idsB.length); i += 1) {
+    const ia = idsA[i];
+    const ib = idsB[i];
+    if (ia === undefined) return -1;
+    if (ib === undefined) return 1;
+    const na = /^\d+$/.test(ia);
+    const nb = /^\d+$/.test(ib);
+    if (na && nb) {
+      if (ia !== ib) return Number(ia) < Number(ib) ? -1 : 1;
+    } else if (na !== nb) {
+      return na ? -1 : 1;
+    } else if (ia !== ib) {
+      return ia < ib ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
 // A GUI-launched app inherits launchd's default PATH
 // (/usr/bin:/bin:/usr/sbin:/sbin), which contains none of the locations
 // `trellis` is normally installed into. `createTrellisCli` deliberately does
@@ -212,14 +256,46 @@ const GUI_PATH_EXTRA_DIRS = Object.freeze([
   "/usr/local/bin", // Homebrew Intel and manual installs
 ]);
 
+// User-scoped global-bin roots of the JS package managers, relative to $HOME.
+// None of them is in launchd's PATH, and only ~/.local/bin was covered before,
+// so a trellis installed through any of them was invisible to the GUI. The
+// order after GUI_PATH_EXTRA_DIRS + ~/.local/bin keeps every environment that
+// already resolves a CLI resolving the same one.
+const USER_PATH_EXTRA_DIRS = Object.freeze([
+  ".npm-global/bin", // npm with the sudo-free prefix its own docs recommend
+  ".bun/bin", // bun
+  "Library/pnpm", // pnpm global bin (macOS default location)
+  ".volta/bin", // volta
+]);
+
+// nvm keeps one prefix per installed node version under
+// ~/.nvm/versions/node/<v>, so every version's bin is enumerated — newest
+// version first, matching the nvm use order users expect. Read errors mean
+// "no nvm here" and stay silent.
+function listNvmVersionBins(homeDir, options = {}) {
+  const fsImpl = options.fs || fs;
+  const versionsRoot = path.posix.join(homeDir, ".nvm", "versions", "node");
+  let names;
+  try {
+    names = fsImpl.readdirSync(versionsRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+  names.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+  return names.map((name) => path.posix.join(versionsRoot, name, "bin"));
+}
+
 function augmentedCliPath(basePath, options = {}) {
   const platform = options.platform || process.platform;
   const delimiter = platform === "win32" ? ";" : ":";
   const parts = String(basePath || "").split(delimiter).filter(Boolean);
   if (platform !== "win32") {
-    for (const dir of GUI_PATH_EXTRA_DIRS) {
-      if (!parts.includes(dir)) parts.push(dir);
-    }
+    const push = (dir) => {
+      if (dir && !parts.includes(dir)) parts.push(dir);
+    };
+    for (const dir of GUI_PATH_EXTRA_DIRS) push(dir);
     let home = typeof options.home === "string" ? options.home : "";
     if (!home) {
       try {
@@ -229,11 +305,83 @@ function augmentedCliPath(basePath, options = {}) {
       }
     }
     if (home) {
-      const localBin = path.posix.join(home.replace(/\\/g, "/"), ".local", "bin");
-      if (!parts.includes(localBin)) parts.push(localBin);
+      const homeDir = home.replace(/\\/g, "/");
+      push(path.posix.join(homeDir, ".local", "bin"));
+      for (const dir of USER_PATH_EXTRA_DIRS) push(path.posix.join(homeDir, dir));
+      for (const dir of listNvmVersionBins(homeDir, options)) push(dir);
     }
   }
   return parts.join(delimiter);
+}
+
+// Every absolute `trellis` the spawn PATH would find, in PATH order — the
+// duplicate-install detector needs them all, not just the first hit. Pure fs —
+// never spawns — and [] on win32, where the spawn goes through a shell that
+// resolves `.cmd` shims this lookup cannot model.
+function scanTrellisBinPaths(basePath, options = {}) {
+  const platform = options.platform || process.platform;
+  if (platform === "win32") return [];
+  const fsImpl = options.fs || fs;
+  const found = [];
+  for (const dir of String(basePath || "").split(":").filter(Boolean)) {
+    const candidate = path.join(dir, TRELLIS_BIN);
+    try {
+      // statSync follows npm's bin symlink; accessSync proves executability.
+      if (!fsImpl.statSync(candidate).isFile()) continue;
+      fsImpl.accessSync(candidate, fsImpl.constants.X_OK);
+      found.push(candidate);
+    } catch {
+      // absent or not executable — keep scanning the remaining entries
+    }
+  }
+  return found;
+}
+
+// The first PATH hit — the one a bare `trellis` spawn resolves to — or null.
+function resolveTrellisBinPath(basePath, options = {}) {
+  return scanTrellisBinPaths(basePath, options)[0] ?? null;
+}
+
+// An npm prefix layout: <prefix>/lib/node_modules/@mindfoldhq/trellis/… — the
+// prefix is what `npm uninstall --prefix` needs.
+const NPM_LAYOUT_RE = new RegExp(`^(.+)/lib/node_modules/${REMOTE_PACKAGE.replaceAll("/", "\\/")}/`);
+
+// Quotes a shell word only when it needs it (whitespace or quotes inside).
+function shellQuote(value) {
+  return /[\s'"]/.test(value) ? `'${value.replace(/'/g, "'\\''")}'` : value;
+}
+
+// Builds the copy-to-terminal cleanup command for a redundant install.
+// Display/copy ONLY — nothing in this codebase ever executes the result.
+function buildCleanupCommand(binPath, options = {}) {
+  if (typeof binPath !== "string" || !binPath) return null;
+  const fsImpl = options.fs || fs;
+  let real;
+  try {
+    real = fsImpl.realpathSync(binPath);
+  } catch {
+    return null;
+  }
+  let command;
+  let probeDir;
+  const match = real.match(NPM_LAYOUT_RE);
+  if (match) {
+    // npm owns the layout: uninstall through npm, not raw rm.
+    command = `npm uninstall -g ${REMOTE_PACKAGE} --prefix ${shellQuote(match[1])}`;
+    probeDir = match[1];
+  } else {
+    command = `rm -f ${shellQuote(binPath)}`;
+    probeDir = path.dirname(binPath);
+  }
+  // Directories the user cannot write (system prefixes like /usr/local) need
+  // sudo; a probe failure reads as "not writable" so the command stays honest.
+  let writable = true;
+  try {
+    fsImpl.accessSync(probeDir, fsImpl.constants.W_OK);
+  } catch {
+    writable = false;
+  }
+  return writable ? command : `sudo ${command}`;
 }
 
 function createTrellisCli(options = {}) {
@@ -298,12 +446,59 @@ function createTrellisCli(options = {}) {
   }
 
   async function readGlobalVersion() {
-    const result = await run(TRELLIS_BIN, VERSION_ARGS, { timeoutMs: versionTimeoutMs });
-    const version = result.ok ? parseVersionOutput(result.stdout) : null;
+    // Every executable trellis on the SAME PATH a spawn would use, so the UI
+    // can show duplicate installs — not just the first hit (10-01 multi-detect).
+    const paths = scanTrellisBinPaths(executionEnv.PATH, { platform });
+    const installs = [];
+    let headline = null; // first hit — what a bare `trellis` spawn resolves to
+    for (const binPath of paths) {
+      const result = await run(binPath, VERSION_ARGS, { timeoutMs: versionTimeoutMs });
+      const entry = {
+        path: binPath,
+        version: result.ok ? parseVersionOutput(result.stdout) : null,
+        active: installs.length === 0,
+        // Copy-to-terminal cleanup hint for redundant installs; never executed.
+        cleanup: buildCleanupCommand(binPath),
+      };
+      installs.push(entry);
+      if (entry.active) {
+        headline = {
+          ok: result.ok,
+          version: entry.version,
+          error: result.ok ? null : result.message,
+        };
+      }
+    }
+    if (!headline) {
+      // No trellis anywhere on the PATH: "not installed" is a state, not an
+      // error — there was no spawn to fail.
+      return { installed: false, version: null, error: null, path: null, installs: [] };
+    }
+    // "Redundant" must mean OLDER, not "not first on PATH" (10-01 revise):
+    // the GUI's augmented PATH order can differ from the user's shell PATH, so
+    // PATH rank would flag the install they actually use. Flag an install only
+    // when a strictly newer parsable version exists elsewhere; unparsable
+    // versions and version ties are never flagged.
+    let newest = null;
+    for (const entry of installs) {
+      if (entry.version === null) continue;
+      if (newest === null || compareVersions(entry.version, newest) > 0) newest = entry.version;
+    }
+    for (const entry of installs) {
+      entry.outdated = newest !== null && entry.version !== null
+        && compareVersions(entry.version, newest) < 0;
+    }
+    // Newest first (10-01 ui-flow): the renderer runs in a sandbox without
+    // compareVersions, so the display order is decided here. Stable sort —
+    // unparsable versions compare 0 and keep their scan order; `active` was
+    // stamped before the sort and travels with its entry.
+    installs.sort((a, b) => compareVersions(b.version || "0", a.version || "0"));
     return {
-      installed: result.ok,
-      version,
-      error: result.ok ? null : result.message,
+      installed: headline.ok,
+      version: headline.version,
+      error: headline.error,
+      path: paths[0],
+      installs,
     };
   }
 
@@ -476,6 +671,10 @@ function createTrellisCli(options = {}) {
 module.exports = {
   createTrellisCli,
   augmentedCliPath,
+  resolveTrellisBinPath,
+  scanTrellisBinPaths,
+  buildCleanupCommand,
+  compareVersions,
   resolveUserName,
   buildInitArgs,
   normalizeUserName,

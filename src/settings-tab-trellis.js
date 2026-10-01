@@ -238,9 +238,16 @@ function openUpgradePreviewWizard(project) {
     return row;
   }
 
-  function buildCopyButton(text) {
+  function buildInstallBadge(text, cls) {
+    const badge = document.createElement("span");
+    badge.className = `trellis-cli-install-badge ${cls}`;
+    badge.textContent = text;
+    return badge;
+  }
+
+  function buildCopyButton(text, labelKey = "trellisCopy") {
     return helpers.buildButton({
-      label: t("trellisCopy"),
+      label: t(labelKey),
       size: "compact",
       tone: "quiet",
       onClick: () => {
@@ -803,6 +810,74 @@ function openUpgradePreviewWizard(project) {
     version.className = "trellis-version";
     version.textContent = tf("trellisGlobalCurrent", { version: global.version || "—" });
     control.appendChild(version);
+    // Where that version actually came from (10-01): the resolved binary
+    // path, so a stale duplicate install shows itself next to the number.
+    // Absent (win32, or the resolver found nothing) renders nothing.
+    if (typeof global.path === "string" && global.path) {
+      const cliPath = document.createElement("span");
+      cliPath.className = "trellis-cli-path";
+      cliPath.textContent = global.path;
+      cliPath.title = global.path;
+      control.appendChild(cliPath);
+    }
+    // Multiple installs (10-01 multi-detect; revised to version rank): show
+    // them all — the cli layer ships them newest-first, and each install is
+    // one inline text flow: "N. <rank badge> Version: v Install path: p"
+    // (path mono, ellipsizes when long). Every entry line starts at the same
+    // left edge as the heading row above it (.row's 16px padding), so the
+    // numbered entries read as a list under "Detected N CLI installs". The
+    // cleanup command rides an indented tinted block under the older
+    // install, displayed as text with a copy button; nothing here ever
+    // executes it.
+    if (Array.isArray(global.installs) && global.installs.length > 1) {
+      rows.push(buildDescRow(tf("trellisCliInstallsTitle", { count: global.installs.length })));
+      let index = 0;
+      for (const install of global.installs) {
+        if (!install || typeof install.path !== "string" || !install.path) continue;
+        index += 1;
+        const wrap = document.createElement("div");
+        wrap.className = "trellis-cli-install";
+        const installRow = document.createElement("div");
+        installRow.className = "trellis-cli-install-row";
+        const num = document.createElement("span");
+        num.className = "trellis-cli-install-num";
+        num.textContent = `${index}.`;
+        installRow.appendChild(num);
+        const outdated = install.outdated === true;
+        installRow.appendChild(buildInstallBadge(
+          outdated ? t("trellisCliInstallExtra") : t("trellisCliInstallLatest"),
+          outdated ? "is-outdated" : "is-latest",
+        ));
+        if (install.version) {
+          const version = document.createElement("span");
+          version.className = "trellis-cli-install-meta";
+          version.textContent = `${t("trellisCliVersionLabel")} ${install.version}`;
+          installRow.appendChild(version);
+        }
+        const pathLabel = document.createElement("span");
+        pathLabel.className = "trellis-cli-install-meta";
+        pathLabel.textContent = t("trellisCliPathLabel");
+        installRow.appendChild(pathLabel);
+        const installPath = document.createElement("span");
+        installPath.className = "trellis-cli-install-path";
+        installPath.textContent = install.path;
+        installPath.title = install.path;
+        installRow.appendChild(installPath);
+        wrap.appendChild(installRow);
+        if (outdated && typeof install.cleanup === "string" && install.cleanup) {
+          const cmdRow = document.createElement("div");
+          cmdRow.className = "trellis-cli-install-cmd";
+          const cmdText = document.createElement("span");
+          cmdText.className = "trellis-cli-install-cmd-text";
+          cmdText.textContent = install.cleanup;
+          cmdText.title = install.cleanup;
+          cmdRow.appendChild(cmdText);
+          cmdRow.appendChild(buildCopyButton(install.cleanup, "trellisCopyCleanup"));
+          wrap.appendChild(cmdRow);
+        }
+        rows.push(wrap);
+      }
+    }
     const target = document.createElement("span");
     target.className = "trellis-version";
     target.textContent = `${t("trellisGlobalUpgradeTarget")}:`;

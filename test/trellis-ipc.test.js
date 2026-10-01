@@ -126,6 +126,8 @@ function createHarness(options = {}) {
     ...("getActivityByProject" in options ? { getActivityByProject: options.getActivityByProject } : {}),
     // 09-28 recency reader for the scan order (see sortScanByRecency).
     ...("readRootRecencies" in options ? { readRootRecencies: options.readRootRecencies } : {}),
+    // 10-01 trellis-cli-roots-unify: the Settings → Dashboard roots feed.
+    ...("syncScanRoots" in options ? { syncScanRoots: options.syncScanRoots } : {}),
     // The trust gate is fail-closed in production; these tests exercise the
     // handler bodies, so they opt in with a permissionless guard. Passing
     // `isTrustedEvent: null` explicitly keeps the guard absent.
@@ -175,6 +177,37 @@ describe("trellis IPC registration", () => {
     const bad = await h.ipcMain.invoke("settings:trellis-set-roots", { roots: "/projects/a" });
     assert.strictEqual(bad.status, "error");
     assert.strictEqual(h.updates.length, 1, "a rejected payload must not reach the controller");
+  });
+
+  it("feeds the normalized scan roots to the Dashboard sync after a committed save", async () => {
+    // 10-01 trellis-cli-roots-unify: the sync fires only after the controller
+    // accepted the write, sees the NORMALIZED roots, and a throwing sync can
+    // never fail the set-roots result itself.
+    const synced = [];
+    const h = createHarness({
+      syncScanRoots: (roots) => { synced.push(roots); },
+    });
+    const result = await h.ipcMain.invoke("settings:trellis-set-roots", {
+      roots: [" /projects/a ", "/projects/b"],
+    });
+    assert.strictEqual(result.status, "ok");
+    assert.deepStrictEqual(synced, [["/projects/a", "/projects/b"]]);
+
+    // A controller refusal must not feed the sync.
+    const refused = createHarness({
+      updateResult: { status: "error", message: "nope" },
+      syncScanRoots: (roots) => { synced.push(["refused", roots]); },
+    });
+    const denied = await refused.ipcMain.invoke("settings:trellis-set-roots", { roots: ["/projects/c"] });
+    assert.strictEqual(denied.status, "error");
+    assert.deepStrictEqual(synced.length, 1, "a refused save must not sync");
+
+    // A throwing sync is contained: the save already committed.
+    const throwing = createHarness({
+      syncScanRoots: () => { throw new Error("store gone"); },
+    });
+    const contained = await throwing.ipcMain.invoke("settings:trellis-set-roots", { roots: ["/projects/d"] });
+    assert.deepStrictEqual(contained, { status: "ok", roots: ["/projects/d"] });
   });
 
   it("surfaces a controller refusal as an error envelope", async () => {
@@ -299,6 +332,30 @@ describe("trellis IPC registration", () => {
     const bogusResult = await bogus.ipcMain.invoke("settings:trellis-scan", { channel: "--evil" });
     assert.strictEqual(bogusResult.status, "ok");
     assert.strictEqual(bogusResult.projects[0].channel, "latest");
+  });
+
+  it("ships the multi-install list through the scan payload unchanged", async () => {
+    // 10-01 multi-detect: the renderer cannot build cleanup commands (no
+    // requires), so the cli-layer installs list must ride the global payload.
+    const installs = [
+      { path: "/h/.npm-global/bin/trellis", version: "0.7.0-beta.4", active: true, cleanup: null, outdated: false },
+      {
+        path: "/usr/local/bin/trellis",
+        version: "0.3.10",
+        active: false,
+        cleanup: "sudo npm uninstall -g @mindfoldhq/trellis --prefix /usr/local",
+        outdated: true,
+      },
+    ];
+    const cli = makeFakeCli({
+      async readGlobalVersion() {
+        return { installed: true, version: "0.7.0-beta.4", error: null, path: installs[0].path, installs };
+      },
+    });
+    const h = createHarness({ cli });
+    const result = await h.ipcMain.invoke("settings:trellis-scan");
+    assert.strictEqual(result.status, "ok");
+    assert.deepStrictEqual(result.global.installs, installs);
   });
 
   it("attaches the read-only active-task digest to scanned projects", async () => {

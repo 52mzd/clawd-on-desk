@@ -91,6 +91,7 @@ const {
 const { registerSettingsIpc } = require("./settings-ipc");
 const { registerTrellisIpc } = require("./trellis-ipc");
 const { augmentedCliPath } = require("./trellis-cli");
+const { scanRoots: scanTrellisRoots } = require("./trellis-scanner");
 const createSettingsEffectRouter = require("./settings-effect-router");
 const { createRecapRuntime } = require("./recap-runtime");
 const { computeTrellisDailyCounts } = require("./recap-trellis");
@@ -172,7 +173,9 @@ const {
   getLaunchPixelSize,
   getLaunchSizingWorkArea,
   getProportionalPixelSize,
+  resolveSizeSliderContext,
 } = require("./size-utils");
+const { formatSizeKey } = require("./settings-size-slider");
 const { keepOutOfTaskbar } = require("./taskbar");
 const { loadTrayNormalIcon, loadTrayFlashIcon } = require("./tray-flash-icon");
 const {
@@ -489,11 +492,12 @@ let feishuApprovalSyncPromise = Promise.resolve();
 let feishuApprovalConfigSignature = "";
 let feishuSessionAutomationRouteSignature = "";
 let feishuApprovalSecretsRevision = 0;
-// One-way Slack notifier. Unlike Feishu there is no connection to restart, but
-// queued automatic sends must never cross a configuration boundary. The
-// revision invalidates work captured before a preference or secret change.
+// One-way Slack notifier. Unlike Feishu there is no connection to restart.
+// Queued automatic sends re-read the destination and the per-event gates before
+// each attempt, so a preference or secret change is picked up without a
+// revision counter that would also discard real backlogs on every settings
+// click.
 let slackNotifyClient = null;
-let slackNotifyConfigRevision = 0;
 const shortcutHandlers = {
   togglePet: () => togglePetVisibility(),
   quickSelectSession: () => showQuickSelect(),
@@ -565,6 +569,7 @@ const _settingsController = createSettingsController({
     clearRecentHookEvents: (id) => _server.clearRecentHookEvents(id),
     identifyCustomApplication: (sourcePath) => require("./custom-applications").identifyCustomApplication(sourcePath),
     resizePet: _deferredResizePet,
+    rebaseSizeToRealizedPixels: () => rebaseSizeToRealizedPixels(),
     getActiveSessionAliasKeys: () =>
       _state && typeof _state.getActiveSessionAliasKeys === "function"
         ? _state.getActiveSessionAliasKeys()
@@ -883,6 +888,8 @@ const settingsWindowRuntime = createSettingsWindowRuntime({
   onSaveBounds: (bounds) => _settingsController.applyUpdate("settingsWindowBounds", bounds),
   getTitle: () => translate("settingsWindowTitle"),
   onBeforeCreate: () => bumpAnimationOverridePreviewPosterGeneration(),
+  // A replaced or crashed Settings page cannot send its preview-ending IPC.
+  onRendererReset: () => { void settingsSizePreviewSession.cleanup(); },
   onBeforeClosed: () => {
     if (roamFencePickerRuntime) roamFencePickerRuntime.cancel();
     bumpAnimationOverridePreviewPosterGeneration();
@@ -1145,7 +1152,7 @@ const petWindowRuntime = createPetWindowRuntime({
   getMiniMode: () => _mini.getMiniMode(),
   getMiniTransitioning: () => _mini.getMiniTransitioning(),
   getMiniContainedSeam: () => _mini.getContainedSeam(),
-  getMiniPeekOffset: () => _mini.PEEK_OFFSET,
+  getMiniPeekOffset: () => _mini.getMiniPeekOffset(),
   getCurrentPixelSize: () => getCurrentPixelSize(),
   getEffectiveCurrentPixelSize: (workArea) => getEffectiveCurrentPixelSize(workArea),
   getAllowEdgePinning: () => allowEdgePinningCached,
@@ -1240,6 +1247,25 @@ function getPixelSizeFor(sizeKey, overrideWa) {
   }
   if (!wa) wa = getPrimaryWorkAreaSafe() || SYNTHETIC_WORK_AREA;
   return getProportionalPixelSize(ratio, wa);
+}
+
+function getSizeSliderContext() {
+  let wa = null;
+  if (win && !win.isDestroyed()) {
+    const { x, y, width, height } = getPetWindowBounds();
+    wa = getNearestWorkArea(x + width / 2, y + height / 2);
+  }
+  if (!wa) wa = getPrimaryWorkAreaSafe() || SYNTHETIC_WORK_AREA;
+  return resolveSizeSliderContext(
+    currentSize, getEffectiveCurrentPixelSize(), wa,
+    keepSizeAcrossDisplaysCached && isProportionalMode()
+  );
+}
+
+function rebaseSizeToRealizedPixels() {
+  const context = getSizeSliderContext();
+  if (!context || context.synced) return;
+  _deferredResizePet(formatSizeKey(context.ui));
 }
 
 function getCurrentPixelSize(overrideWa) {
@@ -2352,6 +2378,7 @@ const _stateCtx = {
   set miniSleepPeeked(v) { _mini.setMiniSleepPeeked(v); },
   get miniPeeked() { return _mini.getMiniPeeked(); },
   set miniPeeked(v) { _mini.setMiniPeeked(v); },
+  cancelPendingMiniPeek: (resetState) => _mini.cancelPendingMiniPeek(resetState),
   get idlePaused() { return idlePaused; },
   set idlePaused(v) { idlePaused = v; },
   get forceEyeResend() { return forceEyeResend; },
@@ -2382,7 +2409,7 @@ const _stateCtx = {
   isAgentNotificationHookEnabled: (agentId) =>
     _runtimeAgentGate.isAgentNotificationHookEnabled(agentId),
   resolveAgentDisplayName: _resolveAgentDisplayName,
-  miniPeekIn: () => miniPeekIn(),
+  miniPeekIn: (mode) => miniPeekIn(mode),
   miniPeekOut: () => miniPeekOut(),
   buildContextMenu: () => buildContextMenu(),
   buildTrayMenu: () => buildTrayMenu(),
@@ -2549,6 +2576,27 @@ function autoRegisterDiscoveredRoot(trellisDir) {
   if (outcome.status !== "ok") return;
   syncTrellisPersistedRoots();
   broadcastTrellisRootsChanged();
+}
+
+// 10-01 trellis-cli-roots-unify: Settings → Dashboard one-way feed. The scan
+// roots a user manages in Settings are parent directories; their installed
+// direct children are Dashboard-view projects, so every save registers those
+// project roots (idempotently, feed-only — removal never cascades, because a
+// Dashboard root may also come from the panel picker or session discovery).
+// `broadcast: false` covers the startup backfill: no Dashboard window exists
+// yet and a fresh open reads the store anyway.
+function syncScanRootsToDashboard(roots, options = {}) {
+  if (!Array.isArray(roots) || roots.length === 0) return;
+  const installed = scanTrellisRoots(roots)
+    .flatMap((scan) => (scan && scan.projects) || [])
+    .filter((project) => project && project.installed === true)
+    .map((project) => project.path);
+  if (installed.length === 0) return;
+  const outcome = _trellisRootsStore.registerScanRoots(installed);
+  if (outcome.added > 0) {
+    syncTrellisPersistedRoots();
+    if (options.broadcast !== false) broadcastTrellisRootsChanged();
+  }
 }
 
 // Expand the picker's "picked" folder into the project roots that would
@@ -2820,6 +2868,7 @@ const _tickCtx = {
   set miniSleepPeeked(v) { _mini.setMiniSleepPeeked(v); },
   get miniPeeked() { return _mini.getMiniPeeked(); },
   set miniPeeked(v) { _mini.setMiniPeeked(v); },
+  cancelPendingMiniPeek: (resetState) => _mini.cancelPendingMiniPeek(resetState),
   get mouseOverPet() { return mouseOverPet; },
   set mouseOverPet(v) { mouseOverPet = v; },
   get forceEyeResend() { return forceEyeResend; },
@@ -2833,7 +2882,7 @@ const _tickCtx = {
   applyState,
   getIdleVisualChoice,
   getEffectiveAccessoryIds: getEffectivePetAccessoryIds,
-  miniPeekIn: () => miniPeekIn(),
+  miniPeekIn: (mode) => miniPeekIn(mode),
   miniPeekOut: () => miniPeekOut(),
   getObjRect,
   getHitRectScreen,
@@ -3224,6 +3273,24 @@ const _serverCtx = {
   dismissOpencodeFamilyPermissionResolvedExternally,
   syncPermissionShortcuts,
   permLog,
+  // #898: the settings watcher pauses Claude hook auto-repair when settings.json
+  // shrinks suspiciously (a third-party overwrite). The server already dedups to
+  // once per persisting shrink via its shrinkNotified flag; surface that pause
+  // as an active Windows tray balloon so the user knows repair is on hold without
+  // opening Doctor — mirroring fireCodexHookNudge's balloon.
+  notifySuspiciousShrink: () => {
+    try {
+      if (process.platform !== "win32") return;
+      const tray = _menu && typeof _menu.getTray === "function" ? _menu.getTray() : null;
+      trayBalloonOwner.show(tray, {
+        iconType: "warning",
+        title: translate("claudeHookGuardNudgeTitle"),
+        content: translate("claudeHookGuardNudgeBody"),
+      });
+    } catch (err) {
+      console.warn("Clawd: Claude hook guard balloon failed:", err && err.message);
+    }
+  },
 };
 const _server = require("./server")(_serverCtx);
 const { startHttpServer, getHookServerPort } = _server;
@@ -3951,7 +4018,6 @@ function writeSlackNotifySecrets(secrets) {
     platform: process.platform,
   });
   if (result && result.status === "ok") {
-    slackNotifyConfigRevision += 1;
     broadcastSlackNotifyStatus();
   }
   return result;
@@ -3962,7 +4028,6 @@ function getSlackNotifyClient() {
     slackNotifyClient = createSlackNotifyClient({
       getConfig: () => getSlackNotifyPrefs(),
       getSecrets: () => getSlackNotifySecrets(),
-      getConfigRevision: () => slackNotifyConfigRevision,
       getLang: () => _settingsController.get("lang") || lang || "en",
       log: slackNotifyLog,
     });
@@ -4618,6 +4683,8 @@ function showResumeInput(t) {
 const _menuCtx = {
   get win() { return win; },
   get sessions() { return sessions; },
+  cancelRoam: () => _roam.cancelRoam(),
+  resetKeepSizeFrozen: () => resetKeepSizeFrozen(),
   // Recovery actions must defeat a stranded drag lock (syncHitWin defers while
   // it is held); see pet-window-runtime releaseStrandedDragLock.
   releaseStrandedDragLock: () => petWindowRuntime.releaseStrandedDragLock(),
@@ -4679,7 +4746,10 @@ const _menuCtx = {
   get isQuitting() { return isQuitting; },
   set isQuitting(v) { isQuitting = v; },
   get menuOpen() { return menuOpen; },
-  set menuOpen(v) { menuOpen = v; },
+  set menuOpen(v) {
+    if (v) _mini.cancelPendingMiniPeek(true);
+    menuOpen = v;
+  },
   get tray() { return tray; },
   set tray(v) { tray = v; },
   get contextMenuOwner() { return contextMenuOwner; },
@@ -4993,7 +5063,6 @@ _settingsController.subscribeKey("feishuApproval", () => {
   }
 });
 _settingsController.subscribeKey("slackNotify", () => {
-  slackNotifyConfigRevision += 1;
   broadcastSlackNotifyStatus();
 });
 _settingsController.subscribeKey("mobilePreviewEnabled", (enabled) => {
@@ -5222,6 +5291,7 @@ const settingsIpcRuntime = registerSettingsIpc({
       resolveTextScaleForKey(textScaleByDisplay, textScale, getSettingsDisplayKey()) * 100
     ),
   }),
+  getSizeContext: getSizeSliderContext,
   sendToRenderer,
   getDoNotDisturb: () => doNotDisturb,
   getSoundMuted: () => soundMuted,
@@ -5286,7 +5356,21 @@ const trellisIpcRuntime = registerTrellisIpc({
   // 09-28 hud-multi-project-audit: recency order for the Settings scan —
   // newest-touched project first, same rule as the HUD panel / chips.
   readRootRecencies: (roots) => _trellisActivity.readRootRecencies(roots),
+  // 10-01 trellis-cli-roots-unify: after a successful scan-roots save, feed
+  // the installed project roots into the Dashboard's independent roots store.
+  syncScanRoots: (roots) => syncScanRootsToDashboard(roots),
 });
+
+// Startup backfill (10-01): machines that configured Settings scan roots
+// before this sync existed get their projects into the Dashboard view now.
+try {
+  syncScanRootsToDashboard(
+    _settingsController.getSnapshot().trellisScanRoots,
+    { broadcast: false },
+  );
+} catch (err) {
+  console.warn("Clawd: trellis scan-roots startup sync failed:", err && err.message);
+}
 
 const sessionHistoryRuntime = createSessionHistoryRuntime({
   getSessions: () => _state.sessions,
@@ -5567,7 +5651,10 @@ function createWindow() {
       if (themeRuntime.isReloadInProgress()) return;
       petWindowRuntime.recoverVisiblePetAfterRendererLoad();
     },
-    setDragLocked: (value) => { petWindowRuntime.setDragLocked(value); },
+    setDragLocked: (value) => {
+      if (value) _mini.cancelPendingMiniPeek(true);
+      petWindowRuntime.setDragLocked(value);
+    },
     setMouseOverPet: (value) => { mouseOverPet = !!value; },
     cancelRoam: () => _roam.cancelRoam(),
     beginDragSnapshot: () => beginDragSnapshot(),
@@ -5709,6 +5796,7 @@ function createWindow() {
     displayMetricsGeometryTimer = setTimeout(() => {
       displayMetricsGeometryTimer = null;
       petWindowRuntime.handleDisplayMetricsChanged();
+      settingsWindowRuntime.notifySizeContextChanged();
     }, 400);
   };
   // PR #751 second-review C-6 (Codex non-blocking): §4.3.14's
@@ -5734,8 +5822,14 @@ function createWindow() {
   // existing invalidateDisplaysCache() call) — previously only
   // metrics-changed did, leaving a stale inset alive across a monitor
   // unplug/replug or a genuine topology addition.
-  screen.on("display-removed", () => petWindowRuntime.handleDisplayRemoved());
-  screen.on("display-added", () => petWindowRuntime.handleDisplayAdded());
+  screen.on("display-removed", () => {
+    petWindowRuntime.handleDisplayRemoved();
+    settingsWindowRuntime.notifySizeContextChanged();
+  });
+  screen.on("display-added", () => {
+    petWindowRuntime.handleDisplayAdded();
+    settingsWindowRuntime.notifySizeContextChanged();
+  });
 
   // textScale is per-display: when the topology changes, window→display
   // mappings (and therefore effective scales) can change wholesale. Debounced
@@ -5801,6 +5895,9 @@ const _miniCtx = {
   get doNotDisturb() { return doNotDisturb; },
   set doNotDisturb(v) { doNotDisturb = v; },
   get currentState() { return _state.getCurrentState(); },
+  get mouseOverPet() { return mouseOverPet; },
+  get dragLocked() { return petWindowRuntime.isDragLocked(); },
+  get menuOpen() { return menuOpen; },
   notifyUpdaterSilentExit: () => notifyUpdaterSilentExit(),
   SIZES,
   getCurrentPixelSize,
@@ -5817,6 +5914,7 @@ const _miniCtx = {
   clampToScreenVisual,
   getNearestWorkArea,
   getPetWindowBounds,
+  getHitRectScreen,
   applyPetWindowBounds,
   applyPetWindowPosition,
   setViewportOffsetY,
@@ -5875,6 +5973,7 @@ const _roamCtx = {
   clampToScreenVisual,
   getMiniMode: () => _mini.getMiniMode(),
   getCurrentState: () => _state.getCurrentState(),
+  isSizePreviewActive: () => petWindowRuntime.isSettingsSizePreviewActive(),
   get miniTransitioning() { return _mini.getMiniTransitioning(); },
   applyState: (state, svgOverride, opts) => _state.applyState(state, svgOverride, opts),
   setState: (state, svgOverride, opts) => _state.setState(state, svgOverride, opts),

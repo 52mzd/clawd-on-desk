@@ -135,9 +135,13 @@ const COMPLETION_HOUSEKEEPING_EVENTS = new Set([
 ]);
 // #406: forward progress for a session cancels its pending (debounced)
 // completion — these events all mean the agent loop is still running.
+// SubagentStop is deliberately absent: a finishing subagent is closing
+// evidence, not parent progress, and Claude sends one 1.5-15s after the Stop
+// from a background helper (#1060), so it must not veto a completion that has
+// already reached its quiet window.
 const COMPLETION_CANCEL_EVENTS = new Set([
   "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
-  "SubagentStart", "SubagentStop", "PreCompact", "PostCompact",
+  "SubagentStart", "PreCompact", "PostCompact",
   "PermissionRequest", "CodexUserInputRequest", "Elicitation", "StopFailure", "ApiError", "SessionEnd",
 ]);
 const CLAUDE_ELICITATION_COMPLETION_PROBE_DELAY_MS = 2000;
@@ -560,7 +564,7 @@ function scheduleAutoReturn(state) {
         if (state === "mini-peek") {
           // Peek animation done — stay peeked but show idle (don't re-trigger peek)
           ctx.miniPeeked = true;
-          applyState("mini-idle");
+          applyState(hasOwnVisualFiles("mini-peek-hold") ? "mini-peek-hold" : "mini-idle");
         } else {
           ctx.miniPeekIn();
           applyState("mini-peek");
@@ -851,7 +855,7 @@ function applyState(state, svgOverride, options = {}) {
       autoReturnTimer = null;
       applyResolvedDisplayState();
     }, WAKE_DURATION);
-  } else if (AUTO_RETURN_MS[state]) {
+  } else if (state !== "mini-peek-hold" && state !== "mini-sleep-peek" && AUTO_RETURN_MS[state]) {
     scheduleAutoReturn(state);
   }
 }
@@ -1544,14 +1548,32 @@ function updateSessionMetadata(sessionId, opts = {}) {
     debugSession(`metadata-only drop sid=${id} reason=no-session`);
     return false;
   }
+  // Some metadata channels bypass the lifecycle sequence fence, so they must
+  // prove they only annotate their own agent's session. Without this, a
+  // metadata-only POST could rewrite the title/usage of a session that another
+  // agent happened to create with a colliding raw id. Absent means the legacy
+  // "annotate whatever exists" behavior (opencode-family, statusline, ...).
+  const expectedAgentId = typeof opts.expectedAgentId === "string" ? opts.expectedAgentId : null;
+  if (expectedAgentId && session.agentId !== expectedAgentId) {
+    debugSession(`metadata-only drop sid=${id} reason=agent-mismatch expected=${expectedAgentId} actual=${session.agentId}`);
+    return false;
+  }
   const incomingContextUsage = normalizeContextUsage(opts.contextUsage);
   const incomingTitle = typeof opts.sessionTitle === "string"
     ? normalizeTitle(opts.sessionTitle)
     : null;
   const incomingModel = typeof opts.model === "string" ? opts.model.trim() : "";
-  if (!incomingContextUsage && !incomingTitle && !incomingModel) return false;
+  const clearContextUsage = opts.clearContextUsage === true;
+  if (!incomingContextUsage && !clearContextUsage && !incomingTitle && !incomingModel) return false;
   let applied = false;
-  if (incomingContextUsage) {
+  if (clearContextUsage) {
+    if (session.contextUsage || session.contextUsageOrigin) {
+      session.contextUsage = null;
+      session.contextUsageOrigin = null;
+      session.metadataUpdatedAt = Date.now();
+      applied = true;
+    }
+  } else if (incomingContextUsage) {
     const resolved = resolveContextUsageUpdate(
       session,
       incomingContextUsage,
@@ -3578,6 +3600,7 @@ function enableDoNotDisturb() {
   // consumers still receive the accepted turn boundary.
   stopWakePoll();
   if (ctx.miniMode) {
+    if (typeof ctx.cancelPendingMiniPeek === "function") ctx.cancelPendingMiniPeek(true);
     applyState("mini-sleep");
   } else {
     applyDndSleepState();

@@ -15,10 +15,6 @@
  *   through the existing settings:trellis-* IPC on confirm.
  * - No top-level timers, no insertBefore (vm-test sandbox parity with the
  *   dashboard renderer lessons), full cleanup in close().
- * - Every openShell() stamps `state.session` (09-30). The async chains
- *   (preview, dry run, install, upgrade) capture it at launch and bail out in
- *   each callback when the dialog they belong to is gone or replaced, so a
- *   late IPC reply never renders into — or executes against — another project.
  */
 (function () {
   "use strict";
@@ -73,17 +69,9 @@
     return parts.join(" ");
   }
 
-  var state = null; // { bridge, mode, project, stage, session, ... }
+  var state = null; // { bridge, mode, project, stage, ... }
   var rootEl = null;
   var keydownHandler = null;
-  var sessionSeq = 0;
-
-  // True while the dialog opened with `session` is still the live one. Async
-  // callbacks check this first: after close() or a re-open, `state` is null
-  // or carries a newer session, and the stale result must be dropped.
-  function isLive(session) {
-    return !!state && state.session === session;
-  }
 
   function close() {
     if (keydownHandler) {
@@ -102,7 +90,6 @@
     // the value; empty means "not typed yet" and the probe/fallback chain
     // takes over.
     state = { bridge: bridge, mode: mode, project: project, stage: "initial", userName: "" };
-    state.session = ++sessionSeq;
     rootEl = document.createElement("div");
     rootEl.className = "modal-backdrop trellis-wizard-backdrop";
     rootEl.addEventListener("click", function (ev) {
@@ -297,32 +284,24 @@
         if (picked.length === 0) return;
         captureUserName();
         renderLoading();
-        requestAddPreview(picked);
+        var api = bridge.api || {};
+        Promise.resolve()
+          .then(function () {
+            var payload = { paths: [state.project.path], platforms: picked };
+            // 只有首次 init 才带 `-u`：加平台时 CLI 会忽略它，把目录名显示在
+            // 预览命令里只会让用户以为身份被改成了目录名。
+            if (isFirstInstall()) payload.userName = state.userName;
+            return api.trellisPreview(payload);
+          })
+          .then(function (res) {
+            var addPlan = res && Array.isArray(res.addPlan) ? res.addPlan[0] : null;
+            renderAddPreview(picked, addPlan);
+          })
+          .catch(function (err) {
+            renderError(err);
+          });
       },
     });
-  }
-
-  function requestAddPreview(picked) {
-    var api = (state.bridge && state.bridge.api) || {};
-    var session = state.session;
-    var project = state.project;
-    var payload = { paths: [project.path], platforms: picked };
-    // 只有首次 init 才带 `-u`：加平台时 CLI 会忽略它，把目录名显示在
-    // 预览命令里只会让用户以为身份被改成了目录名。
-    if (isFirstInstall()) payload.userName = state.userName;
-    Promise.resolve()
-      .then(function () {
-        return api.trellisPreview(payload);
-      })
-      .then(function (res) {
-        if (!isLive(session)) return;
-        var addPlan = res && Array.isArray(res.addPlan) ? res.addPlan[0] : null;
-        renderAddPreview(picked, addPlan);
-      })
-      .catch(function (err) {
-        if (!isLive(session)) return;
-        renderError(err);
-      });
   }
 
   function renderAddPreview(picked, addPlan) {
@@ -386,20 +365,19 @@
       '<p class="trellis-wizard-hint">' + escapeHtml(tr(bridge, "settingsTrellisWizardRunning")) + '</p>',
       "");
     var api = bridge.api || {};
-    var session = state.session;
-    var project = state.project;
-    // 与 preview 同源：只有首次 init 才带身份，加平台传 undefined
-    var userName = isFirstInstall() ? state.userName : undefined;
     Promise.resolve()
       .then(function () {
-        return api.trellisAddPlatform(project.path, added, userName);
+        // 与 preview 同源：只有首次 init 才带身份，加平台传 undefined
+        return api.trellisAddPlatform(
+          state.project.path,
+          added,
+          isFirstInstall() ? state.userName : undefined,
+        );
       })
       .then(function (res) {
-        if (!isLive(session)) return;
         finishFlow(res && res.status === "ok", res && res.output);
       })
       .catch(function (err) {
-        if (!isLive(session)) return;
         finishFlow(false, err && err.message ? err.message : String(err));
       });
   }
@@ -412,10 +390,6 @@
     openShell(bridge, "upgrade", project);
     renderLoading();
     var api = bridge.api || {};
-    var session = state.session;
-    // Set by the dry-run step; stays null when that step bailed out (stale
-    // session or error already rendered) so the preview step is a no-op.
-    var dryResult = null;
     Promise.resolve()
       .then(function () {
         // REAL dry run (09-25): the user asked for the actual
@@ -424,22 +398,19 @@
         return api.trellisDryRun(project.path);
       })
       .then(function (res) {
-        if (!isLive(session)) return;
         if (!res || res.status !== "ok" || !res.result) {
           renderError(new Error(res && res.message ? res.message : "dry run failed"));
           return;
         }
-        dryResult = res.result;
+        var plan = null;
         // Version context still comes from the pure scan (current→to).
-        return api.trellisPreview({ paths: [project.path] });
-      })
-      .then(function (pv) {
-        if (!dryResult || !isLive(session)) return;
-        var plan = pv && Array.isArray(pv.plan) ? pv.plan[0] : null;
-        renderUpgradeDryRun(plan, dryResult);
+        return Promise.resolve(api.trellisPreview({ paths: [project.path] }))
+          .then(function (pv) {
+            plan = pv && Array.isArray(pv.plan) ? pv.plan[0] : null;
+            renderUpgradeDryRun(plan, res.result);
+          });
       })
       .catch(function (err) {
-        if (!isLive(session)) return;
         renderError(err);
       });
   }
@@ -484,24 +455,20 @@
       '<p class="trellis-wizard-hint">' + escapeHtml(tr(bridge, "settingsTrellisWizardRunning")) + '</p>',
       "");
     var api = bridge.api || {};
-    var session = state.session;
-    var project = state.project;
     var unsubscribe = null;
     if (typeof api.onTrellisProgress === "function") {
       unsubscribe = api.onTrellisProgress(function () { /* phase feed; result arrives via the promise */ });
     }
     Promise.resolve()
       .then(function () {
-        return api.trellisUpgradeProject(project.path);
+        return api.trellisUpgradeProject(state.project.path);
       })
       .then(function (res) {
         if (unsubscribe) { try { unsubscribe(); } catch (err) { /* noop */ } }
-        if (!isLive(session)) return;
         finishFlow(res && res.status === "ok", res && res.output);
       })
       .catch(function (err) {
         if (unsubscribe) { try { unsubscribe(); } catch (err2) { /* noop */ } }
-        if (!isLive(session)) return;
         finishFlow(false, err && err.message ? err.message : String(err));
       });
   }

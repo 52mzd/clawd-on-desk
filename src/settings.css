@@ -1411,6 +1411,15 @@ html, body {
 .bubble-policy-warning {
   color: var(--accent);
 }
+.size-readout.over-max {
+  color: var(--accent);
+}
+.size-over-max-hint {
+  color: var(--accent);
+}
+.size-over-max-hint[hidden] {
+  display: none;
+}
 .bubble-policy-controls {
   display: inline-flex;
   align-items: center;
@@ -5350,6 +5359,12 @@ html, body {
   margin: 4px 0 12px;
   color: var(--text-secondary, #8a8a8a);
 }
+/* One wrapper per official card row so progress patches can rebuild just that
+   row. contents keeps the children participating in the footer's flex layout
+   exactly as if they had been appended directly. */
+.theme-official-controls {
+  display: contents;
+}
 .theme-official-note {
   flex: 0 0 100%;
   font-size: 12px;
@@ -5438,6 +5453,123 @@ html, body {
   font-size: 12px;
   color: var(--text-secondary);
   white-space: nowrap;
+}
+/* The actual binary the panel's CLI calls resolved to — shown next to the
+   version so a stale duplicate install is visible at a glance. */
+.trellis-cli-path {
+  font-size: 11px;
+  color: var(--text-secondary);
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  user-select: text;
+}
+/* 10-01 multi-detect (revised; ui-flow): one inline flow per install —
+   "N. <rank badge> Version: v Install path: p". The 16px horizontal padding
+   matches .row so the entries line up with the "Detected N installs"
+   heading above them (the field-report alignment complaint). The older
+   entry adds an indented tinted command block — displayed, never executed. */
+.trellis-cli-install {
+  min-width: 0;
+  margin-top: 4px;
+  padding: 0 16px;
+}
+.trellis-cli-install + .trellis-cli-install {
+  margin-top: 8px;
+}
+/* Last entry carries the cleanup block; without a bottom pad its rounded
+   corners sit right on the card's own bottom border (field report). Match
+   .row's 12px rhythm. */
+.trellis-cli-install:last-child {
+  padding-bottom: 12px;
+}
+.trellis-cli-install-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.trellis-cli-install-num {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.trellis-cli-install-meta {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.trellis-cli-install-path {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  opacity: 0.9;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  user-select: text;
+}
+.trellis-cli-install-badge {
+  flex: 0 0 auto;
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+/* Same palette as .agent-badge.integration (green = newest). */
+.trellis-cli-install-badge.is-latest {
+  background: rgba(16, 120, 87, 0.1);
+  color: #187253;
+}
+/* Same palette as .agent-badge.integration.hook-warning (amber = removable). */
+.trellis-cli-install-badge.is-outdated {
+  background: rgba(180, 120, 20, 0.14);
+  color: #9a6700;
+}
+@media (prefers-color-scheme: dark) {
+  .trellis-cli-install-badge.is-latest {
+    background: rgba(140, 233, 154, 0.12);
+    color: #8ce99a;
+  }
+  .trellis-cli-install-badge.is-outdated {
+    background: rgba(246, 195, 67, 0.16);
+    color: #f6c343;
+  }
+}
+.trellis-cli-install-cmd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  margin-left: 8px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.05);
+  min-width: 0;
+}
+@media (prefers-color-scheme: dark) {
+  .trellis-cli-install-cmd { background: rgba(255, 255, 255, 0.07); }
+}
+.trellis-cli-install-cmd-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-secondary);
+  opacity: 0.8;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  user-select: text;
 }
 .trellis-command {
   flex: 1;

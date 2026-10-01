@@ -36,15 +36,18 @@ const IDENTITY_OVERRIDES = new Map(Object.entries({
   "yldzfurkann0@gmail.com": "xfurqan0",
   "shiji.shi@taobao.com": "brantshin",
   "vonsdite@gmail.com": "VonSdite",
-  "52mzd@users.noreply.github.com": null,
+  "gzx2369563025@gmail.com": "gzx19990101",
+  "lyh169347@163.com": "ypjn",
+  "s.jin1448@gmail.com": "jin-codes",
   // fork-only exclusions (32c45083 follow-up): the fork's release window spans
   // official post-v1.1.0 commits whose authors upstream has not registered
   // yet (wait for upstream), plus this fork's own committer identities —
-  // no upstream PR, no contributor-wall entry.
+  // no upstream PR, no contributor-wall entry. (09-30 upstream sync: gzx and
+  // jin now have merged upstream PRs, so their fork nulls were dropped in
+  // favor of the upstream registrations above.)
+  "52mzd@users.noreply.github.com": null,
   "dae@mac-studio.local": null,
   "200491821+hanzhe-one@users.noreply.github.com": null,
-  "gzx2369563025@gmail.com": null,
-  "s.jin1448@gmail.com": null,
 }));
 
 function parseVersion(value) {
