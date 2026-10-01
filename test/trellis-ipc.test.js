@@ -334,6 +334,29 @@ describe("trellis IPC registration", () => {
     assert.strictEqual(bogusResult.projects[0].channel, "latest");
   });
 
+  it("ships the multi-install list through the scan payload unchanged", async () => {
+    // 10-01 multi-detect: the renderer cannot build cleanup commands (no
+    // requires), so the cli-layer installs list must ride the global payload.
+    const installs = [
+      { path: "/h/.npm-global/bin/trellis", version: "0.7.0-beta.4", active: true, cleanup: null },
+      {
+        path: "/usr/local/bin/trellis",
+        version: "0.3.10",
+        active: false,
+        cleanup: "sudo npm uninstall -g @mindfoldhq/trellis --prefix /usr/local",
+      },
+    ];
+    const cli = makeFakeCli({
+      async readGlobalVersion() {
+        return { installed: true, version: "0.7.0-beta.4", error: null, path: installs[0].path, installs };
+      },
+    });
+    const h = createHarness({ cli });
+    const result = await h.ipcMain.invoke("settings:trellis-scan");
+    assert.strictEqual(result.status, "ok");
+    assert.deepStrictEqual(result.global.installs, installs);
+  });
+
   it("attaches the read-only active-task digest to scanned projects", async () => {
     const root = makeTmpDir();
     const projectPath = makeProject(root, "digest");

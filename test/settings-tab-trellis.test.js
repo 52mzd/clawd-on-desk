@@ -128,6 +128,7 @@ function makeStrings() {
     "trellisRootUnreadable", "trellisNoProjectsUnreadable", "trellisChannelAuto",
     "trellisUpgradeAllCount",
     "trellisActiveTasks", "trellisPhasePlan", "trellisPhaseExecute", "trellisPhaseFinish", "trellisPhaseDone",
+    "trellisCliInstallsTitle", "trellisCliInstallActive", "trellisCliInstallExtra",
   ];
   const strings = {};
   for (const key of keys) strings[key] = key;
@@ -136,6 +137,7 @@ function makeStrings() {
   strings.trellisStaleRecord = "stale:{platforms}";
   strings.trellisStaleFix = "fix:{platform}";
   strings.trellisActiveTasks = "active:{tasks}";
+  strings.trellisCliInstallsTitle = "installs:{count}";
   strings.trellisPhasePlan = "P-plan";
   strings.trellisPhaseExecute = "P-execute";
   strings.trellisPhaseFinish = "P-finish";
@@ -147,6 +149,7 @@ function loadTab({ snapshot = { trellisScanRoots: [] }, settingsAPI = {} } = {})
   const disposables = [];
   const toasts = [];
   const progressSubscriptions = [];
+  const clipboardWrites = [];
   let subscribeCount = 0;
   const source = fs.readFileSync(TAB_SOURCE, "utf8");
   const strings = makeStrings();
@@ -177,7 +180,9 @@ function loadTab({ snapshot = { trellisScanRoots: [] }, settingsAPI = {} } = {})
   context.document = {
     createElement: (tagName) => new FakeElement(tagName),
   };
-  context.navigator = { clipboard: { writeText: () => Promise.resolve() } };
+  context.navigator = {
+    clipboard: { writeText: (text) => { clipboardWrites.push(text); return Promise.resolve(); } },
+  };
   context.window = { settingsAPI: api };
   vm.runInNewContext(source, context);
 
@@ -231,7 +236,7 @@ function loadTab({ snapshot = { trellisScanRoots: [] }, settingsAPI = {} } = {})
   };
   context.ClawdSettingsTabTrellis.init(core);
   return {
-    core, helpers, api, calls, disposables, toasts, progressSubscriptions,
+    core, helpers, api, calls, disposables, toasts, progressSubscriptions, clipboardWrites,
     get subscribeCount() { return subscribeCount; },
   };
 }
@@ -303,6 +308,80 @@ describe("settings-tab-trellis", () => {
     });
     assert.strictEqual(sawPathNode, false, "no path, no node — nothing to guess");
   });
+
+  // 10-01 multi-detect: two installs render as a list — Active first, the
+  // redundant one badged with its version and a copy-only cleanup button.
+  it("lists every discovered install with an Active/Redundant badge and a copy-only cleanup", async () => {
+    const session = loadTab();
+    const cleanup = "sudo npm uninstall -g @mindfoldhq/trellis --prefix /usr/local";
+    session.api.trellisScan = () => Promise.resolve(makeScanResult({
+      global: {
+        installed: true,
+        version: "0.7.0-beta.4",
+        path: "/h/.npm-global/bin/trellis",
+        installs: [
+          { path: "/h/.npm-global/bin/trellis", version: "0.7.0-beta.4", active: true, cleanup: null },
+          { path: "/usr/local/bin/trellis", version: "0.3.10", active: false, cleanup },
+        ],
+      },
+    }));
+    findButton(renderPanel(session.core, session), "trellisRefresh").dispatch("click");
+    await flushPromises();
+
+    const panel = renderPanel(session.core, session);
+    const rendered = texts(panel);
+    assert.ok(rendered.includes("installs:2"), "the count reaches the copy");
+    assert.ok(rendered.some((text) => text.includes("/h/.npm-global/bin/trellis")));
+    assert.ok(rendered.some((text) => text.includes("/usr/local/bin/trellis")));
+    assert.ok(rendered.includes("trellisCliInstallActive"));
+    assert.ok(rendered.includes("trellisCliInstallExtra · 0.3.10"), "the redundant badge carries its version");
+
+    // The copy button rides the redundant row only, and copies — never runs.
+    const extraRows = [];
+    walk(panel, (element) => {
+      const cls = typeof element.className === "string" ? element.className : "";
+      if (/\btrellis-cli-install-row\b/.test(cls) && cls.includes("is-extra")) extraRows.push(element);
+    });
+    assert.strictEqual(extraRows.length, 1);
+    const copyButton = findButton(extraRows[0], "trellisCopy");
+    assert.ok(copyButton, "the redundant row carries a copy button");
+    copyButton.dispatch("click");
+    await flushPromises();
+    assert.deepStrictEqual(session.clipboardWrites, [cleanup]);
+    assert.ok(session.toasts.includes("trellisCopied"));
+  });
+
+  it("renders no install list for a single install or a payload without installs", async () => {
+    const session = loadTab();
+    session.api.trellisScan = () => Promise.resolve(makeScanResult({
+      global: {
+        installed: true,
+        version: "0.6.17",
+        path: "/usr/local/bin/trellis",
+        installs: [{ path: "/usr/local/bin/trellis", version: "0.6.17", active: true, cleanup: null }],
+      },
+    }));
+    findButton(renderPanel(session.core, session), "trellisRefresh").dispatch("click");
+    await flushPromises();
+    assert.ok(!hasInstallRows(renderPanel(session.core, session)), "one install is the status quo, not a list");
+
+    // Old payload shape (no installs key at all) stays silent too.
+    session.api.trellisScan = () => Promise.resolve(makeScanResult({
+      global: { installed: true, version: "0.6.17", path: "/usr/local/bin/trellis" },
+    }));
+    findButton(renderPanel(session.core, session), "trellisRefresh").dispatch("click");
+    await flushPromises();
+    assert.ok(!hasInstallRows(renderPanel(session.core, session)), "missing installs renders nothing");
+  });
+
+  function hasInstallRows(root) {
+    let saw = false;
+    walk(root, (element) => {
+      const cls = typeof element.className === "string" ? element.className : "";
+      if (/\btrellis-cli-install-row\b/.test(cls)) saw = true;
+    });
+    return saw;
+  }
 
   it("renders the empty-state guidance before anything is scanned", () => {
     const { core } = loadTab();

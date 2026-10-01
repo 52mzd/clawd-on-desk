@@ -270,27 +270,74 @@ function augmentedCliPath(basePath, options = {}) {
   return parts.join(delimiter);
 }
 
-// Absolute path of the `trellis` the spawn PATH would actually run, or null.
-// Same lookup order as execFile: the first PATH entry carrying an executable
-// `trellis` wins. Pure fs — never spawns — and null on win32, where the spawn
-// goes through a shell that resolves `.cmd` shims this lookup cannot model.
-function resolveTrellisBinPath(basePath, options = {}) {
+// Every absolute `trellis` the spawn PATH would find, in PATH order — the
+// duplicate-install detector needs them all, not just the first hit. Pure fs —
+// never spawns — and [] on win32, where the spawn goes through a shell that
+// resolves `.cmd` shims this lookup cannot model.
+function scanTrellisBinPaths(basePath, options = {}) {
   const platform = options.platform || process.platform;
-  if (platform === "win32") return null;
+  if (platform === "win32") return [];
   const fsImpl = options.fs || fs;
-  const parts = String(basePath || "").split(":").filter(Boolean);
-  for (const dir of parts) {
+  const found = [];
+  for (const dir of String(basePath || "").split(":").filter(Boolean)) {
     const candidate = path.join(dir, TRELLIS_BIN);
     try {
       // statSync follows npm's bin symlink; accessSync proves executability.
       if (!fsImpl.statSync(candidate).isFile()) continue;
       fsImpl.accessSync(candidate, fsImpl.constants.X_OK);
-      return candidate;
+      found.push(candidate);
     } catch {
       // absent or not executable — keep scanning the remaining entries
     }
   }
-  return null;
+  return found;
+}
+
+// The first PATH hit — the one a bare `trellis` spawn resolves to — or null.
+function resolveTrellisBinPath(basePath, options = {}) {
+  return scanTrellisBinPaths(basePath, options)[0] ?? null;
+}
+
+// An npm prefix layout: <prefix>/lib/node_modules/@mindfoldhq/trellis/… — the
+// prefix is what `npm uninstall --prefix` needs.
+const NPM_LAYOUT_RE = new RegExp(`^(.+)/lib/node_modules/${REMOTE_PACKAGE.replaceAll("/", "\\/")}/`);
+
+// Quotes a shell word only when it needs it (whitespace or quotes inside).
+function shellQuote(value) {
+  return /[\s'"]/.test(value) ? `'${value.replace(/'/g, "'\\''")}'` : value;
+}
+
+// Builds the copy-to-terminal cleanup command for a redundant install.
+// Display/copy ONLY — nothing in this codebase ever executes the result.
+function buildCleanupCommand(binPath, options = {}) {
+  if (typeof binPath !== "string" || !binPath) return null;
+  const fsImpl = options.fs || fs;
+  let real;
+  try {
+    real = fsImpl.realpathSync(binPath);
+  } catch {
+    return null;
+  }
+  let command;
+  let probeDir;
+  const match = real.match(NPM_LAYOUT_RE);
+  if (match) {
+    // npm owns the layout: uninstall through npm, not raw rm.
+    command = `npm uninstall -g ${REMOTE_PACKAGE} --prefix ${shellQuote(match[1])}`;
+    probeDir = match[1];
+  } else {
+    command = `rm -f ${shellQuote(binPath)}`;
+    probeDir = path.dirname(binPath);
+  }
+  // Directories the user cannot write (system prefixes like /usr/local) need
+  // sudo; a probe failure reads as "not writable" so the command stays honest.
+  let writable = true;
+  try {
+    fsImpl.accessSync(probeDir, fsImpl.constants.W_OK);
+  } catch {
+    writable = false;
+  }
+  return writable ? command : `sudo ${command}`;
 }
 
 function createTrellisCli(options = {}) {
@@ -355,16 +402,40 @@ function createTrellisCli(options = {}) {
   }
 
   async function readGlobalVersion() {
-    const result = await run(TRELLIS_BIN, VERSION_ARGS, { timeoutMs: versionTimeoutMs });
-    const version = result.ok ? parseVersionOutput(result.stdout) : null;
+    // Every executable trellis on the SAME PATH a spawn would use, so the UI
+    // can show duplicate installs — not just the first hit (10-01 multi-detect).
+    const paths = scanTrellisBinPaths(executionEnv.PATH, { platform });
+    const installs = [];
+    let headline = null; // first hit — what a bare `trellis` spawn resolves to
+    for (const binPath of paths) {
+      const result = await run(binPath, VERSION_ARGS, { timeoutMs: versionTimeoutMs });
+      const entry = {
+        path: binPath,
+        version: result.ok ? parseVersionOutput(result.stdout) : null,
+        active: installs.length === 0,
+        // Copy-to-terminal cleanup hint for redundant installs; never executed.
+        cleanup: buildCleanupCommand(binPath),
+      };
+      installs.push(entry);
+      if (entry.active) {
+        headline = {
+          ok: result.ok,
+          version: entry.version,
+          error: result.ok ? null : result.message,
+        };
+      }
+    }
+    if (!headline) {
+      // No trellis anywhere on the PATH: "not installed" is a state, not an
+      // error — there was no spawn to fail.
+      return { installed: false, version: null, error: null, path: null, installs: [] };
+    }
     return {
-      installed: result.ok,
-      version,
-      error: result.ok ? null : result.message,
-      // Resolved with the SAME PATH the spawn above used, so what the UI
-      // shows is where that version actually came from — the one clue that
-      // makes a stale duplicate install visible next to the version number.
-      path: resolveTrellisBinPath(executionEnv.PATH, { platform }),
+      installed: headline.ok,
+      version: headline.version,
+      error: headline.error,
+      path: paths[0],
+      installs,
     };
   }
 
@@ -538,6 +609,8 @@ module.exports = {
   createTrellisCli,
   augmentedCliPath,
   resolveTrellisBinPath,
+  scanTrellisBinPaths,
+  buildCleanupCommand,
   resolveUserName,
   buildInitArgs,
   normalizeUserName,

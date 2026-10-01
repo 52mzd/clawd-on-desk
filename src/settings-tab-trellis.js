@@ -813,6 +813,32 @@ function openUpgradePreviewWizard(project) {
       cliPath.title = global.path;
       control.appendChild(cliPath);
     }
+    // Multiple installs (10-01 multi-detect): show them all — the first PATH
+    // hit is Active, the rest are Redundant and carry a copy-to-terminal
+    // cleanup command (built in main; nothing here ever executes it).
+    if (Array.isArray(global.installs) && global.installs.length > 1) {
+      rows.push(buildDescRow(tf("trellisCliInstallsTitle", { count: global.installs.length })));
+      for (const install of global.installs) {
+        if (!install || typeof install.path !== "string" || !install.path) continue;
+        const installRow = document.createElement("div");
+        installRow.className = `trellis-cli-install-row ${install.active ? "is-active" : "is-extra"}`;
+        const badge = document.createElement("span");
+        badge.className = "trellis-cli-install-badge";
+        badge.textContent = install.active
+          ? t("trellisCliInstallActive")
+          : `${t("trellisCliInstallExtra")}${install.version ? ` · ${install.version}` : ""}`;
+        const installPath = document.createElement("span");
+        installPath.className = "trellis-cli-install-path";
+        installPath.textContent = install.path;
+        installPath.title = install.path;
+        installRow.appendChild(badge);
+        installRow.appendChild(installPath);
+        if (!install.active && typeof install.cleanup === "string" && install.cleanup) {
+          installRow.appendChild(buildCopyButton(install.cleanup));
+        }
+        rows.push(installRow);
+      }
+    }
     const target = document.createElement("span");
     target.className = "trellis-version";
     target.textContent = `${t("trellisGlobalUpgradeTarget")}:`;

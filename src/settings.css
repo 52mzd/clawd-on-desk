@@ -5452,6 +5452,39 @@ html, body {
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   user-select: text;
 }
+/* 10-01 multi-detect: one row per discovered CLI install — Active (first PATH
+   hit) vs Redundant, each redundant row carrying a copy-only cleanup command. */
+.trellis-cli-install-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  min-width: 0;
+}
+.trellis-cli-install-badge {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 500;
+}
+.trellis-cli-install-row.is-active .trellis-cli-install-badge {
+  color: var(--text-secondary);
+  opacity: 0.9;
+}
+.trellis-cli-install-row.is-extra .trellis-cli-install-badge {
+  color: var(--warning-action);
+}
+.trellis-cli-install-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  opacity: 0.8;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  user-select: text;
+}
 .trellis-command {
   flex: 1;
   display: flex;

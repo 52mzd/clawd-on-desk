@@ -11,6 +11,8 @@ const {
   createTrellisCli,
   augmentedCliPath,
   resolveTrellisBinPath,
+  scanTrellisBinPaths,
+  buildCleanupCommand,
   resolveUserName,
   buildInitArgs,
   normalizeUserName,
@@ -68,6 +70,16 @@ function makeExecFileStub(handlers = {}) {
 
 function cliWith(stub, overrides = {}) {
   return createTrellisCli({ execFileImpl: stub, platform: "darwin", ...overrides });
+}
+
+// A tmp dir with a real executable `trellis`: readGlobalVersion resolves the
+// spawn bin via fs, so tests point PATH at dirs that genuinely carry one.
+function makeBinDir() {
+  const dir = makeTmpDir();
+  const bin = path.join(dir, "trellis");
+  fs.writeFileSync(bin, "#!/bin/sh\n");
+  fs.chmodSync(bin, 0o755);
+  return dir;
 }
 
 describe("argv contract", () => {
@@ -444,38 +456,92 @@ describe("failure handling", () => {
 
 describe("readGlobalVersion", () => {
   it("parses a version with a v prefix and trailing newline", async () => {
-    const stub = makeExecFileStub({ trellis: { stdout: "v0.6.17\n" } });
-    // An isolated PATH keeps `path` a stable null — this machine's real PATH
-    // may carry a trellis binary, and the assertion is byte-exact.
-    const result = await cliWith(stub, { env: { PATH: "/nonexistent" } }).readGlobalVersion();
-    assert.deepStrictEqual(result, { installed: true, version: "0.6.17", error: null, path: null });
+    const binDir = makeBinDir();
+    const binPath = path.join(binDir, "trellis");
+    const stub = makeExecFileStub({ [binPath]: { stdout: "v0.6.17\n" } });
+    const result = await cliWith(stub, { env: { PATH: binDir } }).readGlobalVersion();
+    // A tmp dir carries a plain (non-npm-layout) writable bin, so the cleanup
+    // hint is a plain rm — asserted byte-exact alongside the rest.
+    assert.deepStrictEqual(result, {
+      installed: true,
+      version: "0.6.17",
+      error: null,
+      path: binPath,
+      installs: [{ path: binPath, version: "0.6.17", active: true, cleanup: `rm -f ${binPath}` }],
+    });
     assert.deepStrictEqual(stub.calls[0].args, ["--version"]);
   });
 
   it("reports the resolved binary path alongside the version", async () => {
-    const binDir = makeTmpDir();
+    const binDir = makeBinDir();
     const binPath = path.join(binDir, "trellis");
-    fs.writeFileSync(binPath, "#!/bin/sh\necho 0.6.17\n");
-    fs.chmodSync(binPath, 0o755);
-    const stub = makeExecFileStub({ trellis: { stdout: "0.6.17\n" } });
+    const stub = makeExecFileStub({ [binPath]: { stdout: "0.6.17\n" } });
     const result = await cliWith(stub, { env: { PATH: binDir } }).readGlobalVersion();
     assert.strictEqual(result.installed, true);
     assert.strictEqual(result.path, binPath);
   });
 
-  it("reports not installed when the binary is missing", async () => {
+  it("lists every install with its own version and an active marker", async () => {
+    const fresh = makeBinDir();
+    const fossil = makeBinDir();
+    const freshBin = path.join(fresh, "trellis");
+    const fossilBin = path.join(fossil, "trellis");
     const stub = makeExecFileStub({
-      trellis: { err: Object.assign(new Error("not found"), { code: "ENOENT" }) },
+      [freshBin]: { stdout: "0.7.0-beta.4\n" },
+      [fossilBin]: { stdout: "0.3.10\n" },
     });
-    const result = await cliWith(stub).readGlobalVersion();
+    const result = await cliWith(stub, { env: { PATH: `${fresh}:${fossil}` } }).readGlobalVersion();
+    assert.strictEqual(result.installed, true);
+    assert.strictEqual(result.version, "0.7.0-beta.4");
+    assert.strictEqual(result.path, freshBin);
+    assert.strictEqual(result.installs.length, 2);
+    assert.deepStrictEqual(result.installs[0], {
+      path: freshBin,
+      version: "0.7.0-beta.4",
+      active: true,
+      cleanup: `rm -f ${freshBin}`, // tmp bin: plain layout, writable
+    });
+    assert.deepStrictEqual(result.installs[1], {
+      path: fossilBin,
+      version: "0.3.10",
+      active: false,
+      cleanup: `rm -f ${fossilBin}`,
+    });
+
+    // PATH order decides Active — not version numbers.
+    const flipped = await cliWith(stub, { env: { PATH: `${fossil}:${fresh}` } }).readGlobalVersion();
+    assert.strictEqual(flipped.path, fossilBin);
+    assert.strictEqual(flipped.version, "0.3.10");
+    assert.strictEqual(flipped.installs[0].active, true);
+    assert.strictEqual(flipped.installs[1].active, false);
+  });
+
+  it("reports not installed with zero spawns when the PATH carries no trellis", async () => {
+    const stub = makeExecFileStub({ trellis: { stdout: "0.6.17\n" } });
+    const result = await cliWith(stub, { env: { PATH: "/nonexistent" } }).readGlobalVersion();
+    // No fs hit → no spawn at all: "not installed" is a state, not an error.
+    assert.deepStrictEqual(result, { installed: false, version: null, error: null, path: null, installs: [] });
+    assert.strictEqual(stub.calls.length, 0);
+  });
+
+  it("reports a failed spawn when a found binary will not run", async () => {
+    const binDir = makeBinDir();
+    const binPath = path.join(binDir, "trellis");
+    const stub = makeExecFileStub({
+      [binPath]: { err: Object.assign(new Error("not found"), { code: "ENOENT" }) },
+    });
+    const result = await cliWith(stub, { env: { PATH: binDir } }).readGlobalVersion();
     assert.strictEqual(result.installed, false);
     assert.strictEqual(result.version, null);
+    assert.strictEqual(result.path, binPath);
     assert.ok(result.error);
+    assert.strictEqual(result.installs.length, 1);
   });
 
   it("keeps installed true but version null when output is unparsable", async () => {
-    const stub = makeExecFileStub({ trellis: { stdout: "no version here" } });
-    const result = await cliWith(stub).readGlobalVersion();
+    const binDir = makeBinDir();
+    const stub = makeExecFileStub({ [path.join(binDir, "trellis")]: { stdout: "no version here" } });
+    const result = await cliWith(stub, { env: { PATH: binDir } }).readGlobalVersion();
     assert.strictEqual(result.installed, true);
     assert.strictEqual(result.version, null);
   });
@@ -492,8 +558,9 @@ describe("readGlobalVersion", () => {
       "0.7.0-beta.4",
       "",
     ].join("\n");
-    const stub = makeExecFileStub({ trellis: { stdout } });
-    const result = await cliWith(stub).readGlobalVersion();
+    const binDir = makeBinDir();
+    const stub = makeExecFileStub({ [path.join(binDir, "trellis")]: { stdout } });
+    const result = await cliWith(stub, { env: { PATH: binDir } }).readGlobalVersion();
     assert.strictEqual(result.version, "0.7.0-beta.4");
     assert.notStrictEqual(result.version, "0.7.0-beta.3", "must not report the project's version");
   });
@@ -511,8 +578,9 @@ describe("readGlobalVersion", () => {
       "0.7.0-beta.4",
       "",
     ].join("\n");
-    const stub = makeExecFileStub({ trellis: { stdout } });
-    const result = await cliWith(stub).readGlobalVersion();
+    const binDir = makeBinDir();
+    const stub = makeExecFileStub({ [path.join(binDir, "trellis")]: { stdout } });
+    const result = await cliWith(stub, { env: { PATH: binDir } }).readGlobalVersion();
     assert.strictEqual(result.version, "0.7.0-beta.4");
     assert.notStrictEqual(result.version, "9.9.9", "must not pick up the prose project version");
   });
@@ -557,14 +625,14 @@ describe("fetchRemoteChannels", () => {
 describe("upgradeGlobal", () => {
   it("runs trellis upgrade and re-reads the version", async () => {
     let version = "0.6.17";
+    const binDir = makeBinDir();
+    const binPath = path.join(binDir, "trellis");
     const stub = makeExecFileStub({
-      trellis: (call) => {
-        if (call.args[0] === "--version") return { stdout: `${version}\n` };
-        version = "0.7.0-beta.4";
-        return { stdout: "upgraded globally" };
-      },
+      // --version probes resolve to the absolute bin; upgrade still runs by name.
+      [binPath]: () => ({ stdout: `${version}\n` }),
+      trellis: () => { version = "0.7.0-beta.4"; return { stdout: "upgraded globally" }; },
     });
-    const result = await cliWith(stub).upgradeGlobal();
+    const result = await cliWith(stub, { env: { PATH: binDir } }).upgradeGlobal();
     assert.strictEqual(result.ok, true);
     assert.strictEqual(result.from, "0.6.17");
     assert.strictEqual(result.to, "0.7.0-beta.4");
@@ -716,5 +784,70 @@ describe("resolveTrellisBinPath", () => {
       resolveTrellisBinPath("C:\\bin", { platform: "win32" }),
       null,
     );
+  });
+});
+
+describe("scanTrellisBinPaths", () => {
+  it("collects every executable trellis in PATH order", () => {
+    const a = makeBinDir();
+    const b = makeBinDir();
+    assert.deepStrictEqual(scanTrellisBinPaths(`${a}:${b}:/nonexistent`), [
+      path.join(a, "trellis"),
+      path.join(b, "trellis"),
+    ]);
+  });
+
+  it("returns [] when nothing carries a trellis and on win32", () => {
+    assert.deepStrictEqual(scanTrellisBinPaths("/nonexistent:/also-no"), []);
+    assert.deepStrictEqual(scanTrellisBinPaths("/usr/bin", { platform: "win32" }), []);
+  });
+});
+
+describe("buildCleanupCommand", () => {
+  const NPM_REAL = "/usr/local/lib/node_modules/@mindfoldhq/trellis/bin/trellis.js";
+
+  // Only realpathSync + accessSync are consulted; W_OK probes are steerable.
+  function fakeFs({ real, writable = true }) {
+    return {
+      realpathSync: () => {
+        if (real === null) throw new Error("ENOENT");
+        return real;
+      },
+      accessSync: (_p, mode) => {
+        if (mode === fs.constants.W_OK && !writable) throw new Error("EACCES");
+      },
+      constants: fs.constants,
+    };
+  }
+
+  it("uninstalls through npm for an npm layout, sudo when the prefix is unwritable", () => {
+    assert.strictEqual(
+      buildCleanupCommand("/usr/local/bin/trellis", { fs: fakeFs({ real: NPM_REAL, writable: false }) }),
+      "sudo npm uninstall -g @mindfoldhq/trellis --prefix /usr/local",
+    );
+    assert.strictEqual(
+      buildCleanupCommand("/h/.npm-global/bin/trellis", {
+        fs: fakeFs({ real: "/h/.npm-global/lib/node_modules/@mindfoldhq/trellis/bin/trellis.js" }),
+      }),
+      "npm uninstall -g @mindfoldhq/trellis --prefix /h/.npm-global",
+    );
+  });
+
+  it("falls back to rm for a non-npm layout, quoting paths with spaces", () => {
+    assert.strictEqual(
+      buildCleanupCommand("/opt/weird/trellis", { fs: fakeFs({ real: "/opt/weird/trellis" }) }),
+      "rm -f /opt/weird/trellis",
+    );
+    assert.strictEqual(
+      buildCleanupCommand("/Applications/My App/bin/trellis", {
+        fs: fakeFs({ real: "/somewhere/else", writable: false }),
+      }),
+      "sudo rm -f '/Applications/My App/bin/trellis'",
+    );
+  });
+
+  it("returns null when the realpath probe fails or the input is empty", () => {
+    assert.strictEqual(buildCleanupCommand("/gone/bin/trellis", { fs: fakeFs({ real: null }) }), null);
+    assert.strictEqual(buildCleanupCommand("", { fs: fakeFs({ real: NPM_REAL }) }), null);
   });
 });
