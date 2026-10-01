@@ -238,6 +238,13 @@ function openUpgradePreviewWizard(project) {
     return row;
   }
 
+  function buildInstallBadge(text, cls) {
+    const badge = document.createElement("span");
+    badge.className = `trellis-cli-install-badge ${cls}`;
+    badge.textContent = text;
+    return badge;
+  }
+
   function buildCopyButton(text) {
     return helpers.buildButton({
       label: t("trellisCopy"),
@@ -813,30 +820,51 @@ function openUpgradePreviewWizard(project) {
       cliPath.title = global.path;
       control.appendChild(cliPath);
     }
-    // Multiple installs (10-01 multi-detect): show them all — the first PATH
-    // hit is Active, the rest are Redundant and carry a copy-to-terminal
-    // cleanup command (built in main; nothing here ever executes it).
+    // Multiple installs (10-01 multi-detect; revised to version rank): show
+    // them all — "in use by Clawd" marks what THIS app resolves (GUI PATH
+    // order), while "older (safe to remove)" is decided by version age in
+    // main, never by PATH rank. The cleanup command is displayed as text with
+    // a copy button; nothing here ever executes it.
     if (Array.isArray(global.installs) && global.installs.length > 1) {
       rows.push(buildDescRow(tf("trellisCliInstallsTitle", { count: global.installs.length })));
       for (const install of global.installs) {
         if (!install || typeof install.path !== "string" || !install.path) continue;
+        const wrap = document.createElement("div");
+        wrap.className = "trellis-cli-install";
         const installRow = document.createElement("div");
-        installRow.className = `trellis-cli-install-row ${install.active ? "is-active" : "is-extra"}`;
-        const badge = document.createElement("span");
-        badge.className = "trellis-cli-install-badge";
-        badge.textContent = install.active
-          ? t("trellisCliInstallActive")
-          : `${t("trellisCliInstallExtra")}${install.version ? ` · ${install.version}` : ""}`;
+        installRow.className = "trellis-cli-install-row";
         const installPath = document.createElement("span");
         installPath.className = "trellis-cli-install-path";
         installPath.textContent = install.path;
         installPath.title = install.path;
-        installRow.appendChild(badge);
         installRow.appendChild(installPath);
-        if (!install.active && typeof install.cleanup === "string" && install.cleanup) {
-          installRow.appendChild(buildCopyButton(install.cleanup));
+        if (install.active === true) {
+          installRow.appendChild(buildInstallBadge(t("trellisCliInstallActive"), "is-in-use"));
         }
-        rows.push(installRow);
+        const outdated = install.outdated === true;
+        installRow.appendChild(buildInstallBadge(
+          outdated ? t("trellisCliInstallExtra") : t("trellisCliInstallLatest"),
+          outdated ? "is-outdated" : "is-latest",
+        ));
+        if (install.version) {
+          const version = document.createElement("span");
+          version.className = "trellis-cli-install-version";
+          version.textContent = install.version;
+          installRow.appendChild(version);
+        }
+        wrap.appendChild(installRow);
+        if (outdated && typeof install.cleanup === "string" && install.cleanup) {
+          const cmdRow = document.createElement("div");
+          cmdRow.className = "trellis-cli-install-cmd";
+          const cmdText = document.createElement("span");
+          cmdText.className = "trellis-cli-install-cmd-text";
+          cmdText.textContent = install.cleanup;
+          cmdText.title = install.cleanup;
+          cmdRow.appendChild(cmdText);
+          cmdRow.appendChild(buildCopyButton(install.cleanup));
+          wrap.appendChild(cmdRow);
+        }
+        rows.push(wrap);
       }
     }
     const target = document.createElement("span");

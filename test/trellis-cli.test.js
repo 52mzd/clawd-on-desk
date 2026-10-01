@@ -13,6 +13,7 @@ const {
   resolveTrellisBinPath,
   scanTrellisBinPaths,
   buildCleanupCommand,
+  compareVersions,
   resolveUserName,
   buildInitArgs,
   normalizeUserName,
@@ -467,7 +468,7 @@ describe("readGlobalVersion", () => {
       version: "0.6.17",
       error: null,
       path: binPath,
-      installs: [{ path: binPath, version: "0.6.17", active: true, cleanup: `rm -f ${binPath}` }],
+      installs: [{ path: binPath, version: "0.6.17", active: true, cleanup: `rm -f ${binPath}`, outdated: false }],
     });
     assert.deepStrictEqual(stub.calls[0].args, ["--version"]);
   });
@@ -500,20 +501,49 @@ describe("readGlobalVersion", () => {
       version: "0.7.0-beta.4",
       active: true,
       cleanup: `rm -f ${freshBin}`, // tmp bin: plain layout, writable
+      outdated: false,
     });
     assert.deepStrictEqual(result.installs[1], {
       path: fossilBin,
       version: "0.3.10",
       active: false,
       cleanup: `rm -f ${fossilBin}`,
+      outdated: true,
     });
 
-    // PATH order decides Active — not version numbers.
+    // PATH order decides Active — never outdated. Flipping the PATH swaps the
+    // active marker but the older install stays the removable one: the GUI's
+    // PATH order is not the user's shell PATH order, so version age (not PATH
+    // rank) is the only safe "safe to remove" signal.
     const flipped = await cliWith(stub, { env: { PATH: `${fossil}:${fresh}` } }).readGlobalVersion();
     assert.strictEqual(flipped.path, fossilBin);
     assert.strictEqual(flipped.version, "0.3.10");
     assert.strictEqual(flipped.installs[0].active, true);
     assert.strictEqual(flipped.installs[1].active, false);
+    assert.strictEqual(flipped.installs[0].outdated, true);
+    assert.strictEqual(flipped.installs[1].outdated, false);
+  });
+
+  it("never flags an unparsable or equal-version install as outdated", async () => {
+    // An unreadable version must not be recommended for deletion, and equal
+    // versions are not "older" than each other — only a strictly newer
+    // install somewhere else makes one removable.
+    const unreadable = makeBinDir();
+    const twinA = makeBinDir();
+    const twinB = makeBinDir();
+    const stub = makeExecFileStub({
+      [path.join(unreadable, "trellis")]: { stdout: "no version here" },
+      [path.join(twinA, "trellis")]: { stdout: "0.6.17\n" },
+      [path.join(twinB, "trellis")]: { stdout: "0.6.17\n" },
+    });
+    const result = await cliWith(stub, {
+      env: { PATH: `${unreadable}:${twinA}:${twinB}` },
+    }).readGlobalVersion();
+    assert.strictEqual(result.installs.length, 3);
+    assert.strictEqual(result.installs[0].version, null);
+    assert.strictEqual(result.installs[0].outdated, false, "unparsable stays unflagged");
+    assert.strictEqual(result.installs[1].outdated, false, "equal versions tie");
+    assert.strictEqual(result.installs[2].outdated, false, "equal versions tie");
   });
 
   it("reports not installed with zero spawns when the PATH carries no trellis", async () => {
@@ -849,5 +879,30 @@ describe("buildCleanupCommand", () => {
   it("returns null when the realpath probe fails or the input is empty", () => {
     assert.strictEqual(buildCleanupCommand("/gone/bin/trellis", { fs: fakeFs({ real: null }) }), null);
     assert.strictEqual(buildCleanupCommand("", { fs: fakeFs({ real: NPM_REAL }) }), null);
+  });
+});
+
+describe("compareVersions", () => {
+  it("orders numeric segments and the exact same version as equal", () => {
+    assert.strictEqual(compareVersions("0.3.10", "0.7.0-beta.4"), -1);
+    assert.strictEqual(compareVersions("0.7.0-beta.4", "0.3.10"), 1);
+    assert.strictEqual(compareVersions("0.7.0-beta.4", "0.7.0-beta.4"), 0);
+  });
+
+  it("ranks a release above its prereleases", () => {
+    assert.strictEqual(compareVersions("1.0.0", "1.0.0-beta.4"), 1);
+    assert.strictEqual(compareVersions("1.0.0-beta.4", "1.0.0"), -1);
+  });
+
+  it("orders prereleases by identifier, numerics numerically and below alphanumerics", () => {
+    assert.strictEqual(compareVersions("1.0.0-beta.1", "1.0.0-beta.2"), -1);
+    assert.strictEqual(compareVersions("1.0.0-beta.2", "1.0.0-beta.2.1"), -1, "fewer identifiers rank lower");
+    assert.strictEqual(compareVersions("1.0.0-1", "1.0.0-alpha"), -1, "numeric identifier ranks below alphanumeric");
+  });
+
+  it("returns 0 for anything it cannot parse", () => {
+    assert.strictEqual(compareVersions("junk", "1.0.0"), 0);
+    assert.strictEqual(compareVersions(null, "1.0.0"), 0);
+    assert.strictEqual(compareVersions("", ""), 0);
   });
 });

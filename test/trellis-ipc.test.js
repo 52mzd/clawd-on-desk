@@ -338,12 +338,13 @@ describe("trellis IPC registration", () => {
     // 10-01 multi-detect: the renderer cannot build cleanup commands (no
     // requires), so the cli-layer installs list must ride the global payload.
     const installs = [
-      { path: "/h/.npm-global/bin/trellis", version: "0.7.0-beta.4", active: true, cleanup: null },
+      { path: "/h/.npm-global/bin/trellis", version: "0.7.0-beta.4", active: true, cleanup: null, outdated: false },
       {
         path: "/usr/local/bin/trellis",
         version: "0.3.10",
         active: false,
         cleanup: "sudo npm uninstall -g @mindfoldhq/trellis --prefix /usr/local",
+        outdated: true,
       },
     ];
     const cli = makeFakeCli({

@@ -38,10 +38,11 @@ paths:
 createTrellisCli({ execFileImpl?, env?, platform?, timeoutMs? })
 
 // 每条命令一个函数，返回值统一带 ok / output
-readGlobalVersion()                     // → { installed, version, path, error, installs }（10-01 起 path = 首命中二进制；installs = 全量安装 [{path, version, active, cleanup}]，PATH 序，active = 首命中；win32 installs 恒 []）
+readGlobalVersion()                     // → { installed, version, path, error, installs }（10-01 起 path = 首命中二进制；installs = 全量安装 [{path, version, active, cleanup, outdated}]，PATH 序，active = 首命中（GUI PATH 视角）；outdated = 存在**严格更新**可解析版本（10-01 修订：版本序，非 PATH 序）；win32 installs 恒 []）
 scanTrellisBinPaths(pathEnv, options?)  // → string[]；全量收集可执行 trellis（resolveTrellisBinPath 的复数版；win32 → []）
 resolveTrellisBinPath(pathEnv, options?) // → string | null = scanTrellisBinPaths(...)[0] ?? null
 buildCleanupCommand(binPath, options?)  // → string | null；可复制清理命令（npm 布局 `npm uninstall -g <pkg> --prefix <p>` / 非布局 `rm -f`；prefix 不可写加 sudo；realpath 失败 null）——**只显示不执行红线**
+compareVersions(a, b)                   // → -1|0|1；简化 semver（数值段、release > prerelease、prerelease 逐标识符、数字段<字母段）；任一解析失败 → 0（不可比 = 永不判旧）
 fetchRemoteChannels()                   // → { channels: {latest,beta,rc} } | { error }
 updateProject(projectPath)              // → { ok, from, to, output }
 addPlatforms(projectPath, platformIds)  // → { ok, added: string[], output }
@@ -1566,13 +1567,20 @@ registerTrellisIpc({ ..., env: { PATH: augmentedCliPath(process.env.PATH) } })
   （0.3.10），真身在 `~/.npm-global/bin`（不在旧增强列表）——GUI 调用化石 CLI，版本显示
   与终端对不上、`upgrade` 命令不存在。**PATH 找得到 ≠ 找得对**，所以有了下节
   `readGlobalVersion().path` 的可见性契约
-- **闭环（10-01 二段 multi-detect）**：`readGlobalVersion().installs` 列出**全部**安装
-  （PATH 序），首命中标 `active:true`，其余「多余」并带 `cleanup` 命令；设置页 ≥2 条时
-  渲染列表 + 复制按钮。三条硬约束：① `cleanup` 在 **cli 层生成**随 payload 下发——
-  renderer（vm 沙箱脚本）无法 require 主进程模块，且命令构造与 argv 冻结同一红线
-  （只在 main 构造）；② **app 绝不执行清理命令**——全链路无任何 spawn cleanup 的调用点，
-  用户复制到终端自己执行；③ PATH 无任何 trellis 时**零 spawn**——`installed:false` 的
-  `error:null`（「未装」是状态不是错误，旧版此处是 spawn ENOENT 的 error）
+- **闭环（10-01 二段 multi-detect；同日修订）**：`readGlobalVersion().installs` 列出**全部**
+  安装（PATH 序），每条带 `active`（GUI PATH 首命中 = **Clawd 自己调用的那个**，不是终端
+  真相）、`cleanup` 命令与 `outdated`；设置页 ≥2 条时渲染列表。**「可清理」判定是版本序
+  不是 PATH 序（修订根因）**：GUI 的增强 PATH 序（`/usr/local/bin` 在 `~/.npm-global/bin`
+  前）可与用户 shell PATH 序相反——按 PATH 序判「多余」会把用户终端真正在用的安装错标
+  可删（x86 实机实测踩中）；改为 `compareVersions` 严格旧才 `outdated:true`，版本解析
+  失败/同版本永不标。UI：路径列作左对齐锚点，徽标（「Clawd 当前使用」/「最新」/
+  「旧版（可清理）」）+ 版本靠右；outdated 行额外渲染**命令文本本体**（mono 可选中）+
+  复制按钮——复制什么必须可见，不留盲盒。四条硬约束：① `cleanup`/`outdated` 均在
+  **cli 层生成**随 payload 下发——renderer（vm 沙箱脚本）无法 require 主进程模块，且
+  命令构造与 argv 冻结同一红线（只在 main 构造）；② **app 绝不执行清理命令**——全链路
+  无任何 spawn cleanup 的调用点，用户复制到终端自己执行；③ PATH 无任何 trellis 时
+  **零 spawn**——`installed:false` 的 `error:null`（「未装」是状态不是错误）；④ 缺
+  `outdated` 字段的旧 payload 在渲染层按非旧版分支降级，不报错不渲染命令行
 
 ### 6. Tests Required
 
@@ -1585,8 +1593,10 @@ registerTrellisIpc({ ..., env: { PATH: augmentedCliPath(process.env.PATH) } })
 | 同上（10-01） | 四个用户级 bin 追加在 `~/.local/bin` 之后（既有命中不变） |
 | 同上（10-01） | nvm 版本目录全量追加、numeric 倒序、非目录项忽略、缺失不抛错 |
 | 同上（10-01 二段） | scanTrellisBinPaths 全量收集/无命中 []/win32 []；readGlobalVersion 双装 installs 两条、PATH 序定 active、version 各对应；PATH 无 trellis 零 spawn |
+| 同上（10-01 修订） | readGlobalVersion：**PATH 翻转只换 active 不换 outdated**（版本序判旧）；版本 null 永不 outdated；同版本互不标 |
+| 同上（10-01 修订） | compareVersions：数值段/release>prerelease/标识符序（数字段<字母段、少者低）/解析失败 0 |
 | 同上（10-01 二段） | buildCleanupCommand：npm 布局 uninstall --prefix、不可写 prefix 加 sudo、非布局 rm 回退、空格路径单引号、realpath 失败 null |
-| `test/settings-tab-trellis.test.js`（10-01 二段） | ≥2 条渲染列表（标题 count + Active/Redundant 徽标 + 版本）且多余行复制按钮写入剪贴板；单装/缺 installs 字段零渲染 |
+| `test/settings-tab-trellis.test.js`（10-01 修订） | ≥2 条渲染列表（三态徽标 + 逐行版本 + **命令文本可见** + 复制写剪贴板）；缺 outdated 旧 payload 降级零命令行；单装/缺 installs 零渲染 |
 | `test/trellis-ipc.test.js`（10-01 二段） | scan payload 的 `global.installs` 逐字节透传（renderer 零生成的前提） |
 | **缺失（TODO）** | `main.js` 调用点是否传了 `env` —— 目前无自动化守卫 |
 

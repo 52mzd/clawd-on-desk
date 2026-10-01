@@ -5452,8 +5452,13 @@ html, body {
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   user-select: text;
 }
-/* 10-01 multi-detect: one row per discovered CLI install — Active (first PATH
-   hit) vs Redundant, each redundant row carrying a copy-only cleanup command. */
+/* 10-01 multi-detect (revised): one entry per discovered CLI install. The
+   path column leads so every row aligns; badges (in use / latest / older)
+   and the version ride the right edge. The older row adds an indented
+   copy-only cleanup command line — displayed, never executed. */
+.trellis-cli-install {
+  min-width: 0;
+}
 .trellis-cli-install-row {
   display: flex;
   align-items: center;
@@ -5466,11 +5471,12 @@ html, body {
   font-size: 11px;
   font-weight: 500;
 }
-.trellis-cli-install-row.is-active .trellis-cli-install-badge {
+.trellis-cli-install-badge.is-in-use,
+.trellis-cli-install-badge.is-latest {
   color: var(--text-secondary);
   opacity: 0.9;
 }
-.trellis-cli-install-row.is-extra .trellis-cli-install-badge {
+.trellis-cli-install-badge.is-outdated {
   color: var(--warning-action);
 }
 .trellis-cli-install-path {
@@ -5482,6 +5488,32 @@ html, body {
   color: var(--text-secondary);
   opacity: 0.8;
   font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  user-select: text;
+}
+.trellis-cli-install-version {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-secondary);
+  opacity: 0.9;
+  font-variant-numeric: tabular-nums;
+}
+.trellis-cli-install-cmd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  min-width: 0;
+}
+.trellis-cli-install-cmd-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-secondary);
+  opacity: 0.8;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   user-select: text;
 }

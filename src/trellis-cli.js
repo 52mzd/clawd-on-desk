@@ -200,6 +200,50 @@ function parseVersionOutput(text) {
   return match ? match[0] : null;
 }
 
+const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/;
+
+function parseSemver(value) {
+  const match = String(value || "").match(SEMVER_RE);
+  if (!match) return null;
+  return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]), pre: match[4] == null ? null : match[4] };
+}
+
+// Simplified semver ordering for the "which install is older" call: numeric
+// segments compare numerically, a release outranks its prereleases, and two
+// prereleases compare by dot-separated identifier (numeric identifiers
+// numerically, ranking below alphanumeric; fewer identifiers rank lower).
+// Anything unparsable is "not comparable" → 0, so an unreadable version can
+// never be flagged outdated — never tell the user to delete what we can't read.
+function compareVersions(a, b) {
+  const pa = parseSemver(a);
+  const pb = parseSemver(b);
+  if (!pa || !pb) return 0;
+  for (const key of ["major", "minor", "patch"]) {
+    if (pa[key] !== pb[key]) return pa[key] < pb[key] ? -1 : 1;
+  }
+  if (pa.pre === null && pb.pre === null) return 0;
+  if (pa.pre === null) return 1;
+  if (pb.pre === null) return -1;
+  const idsA = pa.pre.split(".");
+  const idsB = pb.pre.split(".");
+  for (let i = 0; i < Math.max(idsA.length, idsB.length); i += 1) {
+    const ia = idsA[i];
+    const ib = idsB[i];
+    if (ia === undefined) return -1;
+    if (ib === undefined) return 1;
+    const na = /^\d+$/.test(ia);
+    const nb = /^\d+$/.test(ib);
+    if (na && nb) {
+      if (ia !== ib) return Number(ia) < Number(ib) ? -1 : 1;
+    } else if (na !== nb) {
+      return na ? -1 : 1;
+    } else if (ia !== ib) {
+      return ia < ib ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
 // A GUI-launched app inherits launchd's default PATH
 // (/usr/bin:/bin:/usr/sbin:/sbin), which contains none of the locations
 // `trellis` is normally installed into. `createTrellisCli` deliberately does
@@ -430,6 +474,20 @@ function createTrellisCli(options = {}) {
       // error — there was no spawn to fail.
       return { installed: false, version: null, error: null, path: null, installs: [] };
     }
+    // "Redundant" must mean OLDER, not "not first on PATH" (10-01 revise):
+    // the GUI's augmented PATH order can differ from the user's shell PATH, so
+    // PATH rank would flag the install they actually use. Flag an install only
+    // when a strictly newer parsable version exists elsewhere; unparsable
+    // versions and version ties are never flagged.
+    let newest = null;
+    for (const entry of installs) {
+      if (entry.version === null) continue;
+      if (newest === null || compareVersions(entry.version, newest) > 0) newest = entry.version;
+    }
+    for (const entry of installs) {
+      entry.outdated = newest !== null && entry.version !== null
+        && compareVersions(entry.version, newest) < 0;
+    }
     return {
       installed: headline.ok,
       version: headline.version,
@@ -611,6 +669,7 @@ module.exports = {
   resolveTrellisBinPath,
   scanTrellisBinPaths,
   buildCleanupCommand,
+  compareVersions,
   resolveUserName,
   buildInitArgs,
   normalizeUserName,

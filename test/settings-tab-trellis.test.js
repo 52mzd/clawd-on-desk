@@ -128,7 +128,7 @@ function makeStrings() {
     "trellisRootUnreadable", "trellisNoProjectsUnreadable", "trellisChannelAuto",
     "trellisUpgradeAllCount",
     "trellisActiveTasks", "trellisPhasePlan", "trellisPhaseExecute", "trellisPhaseFinish", "trellisPhaseDone",
-    "trellisCliInstallsTitle", "trellisCliInstallActive", "trellisCliInstallExtra",
+    "trellisCliInstallsTitle", "trellisCliInstallActive", "trellisCliInstallExtra", "trellisCliInstallLatest",
   ];
   const strings = {};
   for (const key of keys) strings[key] = key;
@@ -309,9 +309,11 @@ describe("settings-tab-trellis", () => {
     assert.strictEqual(sawPathNode, false, "no path, no node — nothing to guess");
   });
 
-  // 10-01 multi-detect: two installs render as a list — Active first, the
-  // redundant one badged with its version and a copy-only cleanup button.
-  it("lists every discovered install with an Active/Redundant badge and a copy-only cleanup", async () => {
+  // 10-01 multi-detect (revised): two installs render as a list — version age
+  // (outdated) decides "safe to remove", the in-use badge marks what Clawd
+  // itself resolves, and the cleanup command is displayed as text so the copy
+  // button is never a mystery box.
+  it("lists every discovered install with version-rank badges and a visible copy-only cleanup", async () => {
     const session = loadTab();
     const cleanup = "sudo npm uninstall -g @mindfoldhq/trellis --prefix /usr/local";
     session.api.trellisScan = () => Promise.resolve(makeScanResult({
@@ -320,8 +322,8 @@ describe("settings-tab-trellis", () => {
         version: "0.7.0-beta.4",
         path: "/h/.npm-global/bin/trellis",
         installs: [
-          { path: "/h/.npm-global/bin/trellis", version: "0.7.0-beta.4", active: true, cleanup: null },
-          { path: "/usr/local/bin/trellis", version: "0.3.10", active: false, cleanup },
+          { path: "/h/.npm-global/bin/trellis", version: "0.7.0-beta.4", active: true, cleanup: null, outdated: false },
+          { path: "/usr/local/bin/trellis", version: "0.3.10", active: false, cleanup, outdated: true },
         ],
       },
     }));
@@ -334,21 +336,57 @@ describe("settings-tab-trellis", () => {
     assert.ok(rendered.some((text) => text.includes("/h/.npm-global/bin/trellis")));
     assert.ok(rendered.some((text) => text.includes("/usr/local/bin/trellis")));
     assert.ok(rendered.includes("trellisCliInstallActive"));
-    assert.ok(rendered.includes("trellisCliInstallExtra · 0.3.10"), "the redundant badge carries its version");
+    assert.ok(rendered.includes("trellisCliInstallLatest"), "the newest install is labelled Latest");
+    assert.ok(rendered.includes("trellisCliInstallExtra"), "the older install is labelled removable");
+    assert.ok(rendered.includes("0.7.0-beta.4") && rendered.includes("0.3.10"), "versions render per row");
+    assert.ok(rendered.includes(cleanup), "the cleanup command is displayed, not just copied blind");
 
-    // The copy button rides the redundant row only, and copies — never runs.
-    const extraRows = [];
+    // The command line (with its copy button) rides the outdated install only.
+    // Exact-class match: a `\b` regex would also hit `-cmd-text` (the hyphen
+    // counts as a boundary).
+    const cmdRows = [];
     walk(panel, (element) => {
       const cls = typeof element.className === "string" ? element.className : "";
-      if (/\btrellis-cli-install-row\b/.test(cls) && cls.includes("is-extra")) extraRows.push(element);
+      if (cls.split(/\s+/).includes("trellis-cli-install-cmd")) cmdRows.push(element);
     });
-    assert.strictEqual(extraRows.length, 1);
-    const copyButton = findButton(extraRows[0], "trellisCopy");
-    assert.ok(copyButton, "the redundant row carries a copy button");
+    assert.strictEqual(cmdRows.length, 1);
+    const copyButton = findButton(cmdRows[0], "trellisCopy");
+    assert.ok(copyButton, "the command line carries a copy button");
     copyButton.dispatch("click");
     await flushPromises();
     assert.deepStrictEqual(session.clipboardWrites, [cleanup]);
     assert.ok(session.toasts.includes("trellisCopied"));
+  });
+
+  it("renders a legacy installs payload without outdated fields and without command rows", async () => {
+    // A payload shaped like the pre-revision build must degrade to the
+    // "latest" badge branch — no crash, no cleanup command line.
+    const session = loadTab();
+    session.api.trellisScan = () => Promise.resolve(makeScanResult({
+      global: {
+        installed: true,
+        version: "0.6.17",
+        path: "/a/trellis",
+        installs: [
+          { path: "/a/trellis", version: "0.6.17", active: true, cleanup: "rm -f /a/trellis" },
+          { path: "/b/trellis", version: "0.6.17", active: false, cleanup: "rm -f /b/trellis" },
+        ],
+      },
+    }));
+    findButton(renderPanel(session.core, session), "trellisRefresh").dispatch("click");
+    await flushPromises();
+
+    const panel = renderPanel(session.core, session);
+    const rendered = texts(panel);
+    assert.ok(rendered.includes("installs:2"));
+    assert.ok(rendered.filter((text) => text === "trellisCliInstallLatest").length >= 2, "every row degrades to Latest");
+    assert.ok(!rendered.some((text) => text.includes("rm -f")), "no outdated verdict, no cleanup line");
+    let sawCmdRow = false;
+    walk(panel, (element) => {
+      const cls = typeof element.className === "string" ? element.className : "";
+      if (cls.split(/\s+/).includes("trellis-cli-install-cmd")) sawCmdRow = true;
+    });
+    assert.ok(!sawCmdRow);
   });
 
   it("renders no install list for a single install or a payload without installs", async () => {
