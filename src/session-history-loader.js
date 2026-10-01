@@ -12,6 +12,7 @@ const os = require("os");
 const path = require("path");
 const { loadSessionHistory, normalizeClaudeProfile } = require("../hooks/session-history");
 const { normalizeClaudeSessionId } = require("../hooks/claude-session-id");
+const { extractPromptTitle } = require("../hooks/cursor-session-title");
 
 const DEFAULT_HISTORY_LIMIT = 25;
 
@@ -129,15 +130,43 @@ function loadResumableSessionHistory(options = {}) {
  * names the session better than anything else clawd has: read it from the
  * transcript's head — a growing window with a hard cap, never the whole
  * file — and only for rows whose transcript the probe already confirmed,
- * because a vanished file has nothing to name.
+ * because a vanished file has nothing to name. The prompt-to-title rule
+ * is exactly the live one (extractPromptTitle): first non-empty line, no
+ * title when that line is secret-shaped, capped at 40 chars.
  */
+// Dashboard refreshes re-run extraction for the same unchanged files; the
+// cache makes the second pass cost one stat per transcript. A null result is
+// cached too: "could not name it" will not change until the file does.
+const titleCache = new Map();
+
+function clearTitleExtractionCache() {
+  titleCache.clear();
+}
+
 function extractTitleFromTranscript(transcriptPath) {
-  let size;
+  let stat;
   try {
-    size = fs.statSync(transcriptPath).size;
+    stat = fs.statSync(transcriptPath);
   } catch {
     return null;
   }
+  const cacheKey = `${stat.mtimeMs}:${stat.size}`;
+  const cached = titleCache.get(transcriptPath);
+  if (cached && cached.key === cacheKey) return cached.title;
+  let title = null;
+  try {
+    title = readTitleFromTranscript(transcriptPath, stat.size);
+  } catch {
+    // Transcript lines are Claude Code's private shape; one malformed row
+    // must never take the whole resume list down with it.
+    title = null;
+  }
+  titleCache.set(transcriptPath, { key: cacheKey, title });
+  return title;
+}
+
+function readTitleFromTranscript(transcriptPath, size) {
+  let command = null; // first slash command, the fallback if no prompt is real
   for (const window of [16 * 1024, 64 * 1024, 256 * 1024, 1024 * 1024]) {
     const read = Math.min(window, size);
     let text;
@@ -150,7 +179,6 @@ function extractTitleFromTranscript(transcriptPath) {
     } catch {
       return null;
     }
-    let command = null;
     for (const line of text.split("\n")) {
       if (!line.trim()) continue;
       let entry;
@@ -159,25 +187,32 @@ function extractTitleFromTranscript(transcriptPath) {
       } catch {
         continue; // a line cut off by the window, or a huge single record
       }
-      if (entry.type !== "user" || entry.isMeta || entry.isSidechain) continue;
+      if (!entry || entry.type !== "user" || entry.isMeta || entry.isSidechain) continue;
       const content = entry.message && entry.message.content;
+      // A real tool result is a typed block in the content array; a user who
+      // merely types the word "tool_result" is not one.
+      if (Array.isArray(content)
+        && content.some((part) => part && part.type === "tool_result")) continue;
       const raw = typeof content === "string" ? content
         : Array.isArray(content)
-          ? (content.find((part) => part.type === "text") || {}).text || ""
+          ? (content.find((part) => part && part.type === "text") || {}).text || ""
           : "";
-      const clean = String(raw).trim().replace(/\s+/g, " ");
-      if (!clean || clean.includes("tool_result")) continue;
+      const clean = String(raw).trim();
       const slash = clean.match(/^<command-message>([\w:-]+)/);
       if (slash) {
         if (!command) command = `/${slash[1]}`;
         continue;
       }
       if (clean.startsWith("<")) continue; // other machine-generated wrappers
-      return clean.slice(0, 80);
+      // The live prompt-title rule (extractPromptTitle): first non-empty line,
+      // no title when that line is secret-shaped, capped at 40 chars. The
+      // verdict is final — a secret opening line means "no safe name", not
+      // "keep looking at later prompts".
+      return extractPromptTitle(clean);
     }
     if (read >= size) return command; // whole file scanned, no plain prompt
   }
-  return null;
+  return command; // head capped short of the file end; keep the command found
 }
 
 function transcriptPathFor(sessionId, cwd, profile, options = {}) {
@@ -226,5 +261,6 @@ module.exports = {
   getClaudeProjectsDir,
   probeTranscript,
   loadResumableSessionHistory,
+  clearTitleExtractionCache,
   resolveResumeTarget,
 };
