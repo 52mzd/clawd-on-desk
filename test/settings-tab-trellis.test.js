@@ -341,21 +341,22 @@ describe("settings-tab-trellis", () => {
     assert.ok(rendered.includes("0.7.0-beta.4") && rendered.includes("0.3.10"), "versions render per row");
     assert.ok(rendered.includes(cleanup), "the cleanup command is displayed, not just copied blind");
 
-    // Badges live on their own line under the path+version row, rank first
-    // and in-use second, so badge text length cannot shift the row's right
-    // edge (the alignment complaint from the first revision's field report).
-    const badgeRows = [];
+    // One line per install: path, then the badges (rank first, in-use
+    // second) right behind it, then the version — a whole install reads in a
+    // single left-to-right pass (the "split across two lines" complaint from
+    // the second revision's field report).
+    const installRows = [];
     walk(panel, (element) => {
       const cls = typeof element.className === "string" ? element.className : "";
-      if (cls.split(/\s+/).includes("trellis-cli-install-badges")) badgeRows.push(element);
+      if (cls.split(/\s+/).includes("trellis-cli-install-row")) installRows.push(element);
     });
     assert.deepStrictEqual(
-      badgeRows.map((row) => row.children.map((child) => child.textContent)),
+      installRows.map((row) => row.children.map((child) => child.textContent)),
       [
-        ["trellisCliInstallLatest", "trellisCliInstallActive"],
-        ["trellisCliInstallExtra"],
+        ["/h/.npm-global/bin/trellis", "trellisCliInstallLatest", "trellisCliInstallActive", "0.7.0-beta.4"],
+        ["/usr/local/bin/trellis", "trellisCliInstallExtra", "0.3.10"],
       ],
-      "one badge line per install; rank precedes the in-use badge",
+      "path, badges (rank first), version all on one row",
     );
 
     // The command line (with its copy button) rides the outdated install only.

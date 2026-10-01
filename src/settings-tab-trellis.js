@@ -823,12 +823,13 @@ function openUpgradePreviewWizard(project) {
     // Multiple installs (10-01 multi-detect; revised to version rank): show
     // them all — "in use by Clawd" marks what THIS app resolves (GUI PATH
     // order), while "older (safe to remove)" is decided by version age in
-    // main, never by PATH rank. Each install renders as two lines: path +
-    // version (the version is the only right-hand element, so every row's
-    // right edge aligns), then a left-anchored pill badge line (rank first,
-    // in-use second) whose text length can no longer shift anything. The
-    // cleanup command rides an indented tinted block under the older install,
-    // displayed as text with a copy button; nothing here ever executes it.
+    // main, never by PATH rank. Each install is ONE line: path first (left
+    // anchor), the rank badge and in-use badge follow it (rank first), and
+    // the version is the only right-hand element (margin-left:auto) so every
+    // row's right edge aligns while a whole install reads in a single
+    // left-to-right pass. The cleanup command rides an indented tinted block
+    // under the older install, displayed as text with a copy button; nothing
+    // here ever executes it.
     if (Array.isArray(global.installs) && global.installs.length > 1) {
       rows.push(buildDescRow(tf("trellisCliInstallsTitle", { count: global.installs.length })));
       for (const install of global.installs) {
@@ -842,6 +843,14 @@ function openUpgradePreviewWizard(project) {
         installPath.textContent = install.path;
         installPath.title = install.path;
         installRow.appendChild(installPath);
+        const outdated = install.outdated === true;
+        installRow.appendChild(buildInstallBadge(
+          outdated ? t("trellisCliInstallExtra") : t("trellisCliInstallLatest"),
+          outdated ? "is-outdated" : "is-latest",
+        ));
+        if (install.active === true) {
+          installRow.appendChild(buildInstallBadge(t("trellisCliInstallActive"), "is-in-use"));
+        }
         if (install.version) {
           const version = document.createElement("span");
           version.className = "trellis-cli-install-version";
@@ -849,17 +858,6 @@ function openUpgradePreviewWizard(project) {
           installRow.appendChild(version);
         }
         wrap.appendChild(installRow);
-        const outdated = install.outdated === true;
-        const badges = document.createElement("div");
-        badges.className = "trellis-cli-install-badges";
-        badges.appendChild(buildInstallBadge(
-          outdated ? t("trellisCliInstallExtra") : t("trellisCliInstallLatest"),
-          outdated ? "is-outdated" : "is-latest",
-        ));
-        if (install.active === true) {
-          badges.appendChild(buildInstallBadge(t("trellisCliInstallActive"), "is-in-use"));
-        }
-        wrap.appendChild(badges);
         if (outdated && typeof install.cleanup === "string" && install.cleanup) {
           const cmdRow = document.createElement("div");
           cmdRow.className = "trellis-cli-install-cmd";

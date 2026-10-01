@@ -1573,12 +1573,14 @@ registerTrellisIpc({ ..., env: { PATH: augmentedCliPath(process.env.PATH) } })
   不是 PATH 序（修订根因）**：GUI 的增强 PATH 序（`/usr/local/bin` 在 `~/.npm-global/bin`
   前）可与用户 shell PATH 序相反——按 PATH 序判「多余」会把用户终端真正在用的安装错标
   可删（x86 实机实测踩中）；改为 `compareVersions` 严格旧才 `outdated:true`，版本解析
-  失败/同版本永不标。UI（10-01 ui-polish 两行结构）：行1 = 路径（左锚点，mono）+
-  版本号（**唯一**右置元素，tabular-nums——右缘跨行对齐的前提）；行2 = 胶囊徽标行
-  （左对齐，**rank 先于 in-use**——徽标文字长短不一，混进行1会令右端基准线随文案
-  语言浮动，x86 实机第一版「没对齐」反馈的根因）；徽标三态配色借 `.agent-badge`
-  色板（最新=绿 / 旧版（可清理）=amber / Clawd 当前使用=accent）；outdated 行下
-  挂**缩进+底色**的命令块（命令文本本体 mono 可选中）+ 复制按钮——复制什么必须
+  失败/同版本永不标。UI（10-01 ui-online 单行结构，第三轮实机反馈定稿）：每个安装
+  **一行** = 路径（左锚点，mono，flex:0 1 auto 窄窗先收缩 ellipsis）→ 胶囊徽标紧随
+  （**rank 先于 in-use**，语义紧贴它描述的对象）→ 版本号（`margin-left:auto`
+  **唯一**右置元素，tabular-nums——右缘跨行对齐的前提）；徽标三态配色借
+  `.agent-badge` 色板（最新=绿 / 旧版（可清理）=amber / Clawd 当前使用=accent）。
+  两版历史教训：徽标行内右置且无形态 → 「没对齐」；徽标独立成行 → 「信息拆散，
+  逻辑编排有问题」——对齐靠布局（版本右置锚定）解决，不牺牲单行直觉性。
+  outdated 行下挂**缩进+底色**的命令块（命令文本本体 mono 可选中）+ 复制按钮——复制什么必须
   可见，不留盲盒，缩进+底色声明它与旧版条目的隶属关系。四条硬约束：① `cleanup`/`outdated` 均在
   **cli 层生成**随 payload 下发——renderer（vm 沙箱脚本）无法 require 主进程模块，且
   命令构造与 argv 冻结同一红线（只在 main 构造）；② **app 绝不执行清理命令**——全链路
@@ -1600,7 +1602,7 @@ registerTrellisIpc({ ..., env: { PATH: augmentedCliPath(process.env.PATH) } })
 | 同上（10-01 修订） | readGlobalVersion：**PATH 翻转只换 active 不换 outdated**（版本序判旧）；版本 null 永不 outdated；同版本互不标 |
 | 同上（10-01 修订） | compareVersions：数值段/release>prerelease/标识符序（数字段<字母段、少者低）/解析失败 0 |
 | 同上（10-01 二段） | buildCleanupCommand：npm 布局 uninstall --prefix、不可写 prefix 加 sudo、非布局 rm 回退、空格路径单引号、realpath 失败 null |
-| `test/settings-tab-trellis.test.js`（10-01 修订） | ≥2 条渲染列表（三态徽标 + 逐行版本 + **命令文本可见** + 复制写剪贴板）；缺 outdated 旧 payload 降级零命令行；单装/缺 installs 零渲染；（10-01 ui-polish）徽标独立成行且 rank 先于 in-use（deepStrictEqual 锁 DOM 序） |
+| `test/settings-tab-trellis.test.js`（10-01 修订） | ≥2 条渲染列表（三态徽标 + 逐行版本 + **命令文本可见** + 复制写剪贴板）；缺 outdated 旧 payload 降级零命令行；单装/缺 installs 零渲染；（10-01 ui-online）每行 = [路径, 徽标…（rank 先于 in-use）, 版本] 同一 installRow（deepStrictEqual 锁 DOM 序） |
 | `test/trellis-ipc.test.js`（10-01 二段） | scan payload 的 `global.installs` 逐字节透传（renderer 零生成的前提） |
 | **缺失（TODO）** | `main.js` 调用点是否传了 `env` —— 目前无自动化守卫 |
 
