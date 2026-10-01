@@ -1093,3 +1093,25 @@ x86 实机装 x64 包暴露两问题，实证闭环：①设置页显示 0.3.10 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 42: 多装 CLI 列表单行编排回归
+<!-- trellis-session: v=2 fp=b2e6afcbd7182689 -->
+
+**Date**: 2026-10-01
+**Task**: 多装 CLI 列表单行编排回归
+**Branch**: `main`
+
+### Summary
+
+两行结构版实机反馈「信息拆散逻辑编排有问题」：改为每行=路径+徽标(rank先in-use后)+版本唯一右置(margin-left:auto)，一次左→右读完；删 badges 容器；deepStrictEqual 锁行内 DOM 序；spec 定稿为第三轮 UI 契约（对齐靠布局不牺牲单行直觉性）
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7e9b12c6` | feat(trellis): 多装列表回归单行——路径+徽标+版本同行，版本唯一右置 |
+
+### Status
+
+[OK] **Completed**
