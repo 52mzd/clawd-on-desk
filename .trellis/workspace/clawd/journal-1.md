@@ -1005,3 +1005,25 @@ git merge origin/main（上游 v1.2.0，48 提交）进本地二开 main，6 处
 ### Status
 
 [OK] **Completed**
+
+
+## Session 38: Trellis CLI 发现修复三连：PATH 扩充、亮出路径、扫描目录同步 Dashboard
+<!-- trellis-session: v=2 fp=d102aeed80139a2f -->
+
+**Date**: 2026-10-01
+**Task**: Trellis CLI 发现修复三连：PATH 扩充、亮出路径、扫描目录同步 Dashboard
+**Branch**: `main`
+
+### Summary
+
+x86 实机装 x64 包暴露两问题，实证闭环：①设置页显示 0.3.10 化石（真身 0.7.0-beta.4 在 ~/.npm-global/bin，GUI PATH 盲区看不见；化石是旧默认 prefix 安装残留）②Settings 扫描目录不进 Dashboard（prefs trellisScanRoots 与 ~/.clawd/trellis-roots.json 两套存储互不相通）。三项打包修：augmentedCliPath 追加四用户级 bin + nvm 全版本枚举（尾部追加，既有命中不变）；readGlobalVersion 新增 path 字段 + 设置页亮出实际二进制路径（双装一眼可见）；set-roots 提交成功后 syncScanRoots 单向喂 Dashboard rootsStore（filter installed、批量幂等、喂新不级联删除）+ 启动 backfill。spec trellis-panel-contract 补记全部契约。验证：定向 123 pass、全量 12004/0 fail、实机冒烟 roots=37、launchd PATH 模拟命中。归档 10-01-trellis-cli-roots-unify（--skip-branch-validation，fork main 直落无 PR）。遗留：x86 机器 /usr/local/bin 化石仍需用户侧删除/升级（PATH 顺序在新增目录前仍会被优先命中）；可重编 x64 包供实机验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `60486784` | fix(trellis): CLI 发现修复三连——PATH 扩充、亮出实际路径、扫描目录同步 Dashboard |
+
+### Status
+
+[OK] **Completed**

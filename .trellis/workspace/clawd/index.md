@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 37
-- **Last Active**: 2026-09-30
+- **Total Sessions**: 38
+- **Last Active**: 2026-10-01
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1007 | Active |
+| `journal-1.md` | ~1029 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 38 | 2026-10-01 | Trellis CLI 发现修复三连：PATH 扩充、亮出路径、扫描目录同步 Dashboard | `60486784` | `main` |
 | 37 | 2026-09-30 | 读取端分组 + 会话命名双 PR 提交上游 | - | `main` |
 | 36 | 2026-09-30 | 上游 v1.2.0 同步合入 fork main | `c7e5f818` | `main` |
 | 35 | 2026-09-30 | 修复 Trellis 注册项目 32 截断，SpecRune 恢复识别 | `61809e24`, `2c4cea7c`, `52b5ec08`, `3ff1fd92` | `main` |
