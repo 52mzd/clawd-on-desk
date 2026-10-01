@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 45
+- **Total Sessions**: 46
 - **Last Active**: 2026-10-01
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1183 | Active |
+| `journal-1.md` | ~1206 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 46 | 2026-10-01 | 多装 CLI 列表五轮迭代复盘与 spec 沉淀 | `2cb32c35`, `93f3a52a` | `main` |
 | 45 | 2026-10-01 | 复制按钮改名清理代码 | `7a935661` | `main` |
 | 44 | 2026-10-01 | 多装列表底距微调 | `2503e3bb` | `main` |
 | 43 | 2026-10-01 | 多装列表格式规格化（第四轮） | `52012c75` | `main` |

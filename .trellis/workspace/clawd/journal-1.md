@@ -1181,3 +1181,26 @@ trellisCopyCleanup 文案按用户复检改『复制清理代码』（zh/zh-TW/k
 ### Status
 
 [OK] **Completed**
+
+
+## Session 46: 多装 CLI 列表五轮迭代复盘与 spec 沉淀
+<!-- trellis-session: v=2 fp=f07e8ba6e87be7f6 -->
+
+**Date**: 2026-10-01
+**Task**: 多装 CLI 列表五轮迭代复盘与 spec 沉淀
+**Branch**: `main`
+
+### Summary
+
+break-loop 复盘五轮 UI 迭代（格式返工四轮）：沉淀「UI 格式归属权+两轮触发器」到 renderer-guidelines；update-spec 核对补漏：沙箱测试断言形态（\b 类名假绿、合并文本子串）
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2cb32c35` | docs(spec): 多装列表五轮迭代复盘——UI 格式归属权与两轮触发器 |
+| `93f3a52a` | docs(spec): 沙箱 DOM 测试断言形态——\\b 类名假绿与合并文本子串断言 |
+
+### Status
+
+[OK] **Completed**
