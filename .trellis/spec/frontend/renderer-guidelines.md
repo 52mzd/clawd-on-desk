@@ -367,6 +367,14 @@ dashboard 渲染层的 node:test 用 `vm.runInNewContext` + 极简 DOM stub，�
 // ✅ 构建 chips 时先 appendChild(refreshBtn) 再 append 其余 chip
 ```
 
+**断言形态（10-01 多装列表补）**：FakeElement 测试里匹配复合类名禁止 `\b`
+正则——`\b` 把 `-` 当单词边界，`/\btrellis-cli-install-cmd\b/` 会**静默命中**
+`trellis-cli-install-cmd-text`，断言假绿、无任何红牌；一律
+`cls.split(/\s+/).includes("…")` 全等判定。同族陷阱：叶子 textContent 是
+「label+值」合并段（`"trellisCliVersionLabel 0.7.0-beta.4"`），数组
+`includes` 全等必然落空，子串断言用
+`rendered.some((text) => text.includes(…))`。
+
 ## 合并多 root 的列表，选中身份必须是 (id, cwd) 二元组（09-25 bug）
 
 「全部项目」模式把多个 root 的任务合进一个列表，同名 taskPath（如两个仓库
