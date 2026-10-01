@@ -48,6 +48,9 @@ const IDENTITY_OVERRIDES = new Map(Object.entries({
   "52mzd@users.noreply.github.com": null,
   "dae@mac-studio.local": null,
   "200491821+hanzhe-one@users.noreply.github.com": null,
+  // 10-02 upstream sync: the fork export line picked up 974e863e (stale
+  // wizard callbacks) authored under the maintainer's other machine profile.
+  "sean.qiu@neptune-robotics.com": null,
 }));
 
 function parseVersion(value) {
