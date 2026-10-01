@@ -1027,3 +1027,25 @@ x86 实机装 x64 包暴露两问题，实证闭环：①设置页显示 0.3.10 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 39: 多 trellis CLI 检测与清理向导
+<!-- trellis-session: v=2 fp=207d77bc2507fc97 -->
+
+**Date**: 2026-10-01
+**Task**: 多 trellis CLI 检测与清理向导
+**Branch**: `main`
+
+### Summary
+
+任务 A 实机验证反馈落地：scanTrellisBinPaths 全量收集 PATH 上每个 trellis 安装，readGlobalVersion 重构为逐安装探测下发 installs 数组（PATH 序、首命中 active、各自版本）；buildCleanupCommand 在 cli 层生成可复制清理命令（npm 布局 uninstall --prefix / rm 回退 / 不可写 prefix 加 sudo）——renderer vm 沙箱零命令生成，app 全链路零执行，设置页 ≥2 条渲染 Active/多余徽标 + 复制按钮。未装零 spawn、error:null 语义修正。全量回归 12014 pass，spec 补签名/闭环契约/断言点。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `67b38c31` | feat(trellis): 多 CLI 安装检测与清理向导——全量扫描、生效标记、可复制清理命令 |
+
+### Status
+
+[OK] **Completed**

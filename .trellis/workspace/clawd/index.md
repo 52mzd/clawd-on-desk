@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 38
+- **Total Sessions**: 39
 - **Last Active**: 2026-10-01
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1029 | Active |
+| `journal-1.md` | ~1051 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 39 | 2026-10-01 | 多 trellis CLI 检测与清理向导 | `67b38c31` | `main` |
 | 38 | 2026-10-01 | Trellis CLI 发现修复三连：PATH 扩充、亮出路径、扫描目录同步 Dashboard | `60486784` | `main` |
 | 37 | 2026-09-30 | 读取端分组 + 会话命名双 PR 提交上游 | - | `main` |
 | 36 | 2026-09-30 | 上游 v1.2.0 同步合入 fork main | `c7e5f818` | `main` |
