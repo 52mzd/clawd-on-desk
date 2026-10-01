@@ -5465,6 +5465,12 @@ html, body {
 .trellis-cli-install + .trellis-cli-install {
   margin-top: 8px;
 }
+/* Last entry carries the cleanup block; without a bottom pad its rounded
+   corners sit right on the card's own bottom border (field report). Match
+   .row's 12px rhythm. */
+.trellis-cli-install:last-child {
+  padding-bottom: 12px;
+}
 .trellis-cli-install-row {
   display: flex;
   align-items: center;
