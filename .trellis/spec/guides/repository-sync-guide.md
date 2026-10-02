@@ -95,6 +95,27 @@ rm -rf <要排除的路径>
 
 ---
 
+## 陷阱 4：沙箱 shell 的 cwd 每条命令重置——worktree 操作必须 git -C / 绝对路径
+
+### 场景（2026-10-02 一天三次实录）
+
+本会话环境里复合命令内的 `cd` 只在该条命令内生效，下一条命令的 cwd 重置回主仓库。多 worktree 并存时：
+
+1. 相对路径的 python 改写脚本「成功」执行——文件写进了**主仓库**的同名文件（PR 文档改动落错仓库）；
+2. 相对路径 grep 验证「命中新文案」——命中的是**主仓库**刚被误改的文件，双重假绿；
+3. `git commit`（无 -C）跑在主仓库——幸而暂存为空报 `no changes added` 才暴露。
+
+### 为什么隐蔽
+
+相对路径读写不会报错（主仓库有同名文件），grep 也能给出全对的输出——**错误仓库里的成功比报错更危险**。`npm test` 同理：跑错仓库照样全绿。
+
+### 正确做法
+
+- worktree 内 git 操作一律 `git -C <worktree绝对路径>`；
+- 文件读写/脚本用绝对路径（脚本内部也写绝对路径）；
+- 必须进目录的命令（npm test/build）用单条复合命令 `cd <绝对路径> && ...`；
+- 交叉验证双核对：改动后用绝对路径 grep 目标文件 + `git -C <worktree> status --porcelain` 确认落点，两处都对才算数。
+
 ## 快速检查清单
 
 导出/同步前：
@@ -110,6 +131,7 @@ rm -rf <要排除的路径>
 - [ ] 测试失败集合与**上游纯态基线**一致
 - [ ] 排除路径在树内与**导出分支历史**中都零命中
 - [ ] 本机身份（用户名/邮箱/绝对路径）在树内容与 commit author 中都零命中
+- [ ] worktree 操作全部走了 `git -C` / 绝对路径；改动落点用目标仓库 `status --porcelain` 复核过（陷阱 4）
 
 ---
 
@@ -120,3 +142,14 @@ rm -rf <要排除的路径>
 上游的发布契约测试与 GitHub 的 release 行为另有 6 个坑：`docs/**` 逐文件白名单、
 commit author 泄漏本机身份、贡献者三处一致、semver `previousTag` 回退、
 GUI 启动拿不到 shell PATH、pre-release 不计入 `latest`。
+
+## 上游 PR 贡献工作流（worktree 隔离，2026-09-30 实战沉淀）
+
+往 upstream（origin）提 PR 时，fork main 带二开定制不能直接开分支，用独立 worktree：
+
+1. `git worktree add .worktrees/<name> -b pr/<topic> origin/main`——每个 PR 一个 worktree，全量基于纯上游基线，fork 定制与 #1072 残留天然隔离。
+2. 依赖复用：`ln -s ../<首个worktree>/node_modules node_modules`。**坑：`git add -A` 会把软链卷进提交**（`create mode 120000 node_modules`），add 后必查 `git diff --cached --stat` 尾部；误提交用 `git rm --cached node_modules` + `--amend` 修正。
+3. 双 PR 并行：两个分支都基于 origin/main 互不依赖；重叠文件（loader row 循环）merge 时小冲突手解，集成验证用临时 demo 分支合两者跑全量，不污染 PR 分支。
+4. 演示注入（如启动自动开 Dashboard）只写在 demo worktree 的未提交工作区，绝不进 PR 分支。
+5. push 走 fork remote 的 pr 分支（`git push fork pr/<topic>`），不碰 fork main；`gh pr create --head 52mzd:pr/<topic>`。上游 dashboard 窗口在副屏时用 AppleScript `set position` 移到主屏再截屏。
+6. 所有对 worktree 的 git / 文件操作遵守上方陷阱 4：`git -C` 与绝对路径，不依赖 cd。
