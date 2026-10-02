@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查测试改动未削弱断言、skip 有理由注释、全量基线 diff"}
+{"file": ".trellis/spec/guides/trellis-panel-contract.md", "reason": "核对 trellis-cli 相关用例仍满足契约测试要求（Tests Required 表）"}

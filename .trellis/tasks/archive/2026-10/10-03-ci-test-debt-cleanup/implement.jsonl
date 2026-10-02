@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "测试质量线：node --check / 定向测试 / 全量基线 diff 纪律；本任务只动 test/"}
+{"file": ".trellis/spec/guides/trellis-panel-contract.md", "reason": "trellis-cli 测试契约：--version 解析身份契约、argv 冻结、既有断言点的语义（改用例时不得削弱）"}
