@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 49
+- **Total Sessions**: 50
 - **Last Active**: 2026-10-03
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1278 | Active |
+| `journal-1.md` | ~1301 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 50 | 2026-10-03 | 三平台 CI 测试债清理：test.yml 全绿 | `37db141d`, `db3ea131` | `main` |
 | 49 | 2026-10-03 | win32 全局 Trellis CLI 检测误报未安装修复 | `76b80ec1` | `main` |
 | 48 | 2026-10-02 | 同步官方 v1.2.0 后 24 提交、fork 发版 v1.2.0-trellis.1.0 与 spec 沉淀 | `9814e6fe`, `2a9a4b49`, `85406eb3`, `dae8b474`, `4e5e6c53`, `0d2acdae` | `main` |
 | 47 | 2026-10-02 | PR #1085/#1086 owner review 修订：三态跨目录/索引/标题对齐 | `48aaa625`, `e49a063f` | `main` |

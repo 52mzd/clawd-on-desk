@@ -1276,3 +1276,26 @@ merge 官方 v1.2.0 后 24 提交进 main 并追加式导出推 fork；fork 发�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 50: 三平台 CI 测试债清理：test.yml 全绿
+<!-- trellis-session: v=2 fp=f319c9f505da4ae8 -->
+
+**Date**: 2026-10-03
+**Task**: 三平台 CI 测试债清理：test.yml 全绿
+**Branch**: `main`
+
+### Summary
+
+修复 test.yml 在 main 上连续 4 个 commit 全红的测试债：21 个既有用例的隐式环境依赖。A 类 12 个 POSIX 扫描语义用例（split 冒号 + X_OK + makeBinDir）在 win 宿主上因盘符冒号被切碎而不可能成立，以 itPosixScan helper 在 win 宿主 skip、POSIX 覆盖原样；B 类 H1 注入回归依赖 POSIX shell 的分号语义，win 宿主 skip；D 类 upgradeGlobal dist-tag 两用例隐式依赖本机 PATH 有 trellis（calls[1] 假设 before 探测发生），改注入 platform win32 走 shell-fallback 使调用序列三平台一致、断言值不变；C 类 4 处硬编码 POSIX 路径断言改为宿主感知构造（path.join/resolve 与被测实现同规则，sanitize 链刻意内联避免自证式断言）。验证：mac 定向+全量 0 fail，fork 分支 workflow_dispatch 三平台 success，合回 main 后 push 触发的 test.yml 首次转绿。tag 构建全量测试路径恢复可用。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `37db141d` | test: trellis-cli 用例三平台自包含——POSIX 扫描语义 win 宿主 skip、dist-tag 用例走 win32 fallback 序列 |
+| `db3ea131` | test: 跨平台路径断言宿主感知构造（CI 债 C 类） |
+
+### Status
+
+[OK] **Completed**
