@@ -167,7 +167,9 @@ const {
   getLaunchPixelSize,
   getLaunchSizingWorkArea,
   getProportionalPixelSize,
+  resolveSizeSliderContext,
 } = require("./size-utils");
+const { formatSizeKey } = require("./settings-size-slider");
 const { keepOutOfTaskbar } = require("./taskbar");
 const { loadTrayNormalIcon, loadTrayFlashIcon } = require("./tray-flash-icon");
 const {
@@ -561,6 +563,7 @@ const _settingsController = createSettingsController({
     clearRecentHookEvents: (id) => _server.clearRecentHookEvents(id),
     identifyCustomApplication: (sourcePath) => require("./custom-applications").identifyCustomApplication(sourcePath),
     resizePet: _deferredResizePet,
+    rebaseSizeToRealizedPixels: () => rebaseSizeToRealizedPixels(),
     getActiveSessionAliasKeys: () =>
       _state && typeof _state.getActiveSessionAliasKeys === "function"
         ? _state.getActiveSessionAliasKeys()
@@ -879,6 +882,8 @@ const settingsWindowRuntime = createSettingsWindowRuntime({
   onSaveBounds: (bounds) => _settingsController.applyUpdate("settingsWindowBounds", bounds),
   getTitle: () => translate("settingsWindowTitle"),
   onBeforeCreate: () => bumpAnimationOverridePreviewPosterGeneration(),
+  // A replaced or crashed Settings page cannot send its preview-ending IPC.
+  onRendererReset: () => { void settingsSizePreviewSession.cleanup(); },
   onBeforeClosed: () => {
     if (roamFencePickerRuntime) roamFencePickerRuntime.cancel();
     bumpAnimationOverridePreviewPosterGeneration();
@@ -1235,6 +1240,25 @@ function getPixelSizeFor(sizeKey, overrideWa) {
   }
   if (!wa) wa = getPrimaryWorkAreaSafe() || SYNTHETIC_WORK_AREA;
   return getProportionalPixelSize(ratio, wa);
+}
+
+function getSizeSliderContext() {
+  let wa = null;
+  if (win && !win.isDestroyed()) {
+    const { x, y, width, height } = getPetWindowBounds();
+    wa = getNearestWorkArea(x + width / 2, y + height / 2);
+  }
+  if (!wa) wa = getPrimaryWorkAreaSafe() || SYNTHETIC_WORK_AREA;
+  return resolveSizeSliderContext(
+    currentSize, getEffectiveCurrentPixelSize(), wa,
+    keepSizeAcrossDisplaysCached && isProportionalMode()
+  );
+}
+
+function rebaseSizeToRealizedPixels() {
+  const context = getSizeSliderContext();
+  if (!context || context.synced) return;
+  _deferredResizePet(formatSizeKey(context.ui));
 }
 
 function getCurrentPixelSize(overrideWa) {
@@ -4384,6 +4408,8 @@ function showResumeInput(t) {
 const _menuCtx = {
   get win() { return win; },
   get sessions() { return sessions; },
+  cancelRoam: () => _roam.cancelRoam(),
+  resetKeepSizeFrozen: () => resetKeepSizeFrozen(),
   // Recovery actions must defeat a stranded drag lock (syncHitWin defers while
   // it is held); see pet-window-runtime releaseStrandedDragLock.
   releaseStrandedDragLock: () => petWindowRuntime.releaseStrandedDragLock(),
@@ -4987,6 +5013,7 @@ const settingsIpcRuntime = registerSettingsIpc({
       resolveTextScaleForKey(textScaleByDisplay, textScale, getSettingsDisplayKey()) * 100
     ),
   }),
+  getSizeContext: getSizeSliderContext,
   sendToRenderer,
   getDoNotDisturb: () => doNotDisturb,
   getSoundMuted: () => soundMuted,
@@ -5366,6 +5393,7 @@ function createWindow() {
     displayMetricsGeometryTimer = setTimeout(() => {
       displayMetricsGeometryTimer = null;
       petWindowRuntime.handleDisplayMetricsChanged();
+      settingsWindowRuntime.notifySizeContextChanged();
     }, 400);
   };
   // PR #751 second-review C-6 (Codex non-blocking): §4.3.14's
@@ -5391,8 +5419,14 @@ function createWindow() {
   // existing invalidateDisplaysCache() call) — previously only
   // metrics-changed did, leaving a stale inset alive across a monitor
   // unplug/replug or a genuine topology addition.
-  screen.on("display-removed", () => petWindowRuntime.handleDisplayRemoved());
-  screen.on("display-added", () => petWindowRuntime.handleDisplayAdded());
+  screen.on("display-removed", () => {
+    petWindowRuntime.handleDisplayRemoved();
+    settingsWindowRuntime.notifySizeContextChanged();
+  });
+  screen.on("display-added", () => {
+    petWindowRuntime.handleDisplayAdded();
+    settingsWindowRuntime.notifySizeContextChanged();
+  });
 
   // textScale is per-display: when the topology changes, window→display
   // mappings (and therefore effective scales) can change wholesale. Debounced
@@ -5536,6 +5570,7 @@ const _roamCtx = {
   clampToScreenVisual,
   getMiniMode: () => _mini.getMiniMode(),
   getCurrentState: () => _state.getCurrentState(),
+  isSizePreviewActive: () => petWindowRuntime.isSettingsSizePreviewActive(),
   get miniTransitioning() { return _mini.getMiniTransitioning(); },
   applyState: (state, svgOverride, opts) => _state.applyState(state, svgOverride, opts),
   setState: (state, svgOverride, opts) => _state.setState(state, svgOverride, opts),
