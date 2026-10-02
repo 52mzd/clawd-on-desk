@@ -1227,3 +1227,30 @@ break-loop 复盘五轮 UI 迭代（格式返工四轮）：沉淀「UI 格式�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 48: 同步官方 v1.2.0 后 24 提交、fork 发版 v1.2.0-trellis.1.0 与 spec 沉淀
+<!-- trellis-session: v=2 fp=c8ab1b33ce20662f -->
+
+**Date**: 2026-10-02
+**Task**: 同步官方 v1.2.0 后 24 提交、fork 发版 v1.2.0-trellis.1.0 与 spec 沉淀
+**Branch**: `main`
+
+### Summary
+
+merge 官方 v1.2.0 后 24 提交进 main 并追加式导出推 fork；fork 发版 v1.2.0-trellis.1.0 六步走通（tag run 签名硬线预期挂，改 dispatch artifact_validation_only 构建，release+attach 13 assets）。发版中撞 verify:release 未注册身份 Neptune-Sean（用户另一机器 git profile），IDENTITY_OVERRIDES null 排除后重导出重 dispatch success。release note 两轮补写（官方 24 提交批次、多装 CLI 向导与 CLI 发现三连），三处同步（本地提交/gh release edit/导出）。PR #1085 CI 红定性为环境 flaky：官方 required checks 为空，BLOCKED 仅来自缺 approving review，CI 红不挡合并，用户决定不发说明。收尾三 skill：check 全过；break-loop 复盘 cd 三踩落 guide 陷阱 4（git -C/绝对路径纪律）；update-spec 断言形态 II 三条（i18n 动态取词/结构计数替代计时/fs mock 前置存在性）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9814e6fe` | Merge upstream main (24 commits: size slider, theme hover, AppImage lifetime, CI TAP) into local main |
+| `2a9a4b49` | docs(release): v1.2.0-trellis.1.0 note 补官方 v1.2.0 后 24 提交批次 |
+| `85406eb3` | docs(release): v1.2.0-trellis.1.0 note 补多装 CLI 向导与 CLI 发现修复批次 |
+| `dae8b474` | fix(release): null-exclude the maintainer's Neptune-Sean profile from the fork release window |
+| `4e5e6c53` | docs(spec): 沙箱 cwd 每条命令重置——worktree 操作 git -C/绝对路径纪律（一天三踩复盘） |
+| `0d2acdae` | docs(spec): 断言形态 II——i18n 动态取词/结构计数替代计时/fs mock 前置存在性 |
+
+### Status
+
+[OK] **Completed**

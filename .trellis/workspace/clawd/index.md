@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 47
+- **Total Sessions**: 48
 - **Last Active**: 2026-10-02
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1229 | Active |
+| `journal-1.md` | ~1256 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 48 | 2026-10-02 | 同步官方 v1.2.0 后 24 提交、fork 发版 v1.2.0-trellis.1.0 与 spec 沉淀 | `9814e6fe`, `2a9a4b49`, `85406eb3`, `dae8b474`, `4e5e6c53`, `0d2acdae` | `main` |
 | 47 | 2026-10-02 | PR #1085/#1086 owner review 修订：三态跨目录/索引/标题对齐 | `48aaa625`, `e49a063f` | `main` |
 | 46 | 2026-10-01 | 多装 CLI 列表五轮迭代复盘与 spec 沉淀 | `2cb32c35`, `93f3a52a` | `main` |
 | 45 | 2026-10-01 | 复制按钮改名清理代码 | `7a935661` | `main` |
