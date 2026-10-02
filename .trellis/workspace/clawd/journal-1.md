@@ -1254,3 +1254,25 @@ merge 官方 v1.2.0 后 24 提交进 main 并追加式导出推 fork；fork 发�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 49: win32 全局 Trellis CLI 检测误报未安装修复
+<!-- trellis-session: v=2 fp=d12626ce4a2f373d -->
+
+**Date**: 2026-10-03
+**Task**: win32 全局 Trellis CLI 检测误报未安装修复
+**Branch**: `main`
+
+### Summary
+
+修复 Settings→Trellis 页在 Windows 上无论是否安装 trellis 都显示「PATH 中未找到 Trellis CLI」的缺陷。根因：readGlobalVersion 唯一安装发现途径 scanTrellisBinPaths 纯 fs 扫描在 win32 恒返回空数组（无法模拟 npm trellis.cmd shim 的 shell 解析），空结果被直接当成未安装，却没有补替代检测路径。修复：fs 扫描为空且 platform 为 win32 时 fallback 到一次 trellis --version shell spawn（run 在 win32 本就 shell:true）：成功取 parseVersionOutput 版本、ENOENT 视为干净未安装状态、其他失败带 error；POSIX 零改动，installs/path 维持 win32 恒空契约；顺带修复 upgradeGlobal 在 win32 上升级前后版本读数失真。新增 3 个 win32 用例（成功含横幅解析/ENOENT/其他失败），npm test 全量 0 fail，spec trellis-panel-contract 契约行同步。Residual risk：shell:true 下 cmd.exe 真实未安装形态是 exit 1 而非 ENOENT，error 字段会非 null 但无 UI 消费者，待 Windows 真机取证后再决定是否归类。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `76b80ec1` | fix(trellis): win32 全局 CLI 检测补 shell spawn fallback — 已安装的 Trellis 不再误报未安装 |
+
+### Status
+
+[OK] **Completed**
