@@ -375,6 +375,22 @@ dashboard 渲染层的 node:test 用 `vm.runInNewContext` + 极简 DOM stub，�
 `includes` 全等必然落空，子串断言用
 `rendered.some((text) => text.includes(…))`。
 
+**断言形态 II（10-02 session history 补）**，同族三条：
+
+- **i18n 文案断言动态取词**：断言用户可见文案用
+  `i18n.en.dashboardHistoryShowOther.replace("{n}", 2)`，不硬编码英文串——
+  折叠文案七语言调整时 dashboard 测试零改动自动跟随；硬编码串会让每次
+  文案迭代都变成测试维护，忘了跟改就是假红。
+- **性能回归断言结构计数，不断 ms**：「每次加载只建一次索引」用
+  `t.mock.method(fs, "readdirSync")` 计数断言「5 条 miss 恰好 3 次
+  readdir」，不写 `duration < X`——CI 机器抖动让计时断言随机红，
+  调用次数是确定性事实。
+- **fs mock 拦截的目录必须先真实存在**：mock `readdirSync` 拦某个子目录
+  前，先 `mkdirSync`/写文件把它建出来——目录不存在就不在父目录列表里，
+  mock 永不触发，索引 `complete` 误真，miss 返回 `false` 而非预期
+  `null`。mock 静默不触发是比断言失败更迷惑的假真形态：绿灯全对、
+  语义全错。
+
 ## 合并多 root 的列表，选中身份必须是 (id, cwd) 二元组（09-25 bug）
 
 「全部项目」模式把多个 root 的任务合进一个列表，同名 taskPath（如两个仓库
