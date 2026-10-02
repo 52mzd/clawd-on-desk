@@ -83,6 +83,24 @@ function makeBinDir() {
   return dir;
 }
 
+// 10-03 CI debt: the cases below exercise the POSIX fs-scan semantics behind
+// readGlobalVersion / resolveTrellisBinPath / scanTrellisBinPaths — PATH is
+// split on ":" and candidates must carry the X_OK execute bit. Neither can
+// hold on a Windows HOST: the drive-letter colon shreds every PATH entry and
+// extension-less files never pass Windows X_OK, so the scan is always empty
+// and every makeBinDir-based assertion collapses. Windows production code
+// never runs this scan (win32 → [] → shell fallback), so these cases skip on
+// a win32 host; POSIX-host coverage is unchanged.
+const itPosixScan = process.platform === "win32" ? it.skip : it;
+
+// The H1 injection regression proves its point by REALLY spawning through
+// POSIX `shell:true` with unescaped argv — its payload sanity check requires
+// `;` to act as a command separator. cmd.exe parses `;` as an argument
+// separator, so on a Windows host the payload is dead by construction and a
+// green run would only prove cmd.exe is not sh. Skip there; POSIX coverage
+// is unchanged.
+const itNotWinHost = process.platform === "win32" ? it.skip : it;
+
 describe("argv contract", () => {
   it("upgrades with an array argv containing --force and cwd = project path", async () => {
     const projectPath = makeProject("0.6.17");
@@ -339,7 +357,7 @@ describe("resolveUserName fallback chain (09-27)", () => {
     assert.deepStrictEqual(stub.calls[4].args, ["init", "-u", path.basename(projectPath), "--gemini", "-y"]);
   });
 
-  it("keeps a hostile value out of the real win32 shell concatenation (H1 regression)", async () => {
+  itNotWinHost("keeps a hostile value out of the real win32 shell concatenation (H1 regression)", async () => {
     const projectPath = makeProject("0.6.17");
     const markerDir = makeTmpDir();
     const marker = path.join(markerDir, "clawd-injected");
@@ -456,7 +474,7 @@ describe("failure handling", () => {
 });
 
 describe("readGlobalVersion", () => {
-  it("parses a version with a v prefix and trailing newline", async () => {
+  itPosixScan("parses a version with a v prefix and trailing newline", async () => {
     const binDir = makeBinDir();
     const binPath = path.join(binDir, "trellis");
     const stub = makeExecFileStub({ [binPath]: { stdout: "v0.6.17\n" } });
@@ -473,7 +491,7 @@ describe("readGlobalVersion", () => {
     assert.deepStrictEqual(stub.calls[0].args, ["--version"]);
   });
 
-  it("reports the resolved binary path alongside the version", async () => {
+  itPosixScan("reports the resolved binary path alongside the version", async () => {
     const binDir = makeBinDir();
     const binPath = path.join(binDir, "trellis");
     const stub = makeExecFileStub({ [binPath]: { stdout: "0.6.17\n" } });
@@ -482,7 +500,7 @@ describe("readGlobalVersion", () => {
     assert.strictEqual(result.path, binPath);
   });
 
-  it("lists every install with its own version and an active marker", async () => {
+  itPosixScan("lists every install with its own version and an active marker", async () => {
     const fresh = makeBinDir();
     const fossil = makeBinDir();
     const freshBin = path.join(fresh, "trellis");
@@ -528,7 +546,7 @@ describe("readGlobalVersion", () => {
     assert.strictEqual(flipped.installs[1].outdated, true);
   });
 
-  it("never flags an unparsable or equal-version install as outdated", async () => {
+  itPosixScan("never flags an unparsable or equal-version install as outdated", async () => {
     // An unreadable version must not be recommended for deletion, and equal
     // versions are not "older" than each other — only a strictly newer
     // install somewhere else makes one removable.
@@ -558,7 +576,7 @@ describe("readGlobalVersion", () => {
     assert.strictEqual(stub.calls.length, 0);
   });
 
-  it("reports a failed spawn when a found binary will not run", async () => {
+  itPosixScan("reports a failed spawn when a found binary will not run", async () => {
     const binDir = makeBinDir();
     const binPath = path.join(binDir, "trellis");
     const stub = makeExecFileStub({
@@ -572,7 +590,7 @@ describe("readGlobalVersion", () => {
     assert.strictEqual(result.installs.length, 1);
   });
 
-  it("keeps installed true but version null when output is unparsable", async () => {
+  itPosixScan("keeps installed true but version null when output is unparsable", async () => {
     const binDir = makeBinDir();
     const stub = makeExecFileStub({ [path.join(binDir, "trellis")]: { stdout: "no version here" } });
     const result = await cliWith(stub, { env: { PATH: binDir } }).readGlobalVersion();
@@ -580,7 +598,7 @@ describe("readGlobalVersion", () => {
     assert.strictEqual(result.version, null);
   });
 
-  it("reads the CLI version, not the project version in the startup banner", async () => {
+  itPosixScan("reads the CLI version, not the project version in the startup banner", async () => {
     // Byte-exact stdout captured from `trellis --version` with the CLI at
     // 0.7.0-beta.4, run from a project stamped 0.7.0-beta.3. The banner is a
     // prefix and its left-hand side is `<cwd>/.trellis/.version`.
@@ -599,7 +617,7 @@ describe("readGlobalVersion", () => {
     assert.notStrictEqual(result.version, "0.7.0-beta.3", "must not report the project's version");
   });
 
-  it("reads the CLI version from the other banner branch too", async () => {
+  itPosixScan("reads the CLI version from the other banner branch too", async () => {
     // The mirror case, also captured byte-exact: the project is *newer* than the
     // CLI, so the banner embeds the project version inside prose rather than on
     // the left of an arrow. Position-based parsing happens to survive this one,
@@ -708,7 +726,7 @@ describe("fetchRemoteChannels", () => {
 });
 
 describe("upgradeGlobal", () => {
-  it("runs trellis upgrade and re-reads the version", async () => {
+  itPosixScan("runs trellis upgrade and re-reads the version", async () => {
     let version = "0.6.17";
     const binDir = makeBinDir();
     const binPath = path.join(binDir, "trellis");
@@ -725,15 +743,24 @@ describe("upgradeGlobal", () => {
   });
 
   it("passes a known dist-tag as `--tag <tag>` (a bare positional is ignored by the CLI)", async () => {
+    // 10-03 CI debt: self-contained. The version probes ride the win32
+    // shell-fallback branch (scan → [] → one `trellis --version` spawn), so
+    // every host resolves the same scripted handler and calls[1] is the
+    // upgrade on all three platforms. The makeBinDir PATH fixture cannot
+    // survive the POSIX ":" scan on a Windows host (drive-letter colon),
+    // which would leave calls[1] undefined there; POSIX-scan upgradeGlobal
+    // coverage stays with "runs trellis upgrade and re-reads the version".
     const stub = makeExecFileStub({ trellis: { stdout: "0.6.17\n" } });
-    await cliWith(stub).upgradeGlobal("beta");
+    await cliWith(stub, { platform: "win32" }).upgradeGlobal("beta");
     assert.deepStrictEqual(stub.calls[1].args, ["upgrade", "--tag", "beta"]);
     assert.ok(stub.calls[1].args.includes("--tag"), "the dist-tag must ride the --tag flag");
   });
 
   it("treats null the same as omitted, keeping the auto channel", async () => {
+    // Same self-contained shape as the dist-tag case above: the win32
+    // shell-fallback probes keep the call sequence host-independent.
     const stub = makeExecFileStub({ trellis: { stdout: "0.6.17\n" } });
-    await cliWith(stub).upgradeGlobal(null);
+    await cliWith(stub, { platform: "win32" }).upgradeGlobal(null);
     assert.deepStrictEqual(stub.calls[1].args, ["upgrade"]);
   });
 
@@ -833,7 +860,7 @@ describe("augmentedCliPath", () => {
 });
 
 describe("resolveTrellisBinPath", () => {
-  it("returns the first executable trellis on the PATH", () => {
+  itPosixScan("returns the first executable trellis on the PATH", () => {
     const first = makeTmpDir();
     const second = makeTmpDir();
     for (const dir of [first, second]) {
@@ -847,7 +874,7 @@ describe("resolveTrellisBinPath", () => {
     );
   });
 
-  it("skips a trellis without the execute bit and keeps scanning", () => {
+  itPosixScan("skips a trellis without the execute bit and keeps scanning", () => {
     const noExec = makeTmpDir();
     const exec = makeTmpDir();
     fs.writeFileSync(path.join(noExec, "trellis"), "#!/bin/sh\n");
@@ -873,7 +900,7 @@ describe("resolveTrellisBinPath", () => {
 });
 
 describe("scanTrellisBinPaths", () => {
-  it("collects every executable trellis in PATH order", () => {
+  itPosixScan("collects every executable trellis in PATH order", () => {
     const a = makeBinDir();
     const b = makeBinDir();
     assert.deepStrictEqual(scanTrellisBinPaths(`${a}:${b}:/nonexistent`), [
