@@ -470,6 +470,23 @@ function createTrellisCli(options = {}) {
       }
     }
     if (!headline) {
+      // The fs scan is [] on win32 by design: npm installs a `trellis.cmd`
+      // shim whose shell resolution fs cannot model. Fall back to letting the
+      // shell itself resolve a bare `trellis` — the same resolution a real
+      // spawn uses (run() sets shell:true on win32). Everywhere else an empty
+      // scan genuinely means absent, so only win32 spawns here (10-03).
+      if (platform === "win32") {
+        const result = await run(TRELLIS_BIN, VERSION_ARGS, { timeoutMs: versionTimeoutMs });
+        if (result.ok) {
+          return { installed: true, version: parseVersionOutput(result.stdout), error: null, path: null, installs: [] };
+        }
+        if (result.reason === "not-found") {
+          // The shell could not resolve `trellis` → genuinely not installed;
+          // a state, not an error, matching the POSIX empty-PATH branch.
+          return { installed: false, version: null, error: null, path: null, installs: [] };
+        }
+        return { installed: false, version: null, error: result.message, path: null, installs: [] };
+      }
       // No trellis anywhere on the PATH: "not installed" is a state, not an
       // error — there was no spawn to fail.
       return { installed: false, version: null, error: null, path: null, installs: [] };

@@ -618,6 +618,57 @@ describe("readGlobalVersion", () => {
     assert.strictEqual(result.version, "0.7.0-beta.4");
     assert.notStrictEqual(result.version, "9.9.9", "must not pick up the prose project version");
   });
+
+  // 10-03: win32 skips the fs scan (it cannot model npm's `trellis.cmd` shim),
+  // so discovery is one shell spawn that lets the shell resolve `trellis` —
+  // same as any real spawn on that platform. No bin dir fixtures needed.
+  it("detects a win32 install through the shell and parses the version", async () => {
+    // Banner prefix + bare-version line, mirroring a `trellis --version` run
+    // from a project stamped 0.6.17 with the CLI at 0.7.0-beta.4: the parser
+    // must anchor on the whole-line version, not the banner's numbers.
+    const stdout = [
+      "⚠️  Trellis update available: 0.6.17 → 0.7.0-beta.4",
+      "",
+      "0.7.0-beta.4",
+      "",
+    ].join("\n");
+    const stub = makeExecFileStub({ trellis: { stdout } });
+    const result = await cliWith(stub, { platform: "win32" }).readGlobalVersion();
+    assert.deepStrictEqual(result, {
+      installed: true,
+      version: "0.7.0-beta.4",
+      error: null,
+      path: null,
+      installs: [],
+    });
+    assert.strictEqual(stub.calls.length, 1);
+    assert.strictEqual(stub.calls[0].bin, "trellis");
+    assert.deepStrictEqual(stub.calls[0].args, ["--version"]);
+    assert.strictEqual(stub.calls[0].options.shell, true);
+  });
+
+  it("reports not installed, not an error, when the win32 shell cannot resolve trellis", async () => {
+    const stub = makeExecFileStub({
+      trellis: { err: Object.assign(new Error("spawn trellis ENOENT"), { code: "ENOENT" }) },
+    });
+    const result = await cliWith(stub, { platform: "win32" }).readGlobalVersion();
+    // "Not installed" is a state, not an error — same semantics as the POSIX
+    // empty-PATH branch.
+    assert.deepStrictEqual(result, { installed: false, version: null, error: null, path: null, installs: [] });
+    assert.strictEqual(stub.calls.length, 1);
+  });
+
+  it("reports the failure when the win32 spawn fails for another reason", async () => {
+    const stub = makeExecFileStub({
+      trellis: { err: Object.assign(new Error("timed out"), { killed: true }) },
+    });
+    const result = await cliWith(stub, { platform: "win32" }).readGlobalVersion();
+    assert.strictEqual(result.installed, false);
+    assert.strictEqual(result.version, null);
+    assert.ok(result.error, "a non-ENOENT failure must surface an error");
+    assert.strictEqual(result.path, null);
+    assert.deepStrictEqual(result.installs, []);
+  });
 });
 
 describe("fetchRemoteChannels", () => {

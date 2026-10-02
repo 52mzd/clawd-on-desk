@@ -38,7 +38,7 @@ paths:
 createTrellisCli({ execFileImpl?, env?, platform?, timeoutMs? })
 
 // 每条命令一个函数，返回值统一带 ok / output
-readGlobalVersion()                     // → { installed, version, path, error, installs }（10-01 起 path = 首命中二进制；installs = 全量安装 [{path, version, active, cleanup, outdated}]，**版本新→旧序**（ui-flow 起稳定排序：不可解析版本 compare 0 保持扫描原位；active = 首命中（GUI PATH 视角），标记在排序前打、随条目走不随下标走）；outdated = 存在**严格更新**可解析版本（10-01 修订：版本序，非 PATH 序）；win32 installs 恒 []）
+readGlobalVersion()                     // → { installed, version, path, error, installs }（10-01 起 path = 首命中二进制；installs = 全量安装 [{path, version, active, cleanup, outdated}]，**版本新→旧序**（ui-flow 起稳定排序：不可解析版本 compare 0 保持扫描原位；active = 首命中（GUI PATH 视角），标记在排序前打、随条目走不随下标走）；outdated = 存在**严格更新**可解析版本（10-01 修订：版本序，非 PATH 序）；win32 installs 恒 []、path 恒 null——10-03 起 fs 扫描为空时以一次 `trellis --version` shell spawn fallback（run() 在 win32 本就 shell:true，能解析 npm 的 `trellis.cmd` shim）：ENOENT → 干净未安装（error:null，未安装是状态非错误）；成功 → installed:true + parseVersionOutput；其他失败 → installed:false + error。POSIX 空 paths 仍不 spawn）
 scanTrellisBinPaths(pathEnv, options?)  // → string[]；全量收集可执行 trellis（resolveTrellisBinPath 的复数版；win32 → []）
 resolveTrellisBinPath(pathEnv, options?) // → string | null = scanTrellisBinPaths(...)[0] ?? null
 buildCleanupCommand(binPath, options?)  // → string | null；可复制清理命令（npm 布局 `npm uninstall -g <pkg> --prefix <p>` / 非布局 `rm -f`；prefix 不可写加 sudo；realpath 失败 null）——**只显示不执行红线**

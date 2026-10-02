@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/trellis-panel-contract.md", "reason": "检查 win32 fallback 是否守住 argv 冻结、复用 parseVersionOutput、错误分桶语义与 POSIX 行为不变"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "通用质量与测试约定"}

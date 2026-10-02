@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/trellis-panel-contract.md", "reason": "readGlobalVersion/createTrellisCli 的签名契约、argv 冻结表、--version 输出解析规则（锚定整行仅版本号，防横幅项目版本污染）全部在此；本任务改动正是该契约的 win32 分支"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "src/ 层代码与测试的质量/格式约定"}
