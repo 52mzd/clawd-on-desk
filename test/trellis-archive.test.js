@@ -154,19 +154,24 @@ test("a missing archive base is an empty list", (t) => {
 });
 
 test("an injected fs drives the traversal without touching the real disk", () => {
+  // 10-03 CI debt: subpaths are joined with the HOST path module (the
+  // archiveBase itself is passed through verbatim, so its readdir key stays
+  // a literal); derive the fake-fs keys the same way so they match on every
+  // host.
+  const fakeArchive = "/p/tasks/archive";
   const fakeFs = {
     readdirSync(dirPath, opts) {
       assert.equal(opts.withFileTypes, true);
-      if (dirPath === "/p/tasks/archive") {
+      if (dirPath === fakeArchive) {
         return [{ name: "2026-09", isDirectory: () => true }];
       }
-      if (dirPath === "/p/tasks/archive/2026-09") {
+      if (dirPath === path.join(fakeArchive, "2026-09")) {
         return [{ name: "done", isDirectory: () => true }];
       }
       throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
     },
     readFileSync(filePath) {
-      if (filePath === "/p/tasks/archive/2026-09/done/task.json") {
+      if (filePath === path.join(fakeArchive, "2026-09", "done", "task.json")) {
         return JSON.stringify({ title: "Done", createdAt: "2026-09-01", completedAt: "2026-09-20" });
       }
       throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
@@ -175,7 +180,7 @@ test("an injected fs drives the traversal without touching the real disk", () =>
       throw Object.assign(new Error("EPERM"), { code: "EPERM" });
     },
   };
-  const entries = listArchivedTasks(fakeFs, "/p/tasks/archive");
+  const entries = listArchivedTasks(fakeFs, fakeArchive);
   assert.equal(entries.length, 1);
   assert.equal(entries[0].name, "done");
   assert.equal(entries[0].title, "Done");

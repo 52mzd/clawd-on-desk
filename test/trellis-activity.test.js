@@ -328,9 +328,17 @@ describe("trellis-activity process-level trace", () => {
     assert.notEqual(info.command, "meta");
     // The transcript path mirrors Claude Code's sanitized-cwd convention.
     assert.strictEqual(readTailCalls.length, 1);
-    // /proj/app sanitizes to "-proj-app" (slash → "-", rest of [A-Za-z0-9.-] → "-").
+    // 10-03 CI debt: host-aware expectation, same rule as the module's
+    // claudeProjectsDirName (path.resolve, then slash/backslash/underscore →
+    // "-", everything else outside [A-Za-z0-9.-] → "-"): POSIX
+    // "/proj/app" → "-proj-app", while Windows resolves the drive letter
+    // into the name ("D:\\proj\\app" → "D--proj-app") — the real upstream
+    // directory shape Claude Code itself creates on Windows.
+    const sanitizedProjectsDir = path.resolve(CWD)
+      .replace(/[\\/_]/g, "-")
+      .replace(/[^A-Za-z0-9.-]/g, "-");
     assert.strictEqual(readTailCalls[0].filePath,
-      `/home/tester/.claude/projects/-proj-app/${RAW_ID}.jsonl`);
+      path.join("/home/tester", ".claude", "projects", sanitizedProjectsDir, `${RAW_ID}.jsonl`));
     assert.strictEqual(readTailCalls[0].maxBytes, 512 * 1024);
   });
 

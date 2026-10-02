@@ -57,7 +57,11 @@ describe("trellis-roots store", () => {
     const { store } = makeHarness({
       initial: JSON.stringify(["/proj/a/", "/proj/b", 42, "", null, "/proj/a"]),
     });
-    assert.deepStrictEqual(store.load(), [path.join("/proj", "a"), "/proj/b"]);
+    // 10-03 CI debt: normalizeRootPath uses the HOST path module, so the
+    // persisted POSIX literals normalize to backslash forms on Windows —
+    // build the expected values with the same path.join the rest of this
+    // file already uses instead of hardcoding "/proj/b".
+    assert.deepStrictEqual(store.load(), [path.join("/proj", "a"), path.join("/proj", "b")]);
   });
 
   it("treats a missing file as no roots without writing", () => {

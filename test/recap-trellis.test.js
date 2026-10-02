@@ -182,17 +182,23 @@ test("ignores the archive folder and stray files in the active tasks scan", (t) 
 });
 
 test("an injected fs drives the scan without touching the real disk", () => {
+  // 10-03 CI debt: the module resolves each root (path.resolve adds the
+  // drive letter on Windows) and joins subpaths with the HOST path module,
+  // so the fake-fs keys must be derived the same way — POSIX literals never
+  // match a Windows host's path.join output.
+  const fakeRoot = path.resolve("/proj/.trellis");
+  const fakeTasks = path.join(fakeRoot, "tasks");
   const files = new Map();
   const fakeFs = {
     readdirSync(dirPath) {
-      if (dirPath === "/proj/.trellis/tasks") {
+      if (dirPath === fakeTasks) {
         return [
           { name: "new", isDirectory: () => true },
           { name: "archive", isDirectory: () => true },
           { name: "notes.md", isDirectory: () => false },
         ];
       }
-      if (dirPath === "/proj/.trellis/tasks/archive/2026-09") {
+      if (dirPath === path.join(fakeTasks, "archive", MONTH)) {
         return [{ name: "done", isDirectory: () => true }];
       }
       throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
@@ -205,8 +211,8 @@ test("an injected fs drives the scan without touching the real disk", () => {
       throw Object.assign(new Error("EPERM"), { code: "EPERM" });
     },
   };
-  files.set("/proj/.trellis/tasks/new/task.json", JSON.stringify({ createdAt: TODAY }));
-  files.set("/proj/.trellis/tasks/archive/2026-09/done/task.json", JSON.stringify({
+  files.set(path.join(fakeTasks, "new", "task.json"), JSON.stringify({ createdAt: TODAY }));
+  files.set(path.join(fakeTasks, "archive", MONTH, "done", "task.json"), JSON.stringify({
     createdAt: "2026-09-01",
     completedAt: null,
   }));
