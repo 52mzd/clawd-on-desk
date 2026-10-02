@@ -1,0 +1,1 @@
+{"file": ".trellis/spec/guides/trellis-panel-contract.md", "reason": "检查点：新目录追加不改 spawn argv、readGlobalVersion.path 契约、单向同步不级联删除，均需对照本 spec 断言"}

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/repository-sync-guide.md", "reason": "policy 阈值本地态值核对 + 上游非重叠文件逐字节相同判据"}
+{"file": ".trellis/spec/guides/trellis-panel-contract.md", "reason": "已知root窗口=TRELLIS_ROOTS_MAX 契约——merge 后 SpecRune 识别不得回退"}

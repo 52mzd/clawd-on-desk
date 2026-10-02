@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "提交前语法检查与渲染器测试线"}
+{"file": ".trellis/spec/frontend/i18n-guidelines.md", "reason": "七语言键完整性核对"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层断言点核对"}

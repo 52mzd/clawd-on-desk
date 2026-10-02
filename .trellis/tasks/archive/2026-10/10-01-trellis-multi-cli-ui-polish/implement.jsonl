@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/trellis-panel-contract.md", "reason": "installs payload 契约、渲染层纯渲染红线、命令只显示不执行——UI 重排不得触碰判定与命令生成"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "设置页渲染/CSS 惯例入口，确认徽标与命令块样式对齐仓库视觉语言"}

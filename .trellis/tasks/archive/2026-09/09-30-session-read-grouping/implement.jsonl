@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/renderer-guidelines.md", "reason": "改 appendSessionHistory 折叠组渲染须遵循 DOM 构建与 overlay 状态约定"}
+{"file": ".trellis/spec/frontend/i18n-guidelines.md", "reason": "新增七语言键，键完整性契约与取词约定"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "loader→runtime→renderer group 字段跨层数据流"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用 probeTranscript/createSessionHistoryCard，避免重复逻辑"}

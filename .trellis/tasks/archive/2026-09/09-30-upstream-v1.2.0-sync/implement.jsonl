@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/repository-sync-guide.md", "reason": "陷阱2 policy 阈值本地态契约 + 内容级验证判据；陷阱1/3 教训（merge 是真三方合并不受陷阱1影响，测试基线须写明取自哪个态）"}
+{"file": ".trellis/spec/guides/fork-release-guide.md", "reason": "verify-release-contributors fork 口径：null 排除法与上游注册映射的合并裁决"}

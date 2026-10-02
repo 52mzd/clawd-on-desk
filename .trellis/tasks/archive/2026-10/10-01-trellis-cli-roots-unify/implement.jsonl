@@ -1,0 +1,1 @@
+{"file": ".trellis/spec/guides/trellis-panel-contract.md", "reason": "Trellis 面板外部进程契约：argv 冻结/输出解析身份/IPC 信封，本任务改 augmentedCliPath、readGlobalVersion、set-roots handler 全在其中"}
