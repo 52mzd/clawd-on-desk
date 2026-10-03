@@ -48,6 +48,15 @@ const IDENTITY_OVERRIDES = new Map(Object.entries({
   "52mzd@users.noreply.github.com": null,
   "dae@mac-studio.local": null,
   "200491821+hanzhe-one@users.noreply.github.com": null,
+  // 10-03 upstream sync: upstream has not registered these merged-PR
+  // authors yet (wait for upstream). LetitiaChan authored #1104 under two
+  // git identities (Letty + a Tencent-machine co-author line); anupamme
+  // (#1102) is already on the upstream wall; daecom2005@gmail.com is this
+  // fork's author identity behind the merged upstream PRs #1085/#1086.
+  "crayonchen@qq.com": "LetitiaChan",
+  "letichen@tencent.com": "LetitiaChan",
+  "mediratta@gmail.com": "anupamme",
+  "daecom2005@gmail.com": "52mzd",
   // 10-02 upstream sync: the fork export line picked up 974e863e (stale
   // wizard callbacks) authored under the maintainer's other machine profile.
   "sean.qiu@neptune-robotics.com": null,
