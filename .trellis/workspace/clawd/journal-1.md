@@ -1299,3 +1299,14 @@ merge 官方 v1.2.0 后 24 提交进 main 并追加式导出推 fork；fork 发�
 ### Status
 
 [OK] **Completed**
+
+## 2026-10-03 updater-fork-feed 收尾约定
+
+fork 的更新链路已指向 52mzd/clawd-on-desk-trellis（v1.2.0-trellis.1.3 起，app-update.yml 已实证）。
+**后续同步上游时以下 4 处必须保 fork 值，不要被上游覆盖回官方**：
+1. `package.json` → `build.publish`（owner 52mzd / repo clawd-on-desk-trellis）
+2. `src/updater.js` → `RELEASES_REPO` 常量（派生 RELEASES_LATEST_URL / redirect path / API path 三处）
+3. `test/updater.test.js` → 16 处 host/path 断言
+4. `test/winget-arch-contract.test.js` → owner/repo 断言
+不改的官方引用（有意保留）：settings-ipc About repoUrl、Discord RPC 素材 URL、Telegram 文档链接、winget 管道脚本。
+版本号语义保持 `1.2.0-trellis.x` pre-release 线；旧版(≤1.2)用户需手动装 1.3 完成渠道切换，勿在旧版里点检查更新。
