@@ -531,8 +531,10 @@ describe("winget contract installers-regex cross-check", () => {
 describe("winget contract helpers", () => {
   it("reads the Windows build config from package.json", () => {
     const build = readWindowsBuildConfig(pkg);
-    assert.equal(build.owner, "rullerzhou-afk");
-    assert.equal(build.repo, "clawd-on-desk");
+    // fork: build.publish points at the fork repo so packaged updates only
+    // check the fork's releases; the winget pipeline itself stays upstream-only.
+    assert.equal(build.owner, "52mzd");
+    assert.equal(build.repo, "clawd-on-desk-trellis");
     assert.ok(build.entries.length >= 1);
   });
 

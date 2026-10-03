@@ -197,8 +197,8 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "rullerzhou-afk",
-        "repo": "clawd-on-desk"
+        "owner": "52mzd",
+        "repo": "clawd-on-desk-trellis"
       }
     ]
   },
